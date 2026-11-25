@@ -1,0 +1,468 @@
+---
+title: "Evaluación Domiciliaria N° 3: Métodos No Paramétricos — Réplica en R"
+subtitle: "Maestría en Economía UNLP · Econometría Avanzada"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: readable
+    df_print: paged
+lang: es
+---
+
+```{css, echo=FALSE}
+.disc { background:#fff3cd; border-left:6px solid #e0a800; padding:8px 12px; margin:10px 0; }
+.ok   { background:#e8f5e9; border-left:6px solid #2e7d32; padding:8px 12px; margin:10px 0; }
+table { font-size: 90%; }
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, fig.path = "Figuras_R/", dpi = 110)
+suppressPackageStartupMessages({library(haven); library(dplyr); library(knitr); library(sandwich)})
+options(scipen = 999, knitr.kable.NA = "-")
+
+# Registro global de discrepancias respecto del PDF "Trabajo Práctico N° 3 (R)"
+disc <- data.frame(Seccion = character(), Detalle = character())
+reg  <- function(sec, det) { disc <<- rbind(disc, data.frame(Seccion = sec, Detalle = det)); invisible() }
+fnum <- function(x, d = 3) formatC(x, format = "f", digits = d, decimal.mark = ",")
+st   <- function(p) ifelse(p < .01, "***", ifelse(p < .05, "**", ifelse(p < .10, "*", "")))
+leer <- function(patron) read_dta(list.files("Datos", pattern = patron, full.names = TRUE)[1])   # el nombre "Bosch&Manacorda" tiene un '&'
+```
+
+**Cómo leer este documento.** Todo se calcula en R a partir de las bases del `.do` de Stata (`kdensity`, `lpoly`, `semipar` y `zheng.do` se reimplementan a mano para reproducir lo que hace Stata). La guía es el PDF *Trabajo Práctico N° 3 (R)*. Los valores numéricos del PDF (anchos de banda, tablas, tests) se cargan a mano y se comparan con lo que produce R; las **figuras** se reproducen y se contrastan visualmente, y las **afirmaciones del texto** sobre ellas se verifican con estadísticas calculadas. Un recuadro amarillo **⚠️** marca una discrepancia u observación; uno verde **✅**, una coincidencia. Al final hay un resumen.
+
+# Funciones auxiliares (equivalentes a `kdensity`, `lpoly` y `summarize, detail` de Stata)
+
+```{r funciones}
+# Percentiles como los de `summarize, detail` de Stata (equivale a quantile type = 2)
+qs <- function(x, p) as.numeric(quantile(x, p, type = 2))
+
+# Ancho de banda "óptimo" de Stata: h = 0.9 * min(sd, IQR/1.349) / N^(1/5)
+h_opt <- function(x) { x <- x[!is.na(x)]; 0.9 * min(sd(x), (qs(x, .75) - qs(x, .25)) / 1.349) / length(x)^0.2 }
+
+# Kernels de Stata (misma parametrización)
+kern <- list(
+  epanechnikov = function(z) ifelse(abs(z) < sqrt(5), 0.75 * (1 - z^2 / 5) / sqrt(5), 0),
+  epan2        = function(z) ifelse(abs(z) < 1, 0.75 * (1 - z^2), 0),
+  gaussian     = function(z) dnorm(z),
+  triangle     = function(z) pmax(1 - abs(z), 0))
+
+# kdensity de Stata: 50 puntos de evaluación equiespaciados entre min - h y max + h
+kde <- function(x, h = h_opt(x), kernel = "epanechnikov", n = 50) {
+  x <- x[!is.na(x)]; g <- seq(min(x) - h, max(x) + h, length.out = n)
+  data.frame(x = g, d = sapply(g, function(z) mean(kern[[kernel]]((z - x) / h)) / h), h = h)
+}
+
+# Regresión Nadaraya-Watson (kernel gaussiano, grado 0) como `lpoly, degree(0)`, evaluada en 50 puntos entre min(x) y max(x)
+nw <- function(x, y, h, g = seq(min(x), max(x), length.out = 50)) {
+  data.frame(x = g, fit = sapply(g, function(z) { w <- dnorm((x - z) / h); sum(w * y) / sum(w) }))
+}
+
+# Intervalo de confianza al 95% de la NW (aproximación al `ci` de lpoly): varianza local de los residuos de un
+# piloto cuadrático local con ancho `pw` (el `pwidth` que reporta Stata al pie de cada gráfico)
+nw_ci <- function(x, y, h, pw, n = 50) {
+  fit <- nw(x, y, h, seq(min(x), max(x), length.out = n))
+  piloto <- sapply(x, function(z) { w <- dnorm((x - z) / pw); d <- x - z; X <- cbind(1, d, d^2)
+                                    solve(crossprod(X * w, X), crossprod(X * w, y))[1] })
+  e2 <- (y - piloto)^2
+  se <- sapply(fit$x, function(z) { w <- dnorm((x - z) / h); sqrt(sum(w * e2) / sum(w) * sum(w^2) / sum(w)^2) })
+  cbind(fit, lo = fit$fit - 1.96 * se, hi = fit$fit + 1.96 * se, se = se)
+}
+```
+
+# Parte I: Desigualdad y salarios mínimos en México y Argentina
+
+```{r datos1}
+b  <- as.data.frame(lapply(leer("Bosch"), function(x) if (inherits(x, "haven_labelled")) as.numeric(x) else x))
+cat("Observaciones:", nrow(b), "\n")
+w04 <- na.omit(b$wage_std_04s2); w93 <- na.omit(b$wage_std_93)
+cat("N Argentina 2004s2 =", length(w04), "· N Argentina 1993 =", length(w93), "\n")
+```
+
+## (a) Densidad con tres anchos de banda (kernel Epanechnikov)
+
+```{r figura1, fig.width=9, fig.height=6}
+h0  <- h_opt(w04)
+hs  <- c(`Óptimo` = h0, `Óptimo/2` = h0 / 2, `Óptimo*2` = h0 * 2)
+par(mfrow = c(2, 2), mar = c(5, 4.2, 3, 1))
+for (i in seq_along(hs)) { k <- kde(w04, hs[i])
+  plot(k$x, k$d, type = "l", xlab = "Logaritmo del salario", ylab = "Densidad", main = paste("Ancho de banda:", names(hs)[i]), ylim = c(0, max(k$d) * 1.05))
+  mtext(sprintf("kernel = epanechnikov, bandwidth = %.4f", hs[i]), side = 1, line = 3.8, cex = .6) }
+```
+
+```{r cmp-h, echo=FALSE, results='asis'}
+pdf_h <- c(0.1049, 0.0525, 0.2098)
+okh <- abs(round(hs, 4) - pdf_h) < 1.1e-4
+print(kable(data.frame(Ancho = names(hs), PDF = pdf_h, R = round(hs, 4), Coincide = ifelse(okh, "✅", "⚠️")), row.names = FALSE, caption = "Anchos de banda: PDF vs. R"))
+if (all(okh)) cat("\n<div class='ok'>✅ Los tres anchos de banda coinciden con los del PDF (h óptimo = 0,1049; mitad = 0,0525; doble = 0,2098). El criterio es la regla empírica de Silverman, $h = 0{,}9\\,\\min(s, IQR/1{,}349)\\,N^{-1/5}$, que minimiza el ECMI si la densidad fuera normal.</div>\n")
+for (i in which(!okh)) reg("Parte I (a) · h", sprintf("%s: PDF = %s, R = %s", names(hs)[i], fnum(pdf_h[i], 4), fnum(hs[i], 4)))
+```
+
+```{r asimetria, echo=FALSE, results='asis'}
+asim <- mean((w04 - mean(w04))^3) / sd(w04)^3
+cat("**Chequeo del texto:** el PDF describe una densidad asimétrica con más observaciones a la izquierda y una distancia entre el mínimo y la media mayor que entre la media y el máximo. En R: media = ", fnum(mean(w04), 3), ", mínimo = ", fnum(min(w04), 2), ", máximo = ", fnum(max(w04), 2),
+    "; coeficiente de asimetría = ", fnum(asim, 2), if (asim < 0) " (negativo: cola izquierda pesada). ✅ Consistente con el texto.\n" else " (positivo). ⚠️ No es consistente con el texto.\n", sep = "")
+```
+
+## (b) Distintos kernels con el ancho óptimo
+
+```{r figura2, fig.width=9, fig.height=6}
+par(mfrow = c(2, 2), mar = c(5, 4.2, 3, 1))
+nombres_k <- c(epanechnikov = "Kernel Epanechnikov", epan2 = "Kernel Epanechnikov Modificado", gaussian = "Kernel Gaussiano", triangle = "Kernel Triangular")
+rug_k <- sapply(names(nombres_k), function(kk) { k <- kde(w04, h0, kk)
+  plot(k$x, k$d, type = "l", xlab = "Logaritmo del salario", ylab = "Densidad", main = nombres_k[kk], ylim = c(0, 0.8))
+  mtext(sprintf("kernel = %s, bandwidth = %.4f", kk, h0), side = 1, line = 3.8, cex = .6)
+  sum(abs(diff(diff(k$d))))   # índice de "ruido": variación total de la segunda diferencia
+})
+```
+
+```{r ruido, echo=FALSE, results='asis'}
+print(kable(data.frame(Kernel = nombres_k, `Índice de rugosidad` = round(rug_k, 3), check.names = FALSE), row.names = FALSE, caption = "Rugosidad de la densidad estimada (suma de |Δ² f|; más alto = más ruido)"))
+```
+
+El PDF afirma que Epanechnikov y Gaussiano son suaves y casi idénticos, y que Epanechnikov modificado y Triangular tienen mucho más ruido.
+
+```{r kernel-chk, echo=FALSE, results='asis'}
+if (max(rug_k["epanechnikov"], rug_k["gaussian"]) < min(rug_k["epan2"], rug_k["triangle"])) {
+  cat("<div class='ok'>✅ Coincide con el PDF: los kernels Epanechnikov y Gaussiano son los más suaves, y Epanechnikov modificado y Triangular los más ruidosos.</div>\n")
+} else {
+  cat("<div class='disc'>⚠️ <b>DISCREPANCIA.</b> El orden de rugosidad entre kernels no coincide con la descripción del PDF.</div>\n")
+  reg("Parte I (b) · Kernels", "El ordenamiento de ruido entre kernels difiere de lo descripto en el PDF.")
+}
+```
+
+## (c.1) Distribuciones de salarios en dos años, con el salario mínimo
+
+Como en el `.do`, la línea vertical es la **media de `min_wage_std_*` sobre todas las filas** de cada año (en México hay tres zonas con salarios mínimos distintos, pero la densidad se grafica solo para la zona B).
+
+```{r minimos}
+sm <- c(arg93 = mean(b$min_wage_std_93, na.rm = TRUE), arg04 = mean(b$min_wage_std_04s2, na.rm = TRUE),
+        mex89 = mean(b$min_wage_std_89, na.rm = TRUE), mex01 = mean(b$min_wage_std_01, na.rm = TRUE))
+mex89_B <- mean(b$min_wage_std_89[b$zona_89 == 2], na.rm = TRUE); mex01_B <- mean(b$min_wage_std_01[b$zona_01 == 2], na.rm = TRUE)
+kable(data.frame(Serie = names(sm), `Media (todas las zonas)` = round(sm, 4), `Media zona B` = c(NA, NA, round(mex89_B, 4), round(mex01_B, 4)), check.names = FALSE), row.names = FALSE, caption = "Salario mínimo estandarizado (log)")
+```
+
+```{r figura3, fig.width=9, fig.height=4.2}
+w89 <- na.omit(b$wage_std_89[b$zona_89 == 2]); w01 <- na.omit(b$wage_std_01[b$zona_01 == 2])
+par(mfrow = c(1, 2), mar = c(4.2, 4.2, 3, 1))
+k1 <- kde(w93); k2 <- kde(w04)
+plot(k1$x, k1$d, type = "l", xlim = c(-4.5, 3.8), ylim = c(0, 0.85), xlab = "Logaritmo del salario", ylab = "Densidad", main = "Argentina: 1993 vs. 2004")
+lines(k2$x, k2$d, lty = 3); abline(v = sm["arg93"], col = "red", lty = 1); abline(v = sm["arg04"], col = "red", lty = 2)
+legend("topleft", c("1993", "2004"), lty = c(1, 3), bty = "n", cex = .8)
+k3 <- kde(w89); k4 <- kde(w01)
+plot(k3$x, k3$d, type = "l", xlim = c(-2, 2), ylim = c(0, 1.05), xlab = "Logaritmo del salario", ylab = "Densidad", main = "México: 1989 vs. 2001")
+lines(k4$x, k4$d, lty = 3); abline(v = sm["mex89"], col = "red", lty = 1); abline(v = sm["mex01"], col = "red", lty = 2)
+legend("topright", c("1989", "2001"), lty = c(1, 3), bty = "n", cex = .8)
+cat("N México zona B: 1989 =", length(w89), " 2001 =", length(w01), "\n")
+```
+
+## (c.2) Formales vs. informales
+
+```{r figura4, fig.width=9, fig.height=7}
+par(mfrow = c(2, 2), mar = c(4.2, 4.2, 3, 1))
+dib <- function(w, f, minimo, titulo, xlim) {
+  kf <- kde(w[f == 1]); ki <- kde(w[f == 0])
+  plot(kf$x, kf$d, type = "l", xlim = xlim, ylim = c(0, max(kf$d, ki$d) * 1.05), xlab = "Logaritmo del salario", ylab = "Densidad", main = titulo)
+  lines(ki$x, ki$d, lty = 3); abline(v = minimo, col = "red"); legend("topleft", c("Formal", "Informal"), lty = c(1, 3), bty = "n", cex = .8) }
+ok93 <- !is.na(b$wage_std_93) & !is.na(b$formal_93); ok04 <- !is.na(b$wage_std_04s2) & !is.na(b$formal_04s2)
+ok89 <- !is.na(b$wage_std_89) & !is.na(b$formal_89) & b$zona_89 == 2; ok01 <- !is.na(b$wage_std_01) & !is.na(b$formal_01) & b$zona_01 == 2
+dib(b$wage_std_93[ok93], b$formal_93[ok93], sm["arg93"], "Argentina 1993", c(-4, 4))
+dib(b$wage_std_04s2[ok04], b$formal_04s2[ok04], sm["arg04"], "Argentina 2004", c(-4, 4))
+dib(b$wage_std_89[ok89], b$formal_89[ok89], sm["mex89"], "México 1989", c(-2, 2))
+dib(b$wage_std_01[ok01], b$formal_01[ok01], sm["mex01"], "México 2001", c(-2, 2))
+```
+
+### Verificación numérica de las afirmaciones del texto
+
+```{r afirmaciones}
+resumen <- function(w, f, minimo) data.frame(
+  N = length(w), Informal_pct = round(100 * mean(f == 0), 1),
+  sd_formal = sd(w[f == 1]), sd_informal = sd(w[f == 0]), media_formal = mean(w[f == 1]), media_informal = mean(w[f == 0]),
+  debajo_min_formal_pct = 100 * mean(w[f == 1] < minimo), debajo_min_informal_pct = 100 * mean(w[f == 0] < minimo),
+  cerca_min_formal_pct = 100 * mean(abs(w[f == 1] - minimo) < .1), cerca_min_informal_pct = 100 * mean(abs(w[f == 0] - minimo) < .1))
+tab_af <- rbind(`Argentina 1993` = resumen(b$wage_std_93[ok93], b$formal_93[ok93], sm["arg93"]),
+                `Argentina 2004` = resumen(b$wage_std_04s2[ok04], b$formal_04s2[ok04], sm["arg04"]),
+                `México 1989 (B)` = resumen(b$wage_std_89[ok89], b$formal_89[ok89], sm["mex89"]),
+                `México 2001 (B)` = resumen(b$wage_std_01[ok01], b$formal_01[ok01], sm["mex01"]))
+kable(tab_af, digits = 2, caption = "Estadísticas por grupo (sd = desvío del log-salario estandarizado; 'cerca' = a menos de 0,1 del salario mínimo)")
+```
+
+```{r afirmaciones-chk, echo=FALSE, results='asis'}
+chk <- function(txt, cond, registrar = TRUE) { cat(if (cond) "- ✅ " else "- ⚠️ ", txt, if (cond) "\n" else " — **NO se verifica**\n", sep = ""); if (!cond && registrar) reg("Parte I (c) · Texto", txt); invisible(cond) }
+cat("**Afirmaciones del PDF vs. datos:**\n\n")
+chk("Argentina: el salario mínimo aumenta entre 1993 y 2004 (la línea se mueve a la derecha).", sm["arg04"] > sm["arg93"])
+chk("México: el salario mínimo disminuye entre 1989 y 2001 (la línea se mueve a la izquierda).", sm["mex01"] < sm["mex89"])
+chk("Argentina: la distribución de los informales es más desigual en 2004 que en 1993 (mayor dispersión).", tab_af["Argentina 2004", "sd_informal"] > tab_af["Argentina 1993", "sd_informal"])
+chk("México: la distribución de los informales es más desigual (mayor dispersión) en 2001 que en 1989.", tab_af["México 2001 (B)", "sd_informal"] > tab_af["México 1989 (B)", "sd_informal"] + 0.02, registrar = FALSE)   # se explica y registra más abajo (mex-sd)
+chk("México: la distribución de los informales se corre hacia la izquierda en 2001 respecto de 1989 («engrosamiento» del lado izquierdo).", tab_af["México 2001 (B)", "media_informal"] < tab_af["México 1989 (B)", "media_informal"] - 0.1)
+chk("Argentina 1993: formales e informales con distribuciones más parecidas que en 2004 (informales algo más a la izquierda).", abs(tab_af["Argentina 1993", "media_formal"] - tab_af["Argentina 1993", "media_informal"]) < abs(tab_af["Argentina 2004", "media_formal"] - tab_af["Argentina 2004", "media_informal"]))
+chk("Argentina 2004: los informales tienen una distribución marcadamente más a la izquierda que los formales.", tab_af["Argentina 2004", "media_informal"] < tab_af["Argentina 2004", "media_formal"] - 0.5)
+chk("México 1989: hay más informales que formales por debajo del salario mínimo.", tab_af["México 1989 (B)", "debajo_min_informal_pct"] > tab_af["México 1989 (B)", "debajo_min_formal_pct"])
+chk("México 2001: los informales se agrupan en torno al salario mínimo (más que los formales).", tab_af["México 2001 (B)", "cerca_min_informal_pct"] > tab_af["México 2001 (B)", "cerca_min_formal_pct"])
+chk("México 2001: «sólo unos pocos trabajadores formales reciben salarios por debajo del salario mínimo».", tab_af["México 2001 (B)", "debajo_min_formal_pct"] < 10)
+chk("México 1989: mayor proporción de informales en torno al mínimo que de formales.", tab_af["México 1989 (B)", "cerca_min_informal_pct"] > tab_af["México 1989 (B)", "cerca_min_formal_pct"])
+```
+
+```{r mex-sd, echo=FALSE, results='asis'}
+d_sd <- tab_af["México 2001 (B)", "sd_informal"] - tab_af["México 1989 (B)", "sd_informal"]
+if (d_sd <= 0.02) {
+  cat("\n<div class='disc'>⚠️ <b>OBSERVACIÓN (México, «más desigual»).</b> El PDF afirma que la distribución de los salarios informales es «más desigual en 2001 que en 1989». Medida con el desvío estándar del log-salario estandarizado, la dispersión de los informales <b>no aumenta</b> (", fnum(tab_af["México 1989 (B)", "sd_informal"], 2), " en 1989 y ", fnum(tab_af["México 2001 (B)", "sd_informal"], 2),
+      " en 2001). Lo que cambia es la <b>posición</b> de la distribución (la media de los informales pasa de ", fnum(tab_af["México 1989 (B)", "media_informal"], 2), " a ", fnum(tab_af["México 2001 (B)", "media_informal"], 2), ") y su asimetría. En Argentina, en cambio, sí hay más dispersión (", fnum(tab_af["Argentina 1993", "sd_informal"], 2), " → ", fnum(tab_af["Argentina 2004", "sd_informal"], 2),
+      "). Además, en México los salarios están truncados en ±1,5 por construcción de la base, lo que limita la dispersión medible. La frase del PDF es válida para Argentina pero imprecisa para México.</div>\n", sep = "")
+  reg("Parte I (c.2) · Texto México", sprintf("El PDF dice que los informales mexicanos tienen una distribución más desigual en 2001, pero el desvío estándar es %s (1989) vs %s (2001): cambia la posición, no la dispersión.", fnum(tab_af["México 1989 (B)", "sd_informal"], 2), fnum(tab_af["México 2001 (B)", "sd_informal"], 2)))
+}
+```
+
+```{r pie-fig4, echo=FALSE, results='asis'}
+cat("\n<div class='disc'>⚠️ <b>DISCREPANCIA (epígrafe de la Figura 4).</b> El PDF titula la Figura 4 «…para Argentina (1993 y segundo semestre de 2004) y México (1989 y <b>2004</b>)». México no tiene datos de 2004 en la base: el año correcto es <b>2001</b>, como muestran los propios paneles y el resto del texto.</div>\n")
+reg("Parte I (c.2) · Figura 4", "El epígrafe dice 'México (1989 y 2004)'; debería decir 2001 (la base no tiene México 2004).")
+cat("<div class='disc'>⚠️ <b>OBSERVACIÓN metodológica (línea del salario mínimo en México).</b> En el <code>.do</code> la línea vertical de México es la media de <code>min_wage_std_*</code> sobre <b>todas</b> las filas (zonas A, B y C), aunque las densidades se grafican solo para la zona B. La media de la zona B es ",
+    fnum(mex89_B, 3), " (1989) y ", fnum(mex01_B, 3), " (2001), frente a ", fnum(sm["mex89"], 3), " y ", fnum(sm["mex01"], 3), " usadas en el PDF. La diferencia es pequeña y no cambia las conclusiones.</div>\n", sep = "")
+reg("Parte I (c) · Salario mínimo México", sprintf("Las líneas usan la media de todas las zonas (%s y %s) y no la de la zona B (%s y %s).", fnum(sm["mex89"]), fnum(sm["mex01"]), fnum(mex89_B), fnum(mex01_B)))
+```
+
+# Parte II: Curvas de Engel para Argentina
+
+```{r datos2}
+e  <- as.data.frame(lapply(leer("Engel[.]dta$"), function(x) if (inherits(x, "haven_labelled")) as.numeric(x) else x))
+cat("Hogares:", nrow(e), "· con sh_g_alim:", sum(!is.na(e$sh_g_alim)), "· con sh_g_transp:", sum(!is.na(e$sh_g_transp)), "\n")
+```
+
+## (a) Estimaciones paramétricas (lineal y cuadrática), errores robustos
+
+```{r parametricas}
+tabla_param <- function(y) {
+  d  <- e[!is.na(e[[y]]), ]
+  m1 <- lm(reformulate("lgastot", y), d); m2 <- lm(reformulate(c("lgastot", "lgastot2"), y), d)
+  rob <- function(m) { V <- vcovHC(m, type = "HC1"); s <- sqrt(diag(V)); z <- coef(m) / s
+                       data.frame(var = names(coef(m)), coef = coef(m), se = s, p = 2 * pt(-abs(z), df.residual(m))) }
+  list(m1 = m1, m2 = m2, r1 = rob(m1), r2 = rob(m2), d = d)
+}
+pa <- tabla_param("sh_g_alim"); pt_ <- tabla_param("sh_g_transp")
+
+mostrar <- function(P) {
+  cel <- function(r, v) { x <- r[r$var == v, ]; if (!nrow(x)) c("-", "-") else c(paste0(fnum(x$coef, 4), st(x$p)), paste0("(", fnum(x$se, 4), ")")) }
+  tb <- do.call(rbind, lapply(c("lgastot", "lgastot2", "(Intercept)"), function(v)
+    data.frame(Variable = c(sub("\\(Intercept\\)", "constante", v), ""), Lineal = cel(P$r1, v), Cuadratica = cel(P$r2, v))))
+  rbind(tb, data.frame(Variable = c("Observaciones", "R²"), Lineal = c(nobs(P$m1), fnum(summary(P$m1)$r.squared, 4)), Cuadratica = c(nobs(P$m2), fnum(summary(P$m2)$r.squared, 4))))
+}
+kable(mostrar(pa), row.names = FALSE, align = "lrr", caption = "Tabla 1 (réplica). Share del gasto en alimentos.")
+kable(mostrar(pt_), row.names = FALSE, align = "lrr", caption = "Tabla 2 (réplica). Share del gasto en transporte.")
+```
+
+```{r cmp-param}
+P3 <- function(tab, mod, v, coef, se, stars) data.frame(tab = tab, mod = mod, var = v, coef_PDF = coef, se_PDF = se, stars_PDF = stars, stringsAsFactors = FALSE)
+pdf_p <- rbind(
+  P3("Tabla 1", "r1", "lgastot", -0.0766, 0.0080, "***"), P3("Tabla 1", "r1", "(Intercept)", 0.8722, 0.0614, "***"),
+  P3("Tabla 1", "r2", "lgastot", -0.1360, 0.1240, ""), P3("Tabla 1", "r2", "lgastot2", 0.0040, 0.0081, ""), P3("Tabla 1", "r2", "(Intercept)", 1.0895, 0.4723, "**"),
+  P3("Tabla 2", "r1", "lgastot", 0.0133, 0.0071, "*"), P3("Tabla 2", "r1", "(Intercept)", 0.0472, 0.0528, ""),
+  P3("Tabla 2", "r2", "lgastot", -0.2540, 0.0915, "***"), P3("Tabla 2", "r2", "lgastot2", 0.0180, 0.0062, "***"), P3("Tabla 2", "r2", "(Intercept)", 1.027, 0.3414, "***"))
+res_p <- rbind(cbind(tab = "Tabla 1", mod = "r1", pa$r1), cbind(tab = "Tabla 1", mod = "r2", pa$r2),
+               cbind(tab = "Tabla 2", mod = "r1", pt_$r1), cbind(tab = "Tabla 2", mod = "r2", pt_$r2))
+cp <- merge(pdf_p, res_p, by = c("tab", "mod", "var"), all.x = TRUE)
+cp$stars_R <- st(cp$p)
+cp$ok_coef <- abs(cp$coef - cp$coef_PDF) < 1.1e-4; cp$ok_se <- abs(cp$se - cp$se_PDF) < 1.1e-4; cp$ok_st <- cp$stars_R == cp$stars_PDF
+cat("Celdas:", nrow(cp), "· coef OK:", sum(cp$ok_coef), "· EE OK:", sum(cp$ok_se), "· asteriscos OK:", sum(cp$ok_st), "\n")
+r2_pdf <- c(t1_lin = .1669, t1_cuad = .1674, t2_lin = .0075, t2_cuad = .0224); r2_r <- c(summary(pa$m1)$r.squared, summary(pa$m2)$r.squared, summary(pt_$m1)$r.squared, summary(pt_$m2)$r.squared)
+n_r <- c(nobs(pa$m1), nobs(pt_$m1))
+cat("R2 PDF:", r2_pdf, " · R:", round(r2_r, 4), " · N:", n_r, "(PDF 573 y 563)\n")
+bad <- cp[!(cp$ok_coef & cp$ok_se & cp$ok_st), c("tab", "mod", "var", "coef_PDF", "coef", "se_PDF", "se", "stars_PDF", "stars_R", "p")]
+if (nrow(bad)) kable(bad, digits = 4, row.names = FALSE, caption = "Celdas que NO coinciden")
+for (i in which(!(cp$ok_coef & cp$ok_se))) reg("Parte II (a)/(d) · Tablas 1-2", sprintf("%s %s %s: PDF = %s (%s), R = %s (%s)", cp$tab[i], cp$mod[i], cp$var[i], fnum(cp$coef_PDF[i], 4), fnum(cp$se_PDF[i], 4), fnum(cp$coef[i], 4), fnum(cp$se[i], 4)))
+for (i in which(cp$ok_coef & cp$ok_se & !cp$ok_st)) reg("Parte II · asteriscos", sprintf("%s %s %s: PDF '%s', R '%s' (p = %s)", cp$tab[i], cp$mod[i], cp$var[i], cp$stars_PDF[i], cp$stars_R[i], fnum(cp$p[i], 4)))
+for (i in which(abs(r2_r - r2_pdf) > 1.1e-4)) reg("Parte II · R²", sprintf("%s: PDF = %s, R = %s", names(r2_pdf)[i], fnum(r2_pdf[i], 4), fnum(r2_r[i], 4)))
+```
+
+```{r cmp-param-txt, echo=FALSE, results='asis'}
+if (all(cp$ok_coef & cp$ok_se) && all(abs(r2_r - r2_pdf) < 1.1e-4)) cat("<div class='ok'>✅ Todos los coeficientes, errores estándar robustos (HC1), R² y observaciones de las Tablas 1 y 2 coinciden con el PDF.</div>\n")
+if (any(!cp$ok_coef)) cat("<div class='disc'>⚠️ <b>OBSERVACIÓN (formato, Tabla 2, columna cuadrática).</b> El PDF imprime <code>-0,2540</code> y <code>1,027</code> para <code>lgastot</code> y la constante, pero con 4 decimales R da <code>", fnum(coef(pt_$m2)["lgastot"], 4), "</code> y <code>", fnum(coef(pt_$m2)["(Intercept)"], 4),
+    "</code>: el PDF parece redondear a 3 decimales (−0,254 y 1,027) y completar con un cero, mientras el resto de la tabla usa 4 decimales reales. Diferencia menor, sin efecto en las conclusiones.</div>\n", sep = "")
+tp <- -coef(pt_$m2)["lgastot"] / (2 * coef(pt_$m2)["lgastot2"])
+cat("**Chequeo del texto de la Tabla 2:** el mínimo de la parábola del gasto en transporte está en lgastot = ", fnum(tp, 2), " (gasto total ≈ ", format(round(exp(tp)), big.mark = "."), " pesos mensuales); el PDF no informa ese valor pero describe correctamente el patrón (primero decrece y luego crece).\n", sep = "")
+```
+
+## (b) Estimador no paramétrico de Nadaraya-Watson (gaussiano, h = 0,18)
+
+```{r figura5, fig.width=7.5, fig.height=5}
+d <- pa$d; nw_a <- nw(d$lgastot, d$sh_g_alim, 0.18)
+plot(d$lgastot, d$sh_g_alim, pch = 16, cex = .6, xlim = c(5, 10), ylim = c(0, .8), xlab = "Logaritmo del gasto total familiar", ylab = "Share del gasto en alimentos")
+lines(nw_a$x, nw_a$fit, col = "red", lty = 2, lwd = 1.5)
+```
+
+## (c) Paramétricas vs. no paramétrica con intervalos de confianza
+
+Los intervalos de confianza de `lpoly, ci` se aproximan con el ancho piloto que Stata reporta al pie del gráfico del PDF (`pwidth` = 0,41 para alimentos y 0,34 para transporte); las líneas punteadas (límites superior/inferior) son, como en el `.do`, $\hat y \pm 1{,}96\,se$ del modelo **lineal**.
+
+```{r figura6, fig.width=8, fig.height=5.2}
+grafico_param <- function(P, y, pw, etiqueta, ylim) {
+  d <- P$d; ci <- nw_ci(d$lgastot, d[[y]], 0.18, pw)
+  X1 <- model.matrix(P$m1); se1 <- sqrt(rowSums((X1 %*% vcovHC(P$m1, type = "HC1")) * X1))      # predict, stdp (robusto)
+  o <- order(d$lgastot)
+  plot(NA, xlim = c(5, 10), ylim = ylim, xlab = "Logaritmo del gasto total familiar", ylab = etiqueta)
+  polygon(c(ci$x, rev(ci$x)), c(ci$lo, rev(ci$hi)), col = "grey80", border = NA)
+  lines(d$lgastot[o], fitted(P$m1)[o], col = "black"); lines(d$lgastot[o], fitted(P$m2)[o], col = "red")
+  lines(d$lgastot[o], (fitted(P$m1) + 1.96 * se1)[o], col = "grey50", lty = 3); lines(d$lgastot[o], (fitted(P$m1) - 1.96 * se1)[o], col = "grey50", lty = 3)
+  lines(ci$x, ci$fit, col = "blue", lty = 2)
+  legend("topright", c("95% CI (no param.)", "Paramétrica (lineal)", "Paramétrica (cuadrática)", "No paramétrica", "Límites CI (lineal)"),
+         lty = c(NA, 1, 1, 2, 3), col = c("grey80", "black", "red", "blue", "grey50"), pch = c(15, NA, NA, NA, NA), bty = "n", cex = .7)
+  # Proporción de la grilla en la que cada línea paramétrica cae dentro del IC de la NW
+  g <- ci$x; l1 <- predict(P$m1, data.frame(lgastot = g)); l2 <- predict(P$m2, data.frame(lgastot = g, lgastot2 = g^2))
+  c(lineal = mean(l1 >= ci$lo & l1 <= ci$hi), cuadratica = mean(l2 >= ci$lo & l2 <= ci$hi))
+}
+dentro_a <- grafico_param(pa, "sh_g_alim", 0.41, "Share del gasto en alimentos", c(0, .65))
+```
+
+```{r chk-fig6, echo=FALSE, results='asis'}
+cat("Proporción de la grilla (50 puntos) en la que la estimación paramétrica cae **dentro** del IC no paramétrico — alimentos: lineal = ", fnum(100 * dentro_a["lineal"], 0), "%, cuadrática = ", fnum(100 * dentro_a["cuadratica"], 0), "%.\n\n", sep = "")
+if (min(dentro_a) >= 0.9) cat("<div class='ok'>✅ Coincide con el PDF: ambas estimaciones paramétricas están (prácticamente) dentro del intervalo de confianza no paramétrico, por lo que sin test formal no se puede rechazar ninguna especificación.</div>\n") else {
+  cat("<div class='disc'>⚠️ <b>DISCREPANCIA.</b> Con el IC aproximado, alguna de las paramétricas sale del intervalo en parte de la grilla (ver proporciones). El IC es una aproximación al de Stata.</div>\n"); reg("Parte II (c) · Alimentos", "Con el IC aproximado, las paramétricas no quedan dentro del IC no paramétrico en toda la grilla.") }
+```
+
+## (d) Repetición con el share del gasto en transporte
+
+```{r figura7, fig.width=7.5, fig.height=5}
+dt <- pt_$d; nw_t <- nw(dt$lgastot, dt$sh_g_transp, 0.18)
+plot(dt$lgastot, dt$sh_g_transp, pch = 16, cex = .6, xlim = c(5, 10), ylim = c(0, .8), xlab = "Logaritmo del gasto total familiar", ylab = "Share del gasto en transporte")
+lines(nw_t$x, nw_t$fit, col = "red", lty = 2, lwd = 1.5)
+```
+
+```{r figura8, fig.width=8, fig.height=5.2}
+dentro_t <- grafico_param(pt_, "sh_g_transp", 0.34, "Share del gasto en transporte", c(.05, .33))
+```
+
+```{r chk-fig8, echo=FALSE, results='asis'}
+cat("Proporción de la grilla dentro del IC no paramétrico — transporte: lineal = ", fnum(100 * dentro_t["lineal"], 0), "%, cuadrática = ", fnum(100 * dentro_t["cuadratica"], 0), "%.\n\n", sep = "")
+if (dentro_t["lineal"] < 0.8 && dentro_t["cuadratica"] > dentro_t["lineal"]) cat("<div class='ok'>✅ Coincide con el PDF: la paramétrica lineal no se encuentra dentro del IC no paramétrico a lo largo de toda la distribución, y la cuadrática se ajusta mucho mejor (con diferencias hacia los extremos).</div>\n") else {
+  cat("<div class='disc'>⚠️ <b>DISCREPANCIA.</b> El patrón descripto en el PDF (lineal fuera del IC, cuadrática mayormente dentro) no se reproduce con el IC aproximado.</div>\n"); reg("Parte II (d) · Transporte", "El patrón lineal fuera / cuadrática dentro del IC no se reproduce con el IC aproximado.") }
+cat("<div class='disc'>⚠️ <b>OBSERVACIÓN (inconsistencia en el PDF).</b> Para transporte, el PDF concluye «es posible rechazar la especificación lineal <i>y la cuadrática</i>» a partir del gráfico, pero a la vez dice que la cuadrática «se encuentra dentro de los intervalos de confianza… prácticamente a lo largo de toda la distribución». Además, el test de Zheng del propio PDF (Tabla 3) <b>no rechaza</b> la forma cuadrática (p = 0,7659). La conclusión gráfica sobre la cuadrática debería ser que <b>no</b> se rechaza.</div>\n")
+reg("Parte II (d) · Texto", "Para transporte el texto concluye que se rechaza la forma cuadrática, pero la propia descripción (dentro del IC) y el test de Zheng (p = 0,7659) indican que no se rechaza.")
+```
+
+## (e) Test de Zheng (1996)
+
+Réplica de `zheng.do` (kernel gaussiano; ancho de banda $h=0{,}9\min(s, IQR/1{,}349)N^{-1/5}$ sobre `lgastot`; residuos de MCO con la forma paramétrica bajo $H_0$):
+$T_n=\dfrac{\sum_{i\neq j}K_{ij}\,e_ie_j}{\sqrt{2\sum_{i\neq j}K_{ij}^2e_i^2e_j^2}}$, con p-valor $=2\,[1-F_{t(N)}(|T_n|)]$ (como en el `.do`).
+
+```{r zheng}
+zheng <- function(y, x, cuad = FALSE) {
+  d <- e[!is.na(e[[y]]), ]; f <- if (cuad) reformulate(c(x, "lgastot2"), y) else reformulate(x, y)
+  m <- lm(f, d); res <- resid(m); xv <- d[[x]]; N <- length(res)
+  h <- h_opt(xv)
+  Kx <- dnorm(outer(xv, xv, "-") / h); diag(Kx) <- 0
+  num <- abs(sum(Kx * outer(res, res)))                       # sum_{i != j} K_ij e_i e_j (Stata toma el valor absoluto)
+  den <- sqrt(2 * sum(Kx^2 * outer(res^2, res^2)))
+  Tn <- num / den
+  c(N = N, h = h, Tn = Tn, p = 2 * pt(Tn, N, lower.tail = FALSE), p_normal = 2 * pnorm(-Tn))
+}
+Z <- rbind(`Alimentos · lineal` = zheng("sh_g_alim", "lgastot"), `Alimentos · cuadrática` = zheng("sh_g_alim", "lgastot", TRUE),
+           `Transporte · lineal` = zheng("sh_g_transp", "lgastot"), `Transporte · cuadrática` = zheng("sh_g_transp", "lgastot", TRUE))
+kable(round(Z, 4), caption = "Test de Zheng (R). p = con la t de Student (como el .do); p_normal = con la N(0,1)")
+```
+
+```{r zheng-cmp}
+pdf_z <- data.frame(caso = rownames(Z), T_PDF = c(0.9246, 1.0717, 1.9078, 0.2979), p_PDF = c(0.3556, 0.2843, 0.0569, 0.7659))
+cz <- cbind(pdf_z, T_R = Z[, "Tn"], p_R = Z[, "p"])
+cz$ok <- abs(cz$T_R - cz$T_PDF) < 1.1e-4 & abs(cz$p_R - cz$p_PDF) < 1.1e-4
+kable(cz, digits = 4, row.names = FALSE, caption = "Tabla 3: PDF vs. R")
+for (i in which(!cz$ok)) reg("Parte II (e) · Zheng", sprintf("%s: PDF Tn = %s (p = %s), R Tn = %s (p = %s)", cz$caso[i], fnum(cz$T_PDF[i], 4), fnum(cz$p_PDF[i], 4), fnum(cz$T_R[i], 4), fnum(cz$p_R[i], 4)))
+```
+
+```{r zheng-txt, echo=FALSE, results='asis'}
+if (all(cz$ok)) cat("<div class='ok'>✅ Los cuatro estadísticos y p-valores del test de Zheng coinciden con la Tabla 3 del PDF.</div>\n")
+cat("<div class='disc'>⚠️ <b>OBSERVACIÓN (distribución del estadístico).</b> La Tabla 3 del PDF rotula el estadístico como $T_n \\xrightarrow{d} N(0,1)$, pero los p-valores que reporta se calcularon con la <b>t de Student con N g.l.</b> (<code>ttail(N, Tn)</code> en <code>zheng.do</code>). Con la N(0,1) los p-valores serían ",
+    paste(fnum(Z[, "p_normal"], 4), collapse = " / "), " (la diferencia es mínima porque N ≈ 570 y no altera ninguna conclusión). Además, el <code>.do</code> toma el valor absoluto del numerador, por lo que $T_n \\geq 0$ siempre y solo es válido el test bilateral.</div>\n", sep = "")
+reg("Parte II (e) · Zheng", "El PDF dice Tn ~ N(0,1) pero los p-valores se calcularon con t(N) (zheng.do); con la normal serían casi idénticos. Tn se toma en valor absoluto.")
+concl <- c(Z[1, "p"] > .10, Z[2, "p"] > .10, Z[3, "p"] < .10, Z[3, "p"] > .05, Z[4, "p"] > .10)
+if (all(concl)) cat("<div class='ok'>✅ Las conclusiones del PDF se verifican: alimentos no rechaza ni la lineal ni la cuadrática al 10% ni al 5%; transporte rechaza la lineal al 10% (p = ", fnum(Z[3, "p"], 4), ") pero no al 5%, y no rechaza la cuadrática.</div>\n", sep = "")
+```
+
+# Parte III: Modelo semiparamétrico parcialmente lineal (Robinson, 1988)
+
+$sh\_g\_alim = g(lgastot) + \beta\, nhijos + U$
+
+```{r datos3}
+s <- as.data.frame(lapply(leer("semipar"), function(x) if (inherits(x, "haven_labelled")) as.numeric(x) else x))
+s <- s[!is.na(s$sh_g_alim), ]
+cat("Hogares con sh_g_alim observado:", nrow(s), "(PDF: 1575)\n")
+```
+
+## (a) Estimador de Robinson
+
+Pasos: (1) NW de `sh_g_alim` sobre `lgastot` y NW de `nhijos` sobre `lgastot` (kernel gaussiano, h = 0,22) y se guardan los residuos; (2) MCO de un residuo sobre el otro **sin constante**.
+
+```{r robinson}
+nw_in <- function(x, y, h) sapply(x, function(z) { w <- dnorm((x - z) / h); sum(w * y) / sum(w) })   # NW evaluada en cada observación
+hh <- 0.22
+ry <- s$sh_g_alim - nw_in(s$lgastot, s$sh_g_alim, hh); rn <- s$nhijos - nw_in(s$lgastot, s$nhijos, hh)
+m_rob <- lm(ry ~ 0 + rn)
+beta <- unname(coef(m_rob)); se_b <- sqrt(vcovHC(m_rob, type = "HC1")[1, 1])
+r2_unc <- summary(m_rob)$r.squared; r2_cen <- summary(lm(ry ~ rn))$r.squared
+cat(sprintf("beta = %.4f ; EE robusto = %.4f ; z = %.2f ; N = %d ; R2 (sin constante) = %.4f ; R2 (centrado) = %.4f\n", beta, se_b, beta / se_b, nrow(s), r2_unc, r2_cen))
+cat(sprintf("Para referencia, EE no robusto = %.4f\n", summary(m_rob)$coefficients[1, 2]))
+```
+
+```{r cmp-robinson, echo=FALSE, results='asis'}
+se_nr <- summary(m_rob)$coefficients[1, 2]
+okb <- round(beta, 4) == 0.0218; oks <- round(se_b, 4) == 0.0025; okn <- nrow(s) == 1575
+okr <- abs(r2_unc - 0.0463) < 1.1e-4 || abs(r2_cen - 0.0463) < 1.1e-4
+print(kable(data.frame(Concepto = c("β (nhijos)", "EE robusto", "Observaciones", "R²"), PDF = c("0,0218***", "0,0025", "1575", "0,0463"),
+                 R = c(fnum(beta, 4), fnum(se_b, 4), nrow(s), paste0(fnum(r2_unc, 4), " (sin cte.) / ", fnum(r2_cen, 4), " (centrado)")),
+                 Coincide = ifelse(c(okb, oks, okn, okr), "✅", "⚠️")), row.names = FALSE, caption = "Tabla 4: PDF vs. R"))
+if (okb && oks && okn && okr) cat("\n<div class='ok'>✅ La Tabla 4 coincide con el PDF.</div>\n") else {
+  if (!okb) reg("Parte III (a) · Tabla 4", sprintf("β: PDF = 0,0218, R = %s", fnum(beta, 4)))
+  if (!oks) { reg("Parte III (a) · Tabla 4", sprintf("EE: PDF = 0,0025 (y su nota dice 'robustos'), pero el EE robusto HC1 es %s; 0,0025 coincide con el EE no robusto (%s).", fnum(se_b, 4), fnum(se_nr, 4)))
+              cat("\n<div class='disc'>⚠️ <b>DISCREPANCIA (Tabla 4, error estándar).</b> La nota de la tabla dice «desvíos estándar robustos», pero el valor 0,0025 corresponde al error estándar <b>no robusto</b> (", fnum(se_nr, 5), "); el robusto (HC1) es ", fnum(se_b, 5), " ≈ 0,0026. No cambia la significatividad (z = ", fnum(beta / se_b, 1), ").</div>\n", sep = "") }
+  if (!okr) reg("Parte III (a) · Tabla 4", sprintf("R²: PDF = 0,0463, R = %s (sin cte.) / %s (centrado)", fnum(r2_unc, 4), fnum(r2_cen, 4)))
+  cat("\n<div class='disc'>⚠️ <b>DISCREPANCIA</b> en la Tabla 4 (ver tabla y resumen).</div>\n") }
+cat("<div class='disc'>⚠️ <b>DISCREPANCIA (interpretación del coeficiente).</b> El PDF dice que un hijo adicional aumenta la participación del gasto en alimentos en «0,0218 <i>puntos porcentuales</i>». Como <code>sh_g_alim</code> está medida como fracción (entre 0 y 1), el coeficiente 0,0218 equivale a <b>2,18 puntos porcentuales</b> (en la Parte II el PDF sí convierte bien la unidad al interpretar el efecto de un aumento de 1% en el gasto).</div>\n")
+reg("Parte III (a) · Interpretación", "El PDF interpreta β = 0,0218 como 0,0218 puntos porcentuales; al ser una fracción, son 2,18 puntos porcentuales.")
+```
+
+```{r cv-h, echo=FALSE, results='asis'}
+cv <- function(h) mean((s$sh_g_alim - sapply(seq_len(nrow(s)), function(i) { w <- dnorm((s$lgastot[-i] - s$lgastot[i]) / h); sum(w * s$sh_g_alim[-i]) / sum(w) }))^2)
+hcv <- optimize(cv, c(0.05, 0.8))$minimum
+cat("**Nota sobre el ancho de banda.** El PDF usa h = 0,22 sin explicar su origen. El h que minimiza la validación cruzada *leave-one-out* para `sh_g_alim` sobre `lgastot` en esta muestra es ", fnum(hcv, 3), ". ",
+    if (abs(hcv - 0.22) < 0.03) "Es consistente con 0,22. ✅\n" else "Difiere de 0,22; el PDF no indica el criterio usado.\n", sep = "")
+```
+
+## (b) Parte no paramétrica $g(lgastot)$
+
+$\widehat{sh\_g\_alim\_hijo} = sh\_g\_alim - \hat\beta\cdot nhijos$, y luego NW (gaussiano, h = 0,22).
+
+```{r figura9, fig.width=7.5, fig.height=5}
+s$y_hijo <- s$sh_g_alim - beta * s$nhijos
+g_semi <- nw(s$lgastot, s$y_hijo, 0.22)
+plot(s$lgastot, s$y_hijo, pch = 16, cex = .5, xlim = c(5, 10), ylim = c(-.05, .82), xlab = "Logaritmo del gasto total familiar", ylab = "Share del gasto en alimentos")
+lines(g_semi$x, g_semi$fit, col = "red", lty = 2, lwd = 1.5)
+```
+
+## (c) Semiparamétrica con IC vs. no paramétrica sin `nhijos`
+
+```{r figura10, fig.width=8, fig.height=5.2}
+ci_s <- nw_ci(s$lgastot, s$y_hijo, 0.22, 0.35)
+np   <- nw(s$lgastot, s$sh_g_alim, 0.22)
+plot(NA, xlim = c(5, 10), ylim = c(.05, .62), xlab = "Logaritmo del gasto total familiar", ylab = "Share del gasto en alimentos")
+polygon(c(ci_s$x, rev(ci_s$x)), c(ci_s$lo, rev(ci_s$hi)), col = "grey80", border = NA)
+lines(ci_s$x, ci_s$fit, col = "black"); lines(np$x, np$fit, col = "red", lty = 2)
+legend("topright", c("95% CI", "Semiparamétrica", "No paramétrica"), pch = c(15, NA, NA), lty = c(NA, 1, 2), col = c("grey80", "black", "red"), bty = "n")
+fuera <- mean(np$fit < ci_s$lo | np$fit > ci_s$hi)
+dif_media <- mean(np$fit - ci_s$fit)
+```
+
+```{r chk-fig10, echo=FALSE, results='asis'}
+cat("Proporción de la grilla en la que la no paramétrica queda **fuera** del IC de la semiparamétrica: ", fnum(100 * fuera, 0), "%. Diferencia media (no param. − semiparam.): ", fnum(dif_media, 4), " (≈ $\\hat\\beta\\cdot\\overline{nhijos}$ = ", fnum(beta * mean(s$nhijos), 4), ").\n\n", sep = "")
+if (fuera > 0.3 && dif_media > 0) cat("<div class='ok'>✅ Coincide con el PDF: ambas estimaciones tienen una forma similar, pero la no paramétrica (sin controlar por número de hijos) queda por encima y en gran parte fuera del IC de la semiparamétrica, cuya amplitud es muy estrecha. Se explica porque `nhijos` es relevante para el share de alimentos y está correlacionado con el gasto total.</div>\n") else {
+  cat("<div class='disc'>⚠️ <b>DISCREPANCIA.</b> El patrón descripto en el PDF (no paramétrica fuera del IC de la semiparamétrica) no se reproduce con el IC aproximado.</div>\n"); reg("Parte III (c) · Figura 10", "La no paramétrica no queda claramente fuera del IC de la semiparamétrica con el IC aproximado.") }
+```
+
+# Resumen de puntos de discrepancia con el PDF
+
+```{r resumen}
+if (nrow(disc)) kable(disc, row.names = TRUE, caption = "Todas las discrepancias / observaciones detectadas respecto del PDF") else cat("Sin discrepancias.")
+```
+
+# Información de la sesión
+
+```{r sesion}
+sessionInfo()
+```

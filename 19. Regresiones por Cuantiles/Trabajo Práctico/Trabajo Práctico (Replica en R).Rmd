@@ -1,0 +1,494 @@
+---
+title: "Trabajo Práctico - Regresiones por Cuantiles (UNLP)"
+subtitle: "Réplica en R del `Trabajo Práctico.do` y contraste con `Trabajo Práctico (R).pdf`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: false
+    df_print: paged
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, comment = "#>",
+                      fig.align = "center")
+options(digits = 5, scipen = 999)
+suppressPackageStartupMessages({
+  library(haven); library(quantreg); library(ggplot2); library(knitr)
+})
+# Ruta de datos: el .Rmd vive en la carpeta "Trabajo Práctico/"
+ruta <- if (file.exists("Datos/eph14s2_mincer.dta")) "Datos/eph14s2_mincer.dta" else "eph14s2_mincer.dta"
+```
+
+```{css, echo=FALSE}
+.disc {border-left: 6px solid #c0392b; background: #fdecea; padding: 8px 14px; margin: 12px 0; border-radius: 3px;}
+.disc::before {content: "⚠ DISCREPANCIA CON EL PDF"; display: block; font-weight: bold; color: #c0392b; margin-bottom: 4px;}
+.ok {border-left: 6px solid #27ae60; background: #eafaf1; padding: 6px 14px; margin: 10px 0; border-radius: 3px;}
+.ok::before {content: "✔ COINCIDE CON EL PDF"; display: block; font-weight: bold; color: #27ae60; margin-bottom: 2px;}
+.nota {border-left: 6px solid #2980b9; background: #eaf2f8; padding: 6px 14px; margin: 10px 0; border-radius: 3px;}
+.nota::before {content: "ℹ NOTA"; display: block; font-weight: bold; color: #2980b9; margin-bottom: 2px;}
+```
+
+::: nota
+**Cómo leer este documento.** Cada bloque de código replica en R una sección del `.do` de Stata. Las cifras del PDF de respuestas (`Trabajo Práctico (R).pdf`) están cargadas a mano en las tablas de comparación. La columna **Marca** muestra ⚠ cuando la réplica en R se aparta del PDF más allá de la tolerancia indicada (redondeo a 3 decimales en las tablas descriptivas y de regresión; ruido de remuestreo en los errores estándar bootstrap, que no pueden coincidir exactamente con los de Stata porque los generadores de números aleatorios son distintos). Los recuadros rojos **⚠ DISCREPANCIA** señalan puntos donde el *texto*, las *cifras* o el *procedimiento* del PDF no coinciden con lo que se obtiene o con lo que hace el `.do`. Los recuadros verdes confirman coincidencias importantes. Al final hay un cuadro-resumen de todas las discrepancias.
+:::
+
+```{r helpers}
+# Comparación numérica R vs PDF. tol = diferencia absoluta máxima tolerada.
+cmp <- function(nombre, r, pdf, tol, dig = 3) {
+  dif <- r - pdf
+  data.frame(Concepto = nombre, R = round(r, dig), PDF = pdf, Dif = round(dif, dig),
+             Marca = ifelse(abs(dif) > tol, "⚠", "✔"), check.names = FALSE, row.names = NULL)
+}
+# Significatividad estilo PDF (* 10%, ** 5%, *** 1%)
+stars <- function(p) ifelse(p < .01, "***", ifelse(p < .05, "**", ifelse(p < .10, "*", "")))
+# Test de Wald tipo F de Stata (`test` tras sqreg/regress): F = W/q con df2 = N - k
+wald <- function(Rm, theta, V, df2) {
+  Rm <- matrix(Rm, ncol = length(theta))
+  g  <- Rm %*% theta
+  W  <- drop(t(g) %*% solve(Rm %*% V %*% t(Rm)) %*% g)
+  q  <- nrow(Rm)
+  c(F = W / q, df1 = q, df2 = df2, p = pf(W / q, q, df2, lower.tail = FALSE))
+}
+```
+
+# Datos y generación de variables
+
+```{r datos}
+d <- as.data.frame(read_dta(ruta))
+for (v in c("gedad1", "sexo", "nivel", "jefe", "conyuge", "hijo", "casado", "soltero"))
+  d[[v]] <- as.numeric(d[[v]])
+d$lilaho <- log(d$salario)
+d$edad2  <- d$edad^2
+d$educ2  <- d$educ^2
+cat("Observaciones:", nrow(d), " | Rango de edad:", range(d$edad), "\n")
+set.seed(12345)   # igual que `set seed 12345` del .do (ver discrepancia en el Ejercicio 2)
+```
+
+::: nota
+En el `.do` las etiquetas de `gedad1` dicen "2=[18,24], 3=[25,40], 4=[41,64], 5=[65]", pero las etiquetas de valor guardadas en el `.dta` dicen "[15,24]" para el grupo 2. Los datos reales sí van de 18 a 65 años (el grupo 5 son las 80 personas con exactamente 65 años), de modo que el PDF ("18-24 años", "65 años") es consistente con los datos; la inconsistencia es sólo de etiquetas entre el `.do` y el `.dta`.
+:::
+
+# Ejercicio 1
+
+## Estadísticas descriptivas (Tabla 1)
+
+Stata (`tabstat ..., statistics(p10 median p90)`) calcula los percentiles con la definición "del promedio si $np/100$ es entero", equivalente al `type = 2` de `quantile()` en R.
+
+```{r tabla1}
+est <- function(x) c(Media = mean(x), p10 = quantile(x, .10, type = 2, names = FALSE),
+                     Mediana = quantile(x, .50, type = 2, names = FALSE),
+                     p90 = quantile(x, .90, type = 2, names = FALSE),
+                     Mínimo = min(x), Máximo = max(x))
+filas <- list(
+  "18-24 años"           = d$gedad1 == 2, "25-40 años" = d$gedad1 == 3,
+  "41-64 años"           = d$gedad1 == 4, "65 años"    = d$gedad1 == 5,
+  "Nunca asistió"        = d$nivel == 0,  "Primario incompleto"   = d$nivel == 1,
+  "Primario completo"    = d$nivel == 2,  "Secundario incompleto"  = d$nivel == 3,
+  "Secundario completo"  = d$nivel == 4,  "Superior incompleto"    = d$nivel == 5,
+  "Superior completo"    = d$nivel == 6,
+  "Mujer"                = d$sexo == 0,   "Hombre" = d$sexo == 1,
+  "Conurbano Bonaerense" = d$caba == 0,   "CABA"   = d$caba == 1)
+T1_R <- t(sapply(filas, function(i) est(d$lilaho[i])))
+colnames(T1_R) <- c("Media", "p10", "Mediana", "p90", "Mínimo", "Máximo")
+kable(round(T1_R, 4), caption = "Tabla 1 (réplica en R): estadísticas descriptivas del log del salario horario")
+```
+
+```{r tabla1-pdf}
+# Valores de la Tabla 1 del PDF (cargados a mano)
+T1_PDF <- rbind(
+  c(3.340, 2.601, 3.408, 4.097, -0.488, 6.245),
+  c(3.643, 2.844, 3.673, 4.442, -0.488, 7.498),
+  c(3.631, 2.739, 3.675, 4.511, -1.523, 6.718),
+  c(3.562, 2.435, 3.590, 4.731,  1.527, 6.427),
+  c(3.387, 2.402, 3.249, 5.082,  1.292, 5.264),
+  c(3.199, 2.151, 3.249, 3.988,  0.773, 6.186),
+  c(3.297, 2.507, 3.372, 3.942, -0.366, 6.112),
+  c(3.347, 2.597, 3.403, 4.019, -0.488, 6.246),
+  c(3.529, 2.784, 3.568, 4.250, -0.776, 7.498),
+  c(3.758, 2.966, 3.760, 4.511,  0.887, 6.718),
+  c(4.087, 3.412, 4.106, 4.798, -1.529, 6.427),
+  c(3.578, 2.670, 3.627, 4.453, -1.529, 6.651),
+  c(3.613, 2.779, 3.631, 4.442, -0.711, 7.498),
+  c(3.503, 2.662, 3.537, 4.329, -1.529, 7.498),
+  c(3.862, 3.095, 3.882, 4.645, -0.776, 6.651))
+dimnames(T1_PDF) <- dimnames(T1_R)
+# Una celda se marca si, redondeada a 3 decimales, difiere del PDF en >= 0,001
+dif1 <- round(T1_R, 3) - T1_PDF
+idx  <- which(abs(dif1) > 0.0009, arr.ind = TRUE)
+disc1 <- data.frame(Fila = rownames(T1_R)[idx[, 1]], Estadístico = colnames(T1_R)[idx[, 2]],
+                    R = round(T1_R[idx], 4), PDF = T1_PDF[idx], Dif = round(dif1[idx], 3),
+                    Marca = "⚠", row.names = NULL)
+cat("Celdas comparadas:", length(T1_PDF), " | Celdas que difieren del PDF:", nrow(disc1), "\n")
+kable(disc1, caption = "Tabla 1: celdas donde R y el PDF difieren (todas las demás coinciden a 3 decimales)")
+```
+
+::: disc
+**Tabla 1 (cifras).** De las 90 celdas, 4 no coinciden con el PDF (ver tabla anterior): Superior completo p90 (PDF 4,798; exacto 4,7988 → 4,799), 41-64 años mínimo (PDF -1,523; exacto -1,5292, que es el mismo mínimo global de la muestra que aparece en Mujer, Conurbano y Superior completo), Primario incompleto máximo (PDF 6,186; exacto 6,1850) y Secundario incompleto máximo (PDF 6,246; exacto 6,2451, el mismo máximo que el tramo 18-24). Las diferencias son de una a seis milésimas y parecen errores de tipeo al pasar la tabla de Stata al documento, no problemas de método. Las otras 86 celdas coinciden a 3 decimales.
+:::
+
+::: disc
+**Tabla 1 (texto).** El PDF afirma que el salario promedio "aumenta con el nivel educativo máximo alcanzado" y que "tomando la mediana se observan resultados similares". En la tabla **no es monótono**: quienes "nunca asistieron" (apenas 15 observaciones) tienen media 3,387 y mediana 3,249, por encima de Primario incompleto (3,199), Primario completo (3,297) y Secundario incompleto (3,347). Además, la afirmación de que el tramo 25-40 tiene el mayor salario sólo vale para la **media** (3,643 vs. 3,631); en la **mediana** el tramo 41-64 es ligeramente mayor (3,675 vs. 3,673), de modo que "resultados similares" es cierto sólo en sentido laxo.
+:::
+
+## Ecuación de Mincer por MCO (Tabla 2)
+
+```{r mco}
+m_ols <- lm(lilaho ~ edad + edad2 + educ + educ2 + sexo + caba, data = d)
+print(summary(m_ols))
+b <- coef(m_ols)
+me_ols <- c(edad = unname((b["edad"] + 2 * b["edad2"] * 30) * 100),
+            educ = unname((b["educ"] + 2 * b["educ2"] * 12) * 100),
+            sexo = unname((exp(b["sexo"]) - 1) * 100),
+            caba = unname((exp(b["caba"]) - 1) * 100))
+round(me_ols, 4)
+```
+
+```{r tabla2}
+s2 <- summary(m_ols)$coefficients
+nom2 <- c("Constante","Edad","Edad al cuadrado","Años de educación","Años de educación al cuadrado","Sexo","CABA")
+pdf2_b  <- c(2.392, 0.035, -0.000, -0.039, 0.005, 0.142, 0.136)
+pdf2_se <- c(0.098, 0.004,  0.000,  0.010, 0.000, 0.015, 0.017)
+ord <- c("(Intercept)","edad","edad2","educ","educ2","sexo","caba")
+t2 <- rbind(
+  cmp(paste(nom2, "- coef."), s2[ord, 1], pdf2_b,  0.0006),
+  cmp(paste(nom2, "- e.e."),  s2[ord, 2], pdf2_se, 0.0006),
+  cmp("Observaciones", nobs(m_ols), 7903, 0, 0),
+  cmp("R2", summary(m_ols)$r.squared, 0.214, 0.0006),
+  cmp("Efecto marginal edad (30 años), %",  me_ols["edad"], 1.35,  0.006, 2),
+  cmp("Efecto marginal educ (12 años), %",  me_ols["educ"], 8.50,  0.006, 2),
+  cmp("Efecto marginal sexo, %",            me_ols["sexo"], 15.30, 0.006, 2),
+  cmp("Efecto marginal caba, %",            me_ols["caba"], 14.53, 0.006, 2))
+kable(t2, caption = "Tabla 2 y efectos marginales del texto: R vs. PDF")
+```
+
+::: ok
+**Tabla 2 y efectos marginales.** Coeficientes, errores estándar convencionales, $R^2$ y las cuatro cifras del texto (1,35%; 8,50%; 15,30%; 14,53%) coinciden con el PDF. Las estrellas de significatividad también (todos los coeficientes son significativos al 1%).
+:::
+
+::: nota
+**Terminología (Tablas 2 y 3).** Las notas al pie del PDF llaman "desvíos estándar" a lo que son *errores estándar* de los coeficientes (convencionales en la Tabla 2; bootstrap en la Tabla 3). No cambia ningún número.
+:::
+
+# Ejercicio 2
+
+## Cuantiles condicionales sin bootstrap (primera aproximación)
+
+```{r qreg}
+X   <- model.matrix(~ edad + edad2 + educ + educ2 + sexo + caba, data = d)
+y   <- d$lilaho
+n   <- nrow(X); k <- ncol(X)
+taus <- c(.05, .25, .50, .75, .95)
+vars <- colnames(X)
+fits <- lapply(taus, function(t) rq.fit.br(X, y, tau = t))
+B_pt <- sapply(fits, function(f) f$coefficients)          # k x 5
+dimnames(B_pt) <- list(vars, paste0("q", sprintf("%02d", taus * 100)))
+kable(round(B_pt, 5), caption = "Coeficientes por cuantiles (equivalente a `qreg ... , quantile(i)`)")
+```
+
+## Bootstrap de 500 reposiciones (estimación individual, equivalente a `bsqreg`)
+
+```{r bsqreg, cache=TRUE}
+B <- 500
+boot_one <- function(tau, B, seed) {
+  set.seed(seed)
+  out <- matrix(NA_real_, B, k, dimnames = list(NULL, vars))
+  for (r in seq_len(B)) {
+    i <- sample.int(n, n, replace = TRUE)
+    out[r, ] <- rq.fit.br(X[i, , drop = FALSE], y[i], tau = tau)$coefficients
+  }
+  out
+}
+bs_ind <- lapply(seq_along(taus), function(j) boot_one(taus[j], B, 12345 + j))
+V_ind  <- lapply(bs_ind, cov)
+SE_ind <- sapply(V_ind, function(V) sqrt(diag(V)))
+dimnames(SE_ind) <- dimnames(B_pt)
+
+# Efecto marginal de educ a 12 años y test conjunto `test educ educ2` por cuantil
+me_educ <- sapply(seq_along(taus), function(j) (B_pt["educ", j] + 2 * B_pt["educ2", j] * 12) * 100)
+test_educ <- t(sapply(seq_along(taus), function(j) {
+  th <- B_pt[c("educ", "educ2"), j]
+  Vj <- V_ind[[j]][c("educ", "educ2"), c("educ", "educ2")]
+  wald(diag(2), th, Vj, n - k)
+}))
+res_ind <- data.frame(Cuantil = taus, `Efecto marginal educ (%)` = round(me_educ, 2),
+                      `F (educ=educ2=0)` = round(test_educ[, "F"], 2),
+                      `p-valor` = round(test_educ[, "p"], 4), check.names = FALSE)
+kable(res_ind, caption = "Efecto marginal de la educación (12 años) y test conjunto, por cuantil")
+```
+
+## Estimación conjunta (`sqreg`, 500 reposiciones) y Tabla 3
+
+`sqreg` remuestrea una sola vez y estima los cinco cuantiles sobre cada muestra bootstrap, de modo que entrega también las covarianzas *entre* cuantiles, necesarias para los tests del Ejercicio 3.
+
+```{r sqreg, cache=TRUE}
+set.seed(12345)
+bs_joint <- matrix(NA_real_, B, k * length(taus))
+for (r in seq_len(B)) {
+  i <- sample.int(n, n, replace = TRUE)
+  bs_joint[r, ] <- unlist(lapply(taus, function(t) rq.fit.br(X[i, , drop = FALSE], y[i], tau = t)$coefficients))
+}
+theta  <- as.vector(B_pt)                                  # apilado por cuantil
+V_j    <- cov(bs_joint)
+nm_j   <- as.vector(outer(vars, colnames(B_pt), paste, sep = "|"))
+dimnames(V_j) <- list(nm_j, nm_j)
+SE_j   <- matrix(sqrt(diag(V_j)), k, length(taus), dimnames = dimnames(B_pt))
+P_j    <- 2 * pnorm(-abs(B_pt / SE_j))                     # normal, como el z de sqreg
+cat("Errores estándar individuales vs. conjuntos (máx. dif. relativa):",
+    round(max(abs(SE_ind / SE_j - 1)), 3), "\n")
+
+# Pseudo R2 de Koenker-Machado, como `qreg`
+rho <- function(u, t) sum(u * (t - (u < 0)))
+pseudoR2 <- sapply(seq_along(taus), function(j) {
+  1 - rho(y - X %*% B_pt[, j], taus[j]) / rho(y - quantile(y, taus[j], type = 2), taus[j])
+})
+```
+
+```{r tabla3}
+ordv <- c("edad","edad2","educ","educ2","sexo","caba","(Intercept)")
+T3_R <- sapply(seq_along(taus), function(j)
+  mapply(function(v) sprintf("%.3f%s (%.3f)", B_pt[v, j], stars(P_j[v, j]), SE_j[v, j]), ordv))
+dimnames(T3_R) <- list(c("Edad","Edad al cuadrado","Años de educación","Años de educación al cuadrado","Sexo","CABA","Constante"),
+                       paste0("QR(", taus, ")"))
+T3_R <- rbind(T3_R, "Pseudo R2" = sprintf("%.3f", pseudoR2))
+kable(T3_R, caption = "Tabla 3 (réplica en R): coeficientes, significatividad y errores estándar bootstrap entre paréntesis")
+```
+
+### Comparación coeficiente por coeficiente con la Tabla 3 del PDF
+
+```{r tabla3-cmp}
+# Valores del PDF (coef, e.e., estrellas) por variable y cuantil
+pdf3 <- list(
+  edad  = list(b = c( .027,  .045,  .039,  .035,  .023), se = c(.012,.006,.004,.004,.009), st = c("**","***","***","***","**")),
+  edad2 = list(b = c(-.000, -.001, -.000, -.000, -.000), se = c(0,0,0,0,0),               st = c("**","***","***","***","*")),
+  educ  = list(b = c( .033, -.0197,-.026, -.058, -.062), se = c(.037,.015,.012,.018,.036), st = c("","","**","***","**")),
+  educ2 = list(b = c( .003,  .004,  .004,  .006,  .006), se = c(.002,.001,.001,.001,.001), st = c("*","***","***","***","***")),
+  sexo  = list(b = c( .323,  .116,  .125,  .129,  .107), se = c(.054,.019,.016,.017,.033), st = rep("***",5)),
+  caba  = list(b = c( .311,  .117,  .123,  .095,  .139), se = c(.063,.024,.015,.019,.033), st = rep("***",5)),
+  `(Intercept)` = list(b = c(.953, 1.856, 2.328, 2.856, 3.642), se = c(.339,.138,.094,.146,.271),
+                       st = c("***","***","","***","***")))   # el PDF omite las estrellas en q50
+cmp3 <- do.call(rbind, lapply(names(pdf3), function(v) {
+  data.frame(Variable = v, Cuantil = taus,
+             `Coef R` = round(B_pt[v, ], 4), `Coef PDF` = pdf3[[v]]$b,
+             `Marca coef` = ifelse(abs(B_pt[v, ] - pdf3[[v]]$b) > 0.0006, "⚠", "✔"),
+             `e.e. R` = round(SE_ind[v, ], 3), `e.e. conj. R` = round(SE_j[v, ], 3), `e.e. PDF` = pdf3[[v]]$se,
+             `Estrellas R` = stars(P_j[v, ]), `Estrellas PDF` = pdf3[[v]]$st,
+             `Marca signif.` = ifelse(stars(P_j[v, ]) == pdf3[[v]]$st, "✔", "⚠"),
+             check.names = FALSE, row.names = NULL)
+}))
+kable(cmp3, caption = "Tabla 3: R vs. PDF (e.e. con bootstrap de 500 reposiciones; tolerancia de coeficientes = 0,0006)")
+cat("Coeficientes que difieren:", sum(cmp3$`Marca coef` == "⚠"), "de", nrow(cmp3), "\n")
+cat("Marcas de significatividad que difieren:", sum(cmp3$`Marca signif.` == "⚠"), "de", nrow(cmp3), "\n")
+cat("Pseudo R2 R:", round(pseudoR2, 3), "\nPseudo R2 PDF:", c(.087, .114, .141, .160, .127), "\n")
+```
+
+::: ok
+**Tabla 3 (coeficientes y Pseudo $R^2$).** Los coeficientes puntuales y los cinco Pseudo $R^2$ coinciden con el PDF (los puntos no dependen del remuestreo). Los errores estándar bootstrap tienen el mismo orden de magnitud; las pequeñas diferencias son ruido de remuestreo (otra semilla y otro generador que Stata). Si alguna marca de significatividad aparece con ⚠ en la tabla de arriba, es un caso límite cercano a 0,10/0,05/0,01.
+:::
+
+::: disc
+**Tabla 3 (formato interno del PDF).** (i) La constante de QR(0.50) figura como `2,328` sin estrellas, cuando es claramente significativa (en R: `***`). (ii) El coeficiente de *Años de educación* en QR(0.25) se muestra con 4 decimales (`-0,0197`) mientras el resto usa 3. (iii) Para *Años de educación* en QR(0.95) el PDF marca `-0,062**` con error estándar `0,036`: el cociente es 1,72, que corresponde a significatividad del 10% (`*`) y no del 5%; R también da `*`. (iv) En R difieren además *Edad* QR(0.95) (`***` vs. `**`) y *Educ²* QR(0.05) (sin estrellas vs. `*`): son casos límite que dependen del remuestreo (ver tabla de p-valores más abajo).
+:::
+
+## Efectos marginales de la edad (30 años) y otras afirmaciones del texto
+
+```{r me-edad}
+# Efecto marginal de edad a los 30 años en cada cuantil: b_edad + 2*b_edad2*30
+Rme <- function(j) { r <- rep(0, k * length(taus)); r[(j - 1) * k + which(vars == "edad")] <- 1
+                     r[(j - 1) * k + which(vars == "edad2")] <- 60; r }
+me_edad  <- sapply(seq_along(taus), function(j) sum(Rme(j) * theta)) * 100
+se_edad  <- sapply(seq_along(taus), function(j) sqrt(drop(Rme(j) %*% V_j %*% Rme(j)))) * 100
+# Diferencias del ME de edad: q25 vs q05, q25 vs q95
+dif_me <- function(a, b) { r <- Rme(a) - Rme(b); w <- wald(r, theta, V_j, n - k); c(dif = sum(r * theta) * 100, p = unname(w["p"])) }
+d_25_05 <- dif_me(2, 1); d_25_95 <- dif_me(2, 5)
+d_50_05 <- dif_me(3, 1); d_50_95 <- dif_me(3, 5)
+kable(data.frame(Cuantil = taus, `ME edad (30 años), %` = round(me_edad, 3), `e.e. (%)` = round(se_edad, 3),
+                 check.names = FALSE), caption = "Efecto marginal de la edad a los 30 años por cuantil")
+cat(sprintf("q25 - q05: dif = %.3f pp, p = %.4f | q25 - q95: dif = %.3f pp, p = %.4f\n",
+            d_25_05["dif"], d_25_05["p"], d_25_95["dif"], d_25_95["p"]))
+cat(sprintf("q50 - q05: dif = %.3f pp, p = %.4f | q50 - q95: dif = %.3f pp, p = %.4f\n",
+            d_50_05["dif"], d_50_05["p"], d_50_95["dif"], d_50_95["p"]))
+cat("Cuantil con mayor efecto marginal de la edad a los 30 años:", taus[which.max(me_edad)], "\n")
+```
+
+::: disc
+**Texto del Ejercicio 2 (edad).** El PDF dice que, a los 30 años, "el efecto marginal es mayor en el cuantil condicional 0.25 y significativamente menor en los cuantiles condicionales 0.05 y 0.95". Las cifras muestran que (a) los cinco efectos marginales son positivos (✔), pero (b) el mayor **no** está en el cuantil 0.25: a los 30 años el efecto marginal máximo es el del cuantil **0.50** (≈ 1,50%), seguido del 0.75 (≈ 1,49%) y recién después el 0.25 (≈ 1,42%). Lo que es mayor en el cuantil 0.25 es el coeficiente *lineal* de la edad (0,045), pero no el efecto marginal a los 30 años que el propio PDF define en la nota 2. (c) La diferencia entre q25 y q05 es significativa sólo al 10% (p ≈ 0,08), y la diferencia entre q25 y q95 **no** es significativa (p ≈ 0,44); el cuantil 0.95 tiene un efecto menor en términos puntuales pero no puede decirse "significativamente menor" respecto de q25. El PDF no reporta ningún test que respalde esa frase. Tomando como referencia el máximo (q50), la diferencia con q05 es significativa sólo al 10% (p ≈ 0,07) y con q95 no es significativa (p ≈ 0,26): el efecto de la edad a los 30 años es estadísticamente distinguible sólo en el cuantil 0.05.
+:::
+
+```{r me-educ-cmp}
+kable(rbind(cmp("ME educ q05 (%)", me_educ[1], 9.75, 0.006, 2),
+            cmp("ME educ q25 (%)", me_educ[2], 8.69, 0.006, 2),
+            cmp("ME educ q50 (%)", me_educ[3], 8.03, 0.006, 2),
+            cmp("ME educ q75 (%)", me_educ[4], 8.52, 0.006, 2),
+            cmp("ME educ q95 (%)", me_educ[5], 8.32, 0.006, 2)),
+      caption = "Efecto marginal de la educación a los 12 años (texto del PDF): R vs. PDF")
+```
+
+::: ok
+**Efectos marginales de educación.** Las cifras del texto (9,75%; 8,69%; 8,03%; 8,52%; 8,32%) coinciden con las de R, y es cierto que el cuantil 0.05 es el más beneficiado. También coinciden los signos y las magnitudes relativas de *sexo* y *CABA* (ambos con el mayor efecto en el cuantil 0.05: 0,323 y 0,311).
+:::
+
+```{r signif-educ}
+# p-valores (z normal, bootstrap conjunto) de los coeficientes cuya significatividad difiere del PDF
+borde <- rbind(
+  data.frame(Coef = "edad, QR(0.95)",  PDF = "**", p_R = P_j["edad", "q95"]),
+  data.frame(Coef = "educ, QR(0.95)",  PDF = "**", p_R = P_j["educ", "q95"]),
+  data.frame(Coef = "educ2, QR(0.05)", PDF = "*",  p_R = P_j["educ2", "q05"]),
+  data.frame(Coef = "constante, QR(0.50)", PDF = "(sin estrellas)", p_R = P_j["(Intercept)", "q50"]))
+borde$`Estrellas R` <- stars(borde$p_R); borde$p_R <- signif(borde$p_R, 3)
+kable(borde, caption = "Coeficientes de la Tabla 3 cuya significatividad en R difiere de la del PDF")
+```
+
+::: disc
+**Significatividad de la educación (texto de la p. 3 y nota 4).** El PDF dice que en los cuantiles 0.05 y 0.25 la educación lineal no es significativa pero la cuadrática sí (en 0.05, "sólo al 10%", nota 4). En R la cuadrática de q25 es significativa al 1% (✔), pero la de q05 queda **apenas por encima del 10%** (ver p-valor de la tabla anterior), por lo que con *nuestro* remuestreo la nota 4 no se sostiene; está en el borde y depende de la semilla (en Stata con `set seed 12345` o 123 podría salir `*`). Por otro lado, el test conjunto `test educ educ2` por cuantil (tabla de efectos marginales del Ej. 2) rechaza con p ≈ 0 en los cinco cuantiles, de modo que la afirmación de que "conjuntamente son significativas" sí se confirma; pero el PDF no reporta esos estadísticos.
+:::
+
+# Ejercicio 3
+
+```{r tests-ej3}
+col_of <- function(j, v) (j - 1) * k + which(vars == v)
+# Restricciones: igualdad de coeficientes entre cuantiles consecutivos js, para las variables vs
+R_eq <- function(vs, js) {
+  do.call(rbind, lapply(seq_len(length(js) - 1), function(m)
+    do.call(rbind, lapply(vs, function(v) { r <- rep(0, k * length(taus))
+      r[col_of(js[m], v)] <- 1; r[col_of(js[m + 1], v)] <- -1; r }))))
+}
+t_a <- wald(R_eq(c("educ", "educ2"), c(1, 5)), theta, V_j, n - k)
+t_b <- wald(R_eq(c("edad", "edad2", "educ", "educ2", "sexo", "caba"), 1:5), theta, V_j, n - k)
+T4 <- data.frame(Test = c("test [q05=q95]: educ educ2", "test [q05=q25=q50=q75=q95]: edad edad2 educ educ2 sexo caba"),
+                 `F R` = round(c(t_a["F"], t_b["F"]), 2), `gl` = c(sprintf("(%d, %d)", t_a["df1"], t_a["df2"]),
+                                                              sprintf("(%d, %d)", t_b["df1"], t_b["df2"])),
+                 `p R` = round(c(t_a["p"], t_b["p"]), 4),
+                 `F PDF` = c(2.51, 5.11), `gl PDF` = c("(2, 7896)", "(24, 7896)"), `p PDF` = c(0.081, 0.000),
+                 check.names = FALSE)
+T4$Marca <- ifelse(abs(T4$`F R` - T4$`F PDF`) > 0.5 | abs(T4$`p R` - T4$`p PDF`) > 0.02, "⚠", "✔")
+kable(T4, caption = "Tabla 4: tests de igualdad de coeficientes entre cuantiles (matriz de covarianzas bootstrap conjunta)")
+```
+
+::: nota
+Los grados de libertad (2; 24; denominador 7.896 = 7.903 - 7) coinciden con el PDF. Como el estadístico depende de la matriz de covarianzas *bootstrap*, no puede coincidir exactamente con el de Stata. El PDF presenta el p-valor `0,000`, que significa "menor que 0,0005", no cero.
+:::
+
+::: ok
+**Tabla 4.** Las conclusiones del PDF se confirman: el test de que el efecto de la educación es igual en q05 y q95 rechaza al 10% (R: F ≈ 2,73, p ≈ 0,065; PDF: 2,51 y 0,081) y el test conjunto de los 24 coeficientes rechaza al 1% (R: F ≈ 5,39; PDF: 5,11). Los valores numéricos exactos difieren levemente porque dependen del remuestreo.
+:::
+
+# Ejercicio 4
+
+## Tests complementarios del `.do` (no figuran en el PDF)
+
+```{r tests-ej4}
+tests_ej4 <- list("edad edad2" = c("edad", "edad2"), "educ educ2" = c("educ", "educ2"),
+                  "sexo" = "sexo", "caba" = "caba")
+t_ej4 <- do.call(rbind, lapply(names(tests_ej4), function(nm) {
+  w <- wald(R_eq(tests_ej4[[nm]], 1:5), theta, V_j, n - k)
+  data.frame(Test = paste0("test [q05=q25=q50=q75=q95]: ", nm),
+             F = round(w["F"], 2), gl = sprintf("(%d, %d)", w["df1"], w["df2"]), `p-valor` = round(w["p"], 4),
+             check.names = FALSE, row.names = NULL)
+}))
+kable(t_ej4, caption = "Tests de heterogeneidad por variable (líneas 127-130 del .do)")
+```
+
+::: disc
+**Procedimiento no reportado.** El `.do` calcula cuatro tests de heterogeneidad de efectos marginales por variable (líneas 127-130, marcados como "complementario a lo solicitado"), pero el PDF no los incluye. La conclusión del Ejercicio 4 del PDF (que el efecto de *sexo* y de *CABA* es heterogéneo) sólo se apoya en la inspección visual de la figura; la tabla anterior ofrece el respaldo formal que falta.
+:::
+
+## Figura 1: coeficientes en función de $\tau$
+
+`grqreg` (tras `sqreg`) grafica los coeficientes de los cuantiles estimados y sus intervalos de confianza al 95%, más la línea de MCO.
+
+```{r figura1, fig.width=8, fig.height=8}
+nom_v <- c(edad = "Edad", edad2 = "Edad al cuadrado", educ = "Años educación",
+           educ2 = "Años educación al cuadrado", sexo = "Sexo", caba = "CABA")
+pl <- do.call(rbind, lapply(names(nom_v), function(v) {
+  data.frame(var = factor(nom_v[v], levels = nom_v), tau = taus, b = B_pt[v, ],
+             lo = B_pt[v, ] - qnorm(.975) * SE_j[v, ], hi = B_pt[v, ] + qnorm(.975) * SE_j[v, ],
+             ols = unname(coef(m_ols)[v]))
+}))
+ggplot(pl, aes(tau, b)) +
+  geom_ribbon(aes(ymin = lo, ymax = hi), fill = "grey80") +
+  geom_line(colour = "#4c6b22") +
+  geom_hline(aes(yintercept = ols), linetype = "dashed") +
+  scale_x_continuous(breaks = taus) +
+  facet_wrap(~var, ncol = 2, scales = "free_y") +
+  labs(x = "Cuantil", y = NULL, title = "Coeficientes estimados por cuantil (línea punteada: MCO)") +
+  theme_bw(base_size = 10)
+```
+
+```{r fig-chk}
+# Cuántos cuantiles (de 5) tienen el coeficiente MCO fuera del IC 95% de la regresión por cuantiles
+pl$fuera <- pl$ols < pl$lo | pl$ols > pl$hi
+fuera <- tapply(pl$fuera, pl$var, sum)
+kable(data.frame(Variable = names(fuera), `Cuantiles con MCO fuera del IC` = as.integer(fuera), check.names = FALSE),
+      caption = "Cantidad de cuantiles (de 5) donde el coeficiente MCO queda fuera del IC 95% de QR")
+```
+
+::: ok
+**Figura 1 (texto).** El PDF afirma que, para *sexo* y *CABA*, el coeficiente de MCO no cae del todo dentro de los intervalos de confianza de la regresión por cuantiles. Se confirma: *sexo* queda fuera en 1 cuantil (el 0.05) y *CABA* en 2 (el 0.05 y el 0.75). Las trayectorias replican las del PDF: *sexo* y *CABA* muy altos en el cuantil 0.05 (≈ 0,32 y 0,31) y estables (≈ 0,10-0,14) desde el 0.25.
+:::
+
+::: disc
+**Figura 1 (presentación).** (i) El PDF menciona sólo *sexo* y *CABA*, pero la tabla de conteos muestra que también *Edad al cuadrado* tiene un cuantil con MCO fuera del IC. (ii) En el PDF el eje vertical de *Edad al cuadrado* muestra todas las marcas como "0.00/-0.00" porque `grqreg` usa el formato `%9.2f` por defecto (el coeficiente es del orden de -0,0004), lo que lo vuelve ilegible; en la réplica en R se muestran las magnitudes reales. (iii) El PDF dibuja dos líneas punteadas (una negra y otra gris) cerca del valor de MCO; la réplica dibuja sólo una. (iv) La referencia del PDF a "los cuantiles estimados en el ejercicio 2" es correcta: `grqreg` lee los resultados del último `sqreg`, no re-estima.
+:::
+
+## ¿Por qué se dice que la regresión por cuantiles es *distribution free*?
+
+Es una pregunta conceptual sin cálculo. El PDF responde que el modelo es **semiparamétrico**: paramétrico en los regresores (relación lineal) pero no paramétrico en $\tau$, ya que la forma de $\beta(\tau)$ no se impone sino que surge del ajuste a los datos; no se asume una distribución para el error.
+
+# Ejercicio 5
+
+```{r ej5}
+# Residuo = lilaho - predicción del cuantil. Un residuo es "nulo" si |r| <= tol.
+tol <- 1e-7
+res5 <- function(j) {
+  r <- as.vector(y - X %*% B_pt[, j])
+  c(Negativos = mean(r < -tol) * 100, Nulos = mean(abs(r) <= tol) * 100, Positivos = mean(r > tol) * 100,
+    nN = sum(r < -tol), nZ = sum(abs(r) <= tol), nP = sum(r > tol))
+}
+T5 <- sapply(c(2, 3, 4), res5)     # cuantiles 25, 50, 75
+colnames(T5) <- c("Cuantil 25", "Cuantil 50", "Cuantil 75")
+kable(round(T5, 2), caption = "Tabla 5 (réplica en R): porcentaje (y cantidad) de residuos negativos, nulos y positivos")
+
+pdf5 <- rbind(c(24.95, 0.10, 74.95), c(49.93, 0.10, 49.97), c(74.96, 0.09, 24.95))
+cmp5 <- do.call(rbind, lapply(1:3, function(i)
+  cmp(paste(colnames(T5)[i], c("negativos", "nulos", "positivos")), T5[1:3, i], pdf5[i, ], 0.006, 2)))
+kable(cmp5, caption = "Tabla 5: R vs. PDF (tolerancia 0,006 pp)")
+```
+
+```{r condicion-residuos}
+# Condición de residuos: N/n <= tau <= (N+Z)/n
+chk <- data.frame(Cuantil = c(.25, .50, .75),
+  `N/n` = T5["nN", ] / n, tau = c(.25, .5, .75), `(N+Z)/n` = (T5["nN", ] + T5["nZ", ]) / n,
+  check.names = FALSE)
+chk$Cumple <- with(chk, ifelse(`N/n` <= tau & tau <= `(N+Z)/n`, "✔", "⚠"))
+chk[1:4] <- round(chk[1:4], 5)
+kable(chk, caption = "Condición de los residuos de Koenker-Bassett")
+```
+
+::: ok
+**Tabla 5.** Los porcentajes de residuos negativos, nulos y positivos coinciden con el PDF a dos decimales (con 8, 8 y 7 observaciones nulas, es decir 0,10%, 0,10% y 0,09%), y se cumple la condición de los residuos $N/n \le \tau \le (N+Z)/n$ en los tres cuantiles. La interpretación del PDF (≈ 25/75, 50/50 y 75/25) es correcta.
+:::
+
+# Cuadro-resumen de discrepancias
+
+| # | Ubicación en el PDF | Tipo | Discrepancia |
+|---|---|---|---|
+| 1 | Tabla 1 | Cifras | 4 de 90 celdas difieren en 1-6 milésimas: p90 Superior completo (4,798 vs. 4,799), mínimo 41-64 años (-1,523 vs. -1,529), máximo Primario incompleto (6,186 vs. 6,185) y máximo Secundario incompleto (6,246 vs. 6,245) |
+| 2 | Texto Ej. 1 | Texto | "Aumenta con el nivel educativo" no se cumple de forma monótona ("Nunca asistió" supera a Primario incompleto/completo y Secundario incompleto) |
+| 3 | Texto Ej. 1 | Texto | Con la mediana, el tramo 41-64 (3,675) supera levemente al 25-40 (3,673); "resultados similares" es sólo aproximado |
+| 4 | Nota 3 (Ej. 2) | Procedimiento | El PDF sugiere `set seed 123`; el `.do` usa `set seed 12345` |
+| 5 | Etiquetas `.do` vs `.dta` | Procedimiento | `gedad1`: "[18,24]" en el `.do`, "[15,24]" en el `.dta` (los datos van de 18 a 65) |
+| 6 | Tabla 3 | Formato | Constante QR(0.50) sin estrellas; educación QR(0.25) con 4 decimales; `-0,062**` con e.e. `0,036` implicaría `*` |
+| 7 | Tablas 2 y 3 | Terminología | "Desvíos estándar" en lugar de "errores estándar" |
+| 8 | Tabla 4 | Cifras | F = 2,73 (p = 0,065) y F = 5,39 en R vs. 2,51 (0,081) y 5,11 en el PDF: dependen del bootstrap; las conclusiones se confirman |
+| 9 | Ej. 4 | Procedimiento | El PDF omite los cuatro tests por variable que sí hace el `.do` (líneas 127-130); todos rechazan |
+| 10 | Texto Ej. 2 (edad) | Texto | A los 30 años el mayor efecto marginal de la edad está en el cuantil 0.50 (≈ 1,50%), no en el 0.25 (≈ 1,42%); q25 vs. q95 no es significativo (p ≈ 0,44) y q25 vs. q05 sólo al 10% |
+| 11 | Texto Ej. 2 y nota 4 (educación) | Texto | En R, Educ² en QR(0.05) no es significativa al 10% con este remuestreo (el PDF dice `*`); también difiere la significatividad de Edad QR(0.95) |
+| 12 | Figura 1 | Presentación | Eje ilegible en *Edad al cuadrado* (`%9.2f`); *Edad al cuadrado* también tiene MCO fuera del IC y el texto sólo menciona *sexo* y *CABA* |
+
+# Información de sesión
+
+```{r sesion}
+sessionInfo()
+```

@@ -1,0 +1,411 @@
+---
+title: "Evaluación Domiciliaria N° 1: Modelos para Datos en Panel — Réplica en R"
+subtitle: "Maestría en Economía UNLP · Econometría Avanzada"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: readable
+    df_print: paged
+lang: es
+---
+
+```{css, echo=FALSE}
+.disc { background:#fff3cd; border-left:6px solid #e0a800; padding:8px 12px; margin:10px 0; }
+.ok   { background:#e8f5e9; border-left:6px solid #2e7d32; padding:8px 12px; margin:10px 0; }
+table { font-size: 90%; }
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+suppressPackageStartupMessages({library(haven); library(plm); library(dplyr); library(knitr)})
+options(scipen = 999, knitr.kable.NA = "-")
+
+# Registro global de discrepancias respecto del PDF "Trabajo Práctico N° 1 (R)"
+disc <- data.frame(Seccion = character(), Detalle = character())
+reg  <- function(sec, det) { disc <<- rbind(disc, data.frame(Seccion = sec, Detalle = det)); invisible() }
+
+fnum <- function(x, d = 3) formatC(x, format = "f", digits = d, decimal.mark = ",")
+st   <- function(p) ifelse(p < .01, "***", ifelse(p < .05, "**", ifelse(p < .10, "*", "")))
+```
+
+**Cómo leer este documento.** Todos los resultados se calculan en R a partir de `nls8087.dta`. La guía es el PDF *Trabajo Práctico N° 1 (R)*: sus valores se cargan a mano en el código y se comparan contra lo que produce R. Donde algo no coincide aparece un recuadro amarillo **⚠️ DISCREPANCIA**; donde todo coincide, un recuadro verde. Al final hay un resumen de todos los puntos marcados. Solo se replica la **Parte I** (la Parte II es la lectura y discusión del artículo de Rockoff, 2004, sin resultados numéricos para reproducir).
+
+# Parte I
+
+Modelo (1): $\ln salario_{it} = \beta_0 + \beta_1 educ_i + \beta_2 exper_{it} + \beta_3 casado_{it} + \beta_4 sindicato_{it} + \beta_5 afro_i + \beta_6 hispano_i + u_{it}$
+
+```{r datos}
+raw   <- read_dta("Datos/nls8087.dta")
+datos <- as.data.frame(lapply(raw, function(x) if (inherits(x, "haven_labelled")) as.numeric(x) else x))
+datos <- datos[order(datos$id, datos$year), ]
+datos$lnsalario <- log(datos$salario)
+
+vars_x <- c("educ", "exper", "casado", "sindicato", "afro", "hispano")
+fml    <- reformulate(vars_x, response = "lnsalario")
+pan    <- pdata.frame(datos, index = c("id", "year"))
+pdim(pan)   # equivalente a xtdescribe: panel balanceado
+```
+
+## Ejercicio 1. Estadísticas descriptivas (overall, between, within)
+
+Equivalente a `xtsum` de Stata: el desvío *within* se calcula sobre $x_{it} - \bar{x}_i + \bar{x}$ (por eso aparecen mínimos/máximos *within* que se salen del rango de la variable).
+
+```{r xtsum}
+xtsum <- function(df, v) {
+  x   <- df[[v]]; N <- length(x)
+  xbi <- tapply(x, df$id, mean)                 # medias individuales
+  w   <- x - ave(x, df$id) + mean(x)            # desvío within (re-centrado en la media global)
+  data.frame(Variable = v, Estadistico = c("Overall", "Between", "Within"),
+             Media = c(mean(x), NA, NA),
+             SD  = c(sd(x), sd(xbi), sqrt(sum((w - mean(x))^2) / (N - 1))),
+             Min = c(min(x), min(xbi), min(w)),
+             Max = c(max(x), max(xbi), max(w)))
+}
+vars_t1 <- c("salario", "educ", "exper", "casado", "sindicato", "afro", "hispano")
+tabla1  <- bind_rows(lapply(vars_t1, function(v) xtsum(datos, v)))
+kable(tabla1, digits = 6, caption = "Tabla 1 (réplica). Variable `salario` en niveles, como en el PDF. N = 4.360, n = 545, T = 8.")
+```
+
+El `.do` de Stata corre `xtsum` sobre `lnsalario` (la variable dependiente del modelo), mientras que la Tabla 1 del PDF reporta `salario` en niveles. Para completar, el equivalente con `lnsalario`:
+
+```{r xtsum-ln}
+kable(xtsum(datos, "lnsalario"), digits = 6, caption = "`lnsalario` (lo que computa el .do; no figura en el PDF)")
+```
+
+### Comparación con la Tabla 1 del PDF
+
+```{r cmp-t1}
+pdf_t1 <- tibble::tribble(
+  ~Variable,   ~Estadistico, ~Media,    ~SD,       ~Min,        ~Max,
+  "salario",   "Overall",    5.919175,  3.202225,  0.0279014,   57.50431,
+  "salario",   "Between",    NA,        2.455819,  1.503564,    28.35696,
+  "salario",   "Within",     NA,        2.057397,  -16.42349,   35.06653,
+  "educ",      "Overall",    11.76697,  1.746181,  3,           16,
+  "educ",      "Between",    NA,        1.747585,  3,           16,
+  "educ",      "Within",     NA,        0,         11.76697,    11.76697,
+  "exper",     "Overall",    6.514679,  2.825873,  0,           18,
+  "exper",     "Between",    NA,        1.654918,  3.5,         3.5,        # tal como figura impreso en el PDF
+  "exper",     "Within",     NA,        2.291551,  3.014679,    10.01468,
+  "casado",    "Overall",    0.4389908, 0.4963208, 0,           1,
+  "casado",    "Between",    NA,        0.3766116, 0,           1,
+  "casado",    "Within",     NA,        0.3236137, -0.4360092,  1.313991,
+  "sindicato", "Overall",    0.2440367, 0.4295639, 0,           1,
+  "sindicato", "Between",    NA,        0.3294467, 0,           1,
+  "sindicato", "Within",     NA,        0.2759787, -0.6309633,  1.119037,
+  "afro",      "Overall",    0.1155963, 0.3197769, 0,           1,
+  "afro",      "Between",    NA,        0.320034,  0,           1,
+  "afro",      "Within",     NA,        0,         0.1155963,   0.1155963,
+  "hispano",   "Overall",    0.1559633, 0.3628622, 0,           1,
+  "hispano",   "Between",    NA,        0.3631539, 0,           1,
+  "hispano",   "Within",     NA,        0,         0.1559633,   0.1559633)
+
+m   <- merge(tabla1, pdf_t1, by = c("Variable", "Estadistico"), suffixes = c("_R", "_PDF"))
+cmp <- bind_rows(lapply(c("Media", "SD", "Min", "Max"), function(cn) {
+  a <- m[[paste0(cn, "_R")]]; b <- m[[paste0(cn, "_PDF")]]
+  data.frame(Variable = m$Variable, Estadistico = m$Estadistico, Estadistica = cn, R = a, PDF = b,
+             ok = abs(a - b) <= 1e-5 * pmax(1, abs(b)))[!is.na(b), ]
+}))
+cat("Valores comparados:", nrow(cmp), "· coinciden:", sum(cmp$ok), "· difieren:", sum(!cmp$ok), "\n")
+bad <- cmp[!cmp$ok, ]
+if (nrow(bad)) kable(bad[, -6], digits = 6, caption = "Valores de la Tabla 1 que NO coinciden")
+for (i in seq_len(nrow(bad)))
+  reg("Ej. 1 · Tabla 1", sprintf("%s (%s, %s): PDF = %s, R = %s", bad$Variable[i], bad$Estadistico[i], bad$Estadistica[i],
+                                  fnum(bad$PDF[i], 6), fnum(bad$R[i], 6)))
+```
+
+```{r t1-extra, echo=FALSE, results='asis'}
+exper_b <- tapply(datos$exper, datos$id, mean)
+if (any(!cmp$ok)) {
+  cat("<div class='disc'>⚠️ <b>DISCREPANCIA (Tabla 1).</b> De 70 valores comparados, 69 coinciden. El único que no: el <b>máximo between de <code>exper</code></b>. La tabla del PDF imprime <b>3,5</b>, pero el máximo de las medias individuales es <b>",
+      fnum(max(exper_b), 1), "</b> (el mínimo es ", fnum(min(exper_b), 1), "). El propio texto del PDF dice «entre 3,5 y 14,5 años», así que el 3,5 de la tabla es un error de tipeo (copia del mínimo).</div>\n", sep = "")
+}
+```
+
+# Ejercicio 2. Pooled OLS
+
+```{r pols}
+m_pols <- plm(fml, data = pan, model = "pooling")
+s_pols <- summary(m_pols)$coefficients
+kable(round(s_pols, 4), caption = "POLS — modelo (1)")
+```
+
+Interpretación (semielasticidades; la variable dependiente está en logaritmos):
+
+- `educ`: un año más de educación se asocia con un salario por hora **`r fnum(100*s_pols["educ",1],1)`%** mayor.
+- `exper`: un año más de experiencia, **`r fnum(100*s_pols["exper",1],1)`%** más.
+- `casado`: **`r fnum(100*s_pols["casado",1],1)`%** más que un no casado.
+- `sindicato`: **`r fnum(100*s_pols["sindicato",1],1)`%** más que un no afiliado.
+- `afro`: **`r fnum(100*s_pols["afro",1],1)`%** respecto de un blanco no hispano.
+- `hispano`: **`r fnum(100*s_pols["hispano",1],1)`%** (p = `r fnum(s_pols["hispano",4])`, no significativo).
+
+```{r pols-exactos, echo=FALSE, results='asis'}
+ex <- 100 * (exp(s_pols[c("casado", "sindicato", "afro"), 1]) - 1)
+cat("<div class='disc'>⚠️ <b>OBSERVACIÓN (interpretación, no cálculo).</b> El PDF lee los coeficientes de las dummies como porcentajes (11,3%, 18,4% y −14,2%). Con la variable dependiente en logaritmos esa lectura es una aproximación: el efecto porcentual exacto es $100\\,(e^{\\beta}-1)$, es decir <b>",
+    fnum(ex[1], 1), "%</b> para casado, <b>", fnum(ex[2], 1), "%</b> para sindicato y <b>", fnum(ex[3], 1),
+    "%</b> para afro. Para `educ` y `exper` (coeficientes chicos) la aproximación es buena.</div>\n", sep = "")
+reg("Ej. 2 · Interpretación", sprintf("El PDF lee las dummies como %% (aprox. en log-puntos); el efecto exacto es 100(exp(b)-1): casado %s%%, sindicato %s%%, afro %s%% (PDF: 11,3 / 18,4 / -14,2).",
+                                      fnum(ex[1], 1), fnum(ex[2], 1), fnum(ex[3], 1)))
+```
+
+# Ejercicio 3. Estimadores alternativos
+
+```{r estimaciones}
+m_be <- plm(fml, data = pan, model = "between")
+m_fe <- plm(fml, data = pan, model = "within")
+m_re <- plm(fml, data = pan, model = "random")
+
+# Primeras diferencias: equivale a `regress D.(y x), noconstant` en Stata
+dif  <- function(v) ave(datos[[v]], datos$id, FUN = function(z) c(NA, diff(z)))
+D    <- as.data.frame(lapply(setNames(nm = c("lnsalario", vars_x)), dif))
+D    <- D[complete.cases(D), ]
+m_fd <- lm(lnsalario ~ 0 + educ + exper + casado + sindicato + afro + hispano, data = D)
+# (educ, afro y hispano tienen diferencia nula y R las descarta por colinealidad; D.exper == 1,
+#  por lo que el "coeficiente de exper" es en realidad la media de las diferencias de lnsalario
+#  neta del efecto de casado y sindicato, esto es, la constante del modelo en diferencias)
+
+# Constante del modelo within (la que reporta Stata: media global menos b'media(x))
+wi <- within_intercept(m_fe, vcov = function(x) vcov(x))
+```
+
+```{r tabla2-build}
+coefs <- function(m) { s <- summary(m)$coefficients; data.frame(var = rownames(s), coef = s[, 1], se = s[, 2], p = s[, 4]) }
+tab <- list(
+  POLS = coefs(m_pols), Between = coefs(m_be), Within = coefs(m_fe),
+  PD = coefs(m_fd), EA = coefs(m_re))
+tab$POLS$var    <- sub("\\(Intercept\\)", "constante", tab$POLS$var)
+tab$Between$var <- sub("\\(Intercept\\)", "constante", tab$Between$var)
+tab$EA$var      <- sub("\\(Intercept\\)", "constante", tab$EA$var)
+tab$Within <- rbind(tab$Within, data.frame(var = "constante", coef = as.numeric(wi), se = attr(wi, "se"),
+                                           p = 2 * pnorm(-abs(as.numeric(wi) / attr(wi, "se")))))
+# En primeras diferencias, "exper" absorbe el rol de constante (ver nota arriba); no hay constante propia.
+
+# R² "overall" (corr(y, Xb)^2), que es lo que reporta Stata como R-sq overall
+y  <- datos$lnsalario
+r2o <- function(m, vars, const = 0) { b <- coef(m); xb <- as.matrix(datos[vars]) %*% b[vars] + const; cor(y, xb)^2 }
+r2 <- c(POLS = r2o(m_pols, vars_x, coef(m_pols)["(Intercept)"]),
+        Between = r2o(m_be, vars_x, coef(m_be)["(Intercept)"]),
+        Within = r2o(m_fe, c("exper", "casado", "sindicato")),
+        PD = summary(m_fd)$r.squared,                       # sin constante: R² no centrado, como Stata
+        EA = r2o(m_re, vars_x, coef(m_re)["(Intercept)"]))
+r2_btw <- summary(m_be)$r.squared[1]; r2_with <- summary(m_fe)$r.squared[1]
+nobs_v <- c(POLS = nobs(m_pols), Between = nobs(m_pols), Within = nobs(m_fe), PD = nobs(m_fd), EA = nobs(m_re))
+
+orden <- c(vars_x, "constante")
+col_fmt <- function(t) unlist(lapply(orden, function(v) {
+  r <- t[t$var == v, ]
+  if (!nrow(r)) return(c("-", "-"))
+  c(paste0(fnum(r$coef), st(r$p)), paste0("(", fnum(r$se), ")"))
+}))
+tabla2 <- sapply(tab, col_fmt)
+rownames(tabla2) <- unlist(lapply(orden, function(v) c(v, "")))
+tabla2 <- rbind(tabla2, "Observaciones" = format(nobs_v, big.mark = "."), "R² (overall)" = fnum(r2),
+                "Número de id" = c("-", "545", "545", "-", "545"))
+colnames(tabla2) <- c("(1) POLS", "(2) Between", "(3) Within", "(4) Prim. Dif.", "(5) Ef. Aleatorios")
+kable(tabla2, align = "r", caption = "Tabla 2 (réplica). Estimaciones del modelo (1). Entre paréntesis, desvíos estándar. * p<0,10; ** p<0,05; *** p<0,01.")
+```
+
+### Comparación con la Tabla 2 del PDF
+
+```{r cmp-t2}
+pdf_t2 <- tibble::tribble(
+  ~mod,      ~var,        ~coef,   ~se,    ~stars_PDF,
+  "POLS",    "educ",       0.104,  0.005,  "***",
+  "POLS",    "exper",      0.050,  0.003,  "***",
+  "POLS",    "casado",     0.113,  0.016,  "***",
+  "POLS",    "sindicato",  0.184,  0.017,  "***",
+  "POLS",    "afro",      -0.142,  0.024,  "",       # el PDF no imprime asteriscos
+  "POLS",    "hispano",    0.013,  0.021,  "",
+  "POLS",    "constante",  0.023,  0.063,  "",
+  "Between", "educ",       0.091,  0.011,  "***",
+  "Between", "exper",      0.028,  0.011,  "**",
+  "Between", "casado",     0.142,  0.041,  "***",
+  "Between", "sindicato",  0.259,  0.046,  "***",
+  "Between", "afro",      -0.141,  0.049,  "***",
+  "Between", "hispano",    0.010,  0.043,  "",
+  "Between", "constante",  0.284,  0.178,  "",
+  "Within",  "exper",      0.060,  0.003,  "***",
+  "Within",  "casado",     0.061,  0.018,  "***",
+  "Within",  "sindicato",  0.084,  0.019,  "***",
+  "Within",  "constante",  1.212,  0.017,  "***",
+  "PD",      "exper",      0.065,  0.007,  "***",
+  "PD",      "casado",     0.043,  0.023,  "*",
+  "PD",      "sindicato",  0.042,  0.020,  "**",
+  "EA",      "educ",       0.108,  0.009,  "***",
+  "EA",      "exper",      0.058,  0.003,  "***",
+  "EA",      "casado",     0.076,  0.017,  "***",
+  "EA",      "sindicato",  0.110,  0.018,  "***",
+  "EA",      "afro",      -0.141,  0.048,  "***",
+  "EA",      "hispano",    0.016,  0.043,  "",
+  "EA",      "constante", -0.048,  0.111,  "")
+
+res <- bind_rows(lapply(names(tab), function(k) cbind(mod = k, tab[[k]])))
+cmp2 <- merge(pdf_t2, res, by = c("mod", "var"), suffixes = c("_PDF", "_R"), all.x = TRUE)
+# PD: "exper" de la tabla corresponde al coef. de exper en el modelo sin constante (ya incluido en tab$PD)
+cmp2$stars_R <- st(cmp2$p)
+cmp2$ok_coef <- abs(round(cmp2$coef_R, 3) - cmp2$coef_PDF) < 1.1e-3
+cmp2$ok_se   <- abs(round(cmp2$se_R, 3) - cmp2$se_PDF)     < 1.1e-3
+cmp2$ok_st   <- cmp2$stars_R == cmp2$stars_PDF
+cat("Celdas comparadas:", nrow(cmp2), "· coef. que coinciden:", sum(cmp2$ok_coef), "· SE que coinciden:", sum(cmp2$ok_se),
+    "· asteriscos que coinciden:", sum(cmp2$ok_st), "\n")
+bad2 <- cmp2[!(cmp2$ok_coef & cmp2$ok_se & cmp2$ok_st), c("mod", "var", "coef_PDF", "coef_R", "se_PDF", "se_R", "stars_PDF", "stars_R", "p")]
+if (nrow(bad2)) kable(bad2, digits = 4, caption = "Celdas de la Tabla 2 que NO coinciden (coeficiente y SE coinciden en todas; difiere solo el asterisco)")
+# Se registran aquí solo diferencias de coeficiente o SE; las de asteriscos se explican más abajo
+for (i in which(!(cmp2$ok_coef & cmp2$ok_se)))
+  reg("Ej. 3 · Tabla 2", sprintf("%s / %s: PDF = %s (%s) | R = %s (%s)", cmp2$mod[i], cmp2$var[i],
+      fnum(cmp2$coef_PDF[i]), fnum(cmp2$se_PDF[i]), fnum(cmp2$coef_R[i]), fnum(cmp2$se_R[i])))
+```
+
+```{r cmp-t2-r2}
+pdf_r2 <- c(POLS = 0.184, Between = 0.169, Within = 0.051, PD = 0.025, EA = 0.178)
+r2cmp  <- data.frame(Modelo = names(r2), PDF = pdf_r2, R_overall = round(r2, 3))
+r2cmp$R_between_propio <- NA; r2cmp$R_within_propio <- NA
+r2cmp$R_between_propio[r2cmp$Modelo == "Between"] <- round(r2_btw, 3)
+r2cmp$R_within_propio[r2cmp$Modelo == "Within"]   <- round(r2_with, 3)
+r2cmp$ok <- abs(r2cmp$R_overall - r2cmp$PDF) < 1.1e-3
+kable(r2cmp, row.names = FALSE, caption = "R² reportado en el PDF vs. R² overall calculado en R (y R² propio de Between/Within)")
+for (i in which(!r2cmp$ok)) reg("Ej. 3 · Tabla 2 (R²)", sprintf("%s: PDF = %s, R (overall) = %s", r2cmp$Modelo[i], fnum(r2cmp$PDF[i]), fnum(r2cmp$R_overall[i])))
+```
+
+```{r r2-obs, echo=FALSE, results='asis'}
+if (all(r2cmp$ok)) {
+  cat("<div class='ok'>✅ Los cinco R² del PDF coinciden con el R² <i>overall</i> ($corr(y, X\\hat\\beta)^2$) que reporta Stata.</div>\n")
+  cat("<div class='disc'>⚠️ <b>OBSERVACIÓN (rotulado).</b> La fila «R²» de la Tabla 2 mezcla en realidad el R² <i>overall</i> de cada modelo. Para Between el R² propio de esa regresión (<i>between</i>) es ", fnum(r2_btw), " (el PDF informa ", fnum(r2cmp$PDF[2]),
+      ") y para Within el R² propio (<i>within</i>) es ", fnum(r2_with), " (el PDF informa ", fnum(r2cmp$PDF[3]), "). Conviene aclararlo en la nota de la tabla.</div>\n", sep = "")
+  reg("Ej. 3 · Tabla 2 (R²)", sprintf("Los R² del PDF son los 'overall'; el R² propio es %s en Between (PDF 0,169) y %s en Within (PDF 0,051). Falta aclararlo en la tabla.", fnum(r2_btw), fnum(r2_with)))
+}
+```
+
+Las observaciones coinciden con el PDF (4.360 / 3.815 en primeras diferencias): `r paste(names(nobs_v), format(nobs_v), collapse = " · ")`.
+
+### Interpretación de `exper` en cada modelo
+
+```{r exper-tabla}
+kable(data.frame(Modelo = c("Between", "Within", "Prim. Dif.", "Ef. Aleatorios"),
+                 `Coef. exper` = c(tab$Between$coef[tab$Between$var == "exper"], tab$Within$coef[tab$Within$var == "exper"],
+                                    tab$PD$coef[tab$PD$var == "exper"], tab$EA$coef[tab$EA$var == "exper"]),
+                 `% PDF` = c(2.8, 6.0, 6.5, 5.8), check.names = FALSE), digits = 3)
+```
+
+- **Between** (dimensión de corte transversal): comparando individuos con distinta experiencia *promedio*, un año más de experiencia promedio se asocia con +2,8%.
+- **Within** (dimensión longitudinal): un año más de experiencia respecto de la propia experiencia promedio del individuo implica +6,0%.
+- **Primeras diferencias** (variación entre períodos consecutivos): un año más de experiencia de un año a otro, +6,5%.
+- **Efectos aleatorios** (promedio ponderado de ambas dimensiones, con $\theta$ calculado más abajo): +5,8%.
+
+```{r theta}
+theta <- ercomp(m_re)$theta
+cat("theta (Stata: xtreg, re theta) =", round(theta, 4), "\n")
+```
+
+**Variables omitidas en FE y PD.** `educ`, `afro` e `hispano` no varían en el tiempo para cada individuo, por lo que su desvío respecto de la media individual (Within) o su diferencia entre $t$ y $t-1$ (PD) es igual a cero y quedan perfectamente colineales con los efectos individuales. En esta muestra (varones que ya habían terminado su escolaridad en 1980) `educ` es constante en el tiempo. En R se ve directamente: `m_fe` no tiene coeficientes para esas variables y en `m_fd` figuran como `NA` (aliased).
+
+```{r sig-texto, echo=FALSE, results='asis'}
+no1 <- cmp2[cmp2$mod %in% c("Between", "Within", "PD", "EA") & cmp2$var != "constante" & cmp2$p >= .01 & cmp2$var != "hispano", c("mod", "var", "p", "stars_R")]
+cat("<div class='disc'>⚠️ <b>DISCREPANCIA interna del PDF (texto vs. Tabla 2).</b> El texto del Ejercicio 3 afirma que en las cuatro estimaciones alternativas <i>«todas las variables explicativas resultan significativas al 1%, a excepción de hispano»</i>. Pero la propia Tabla 2 (y el cálculo en R) muestran que no es así: ",
+    paste0("<b>", no1$var, "</b> en ", no1$mod, " (p = ", fnum(no1$p), ", ", ifelse(no1$stars_R == "", "n.s.", no1$stars_R), ")", collapse = "; "),
+    ". Lo correcto es decir que son significativas al 1% salvo esos casos y <code>hispano</code>.</div>\n", sep = "")
+reg("Ej. 3 · Texto", paste0("El texto dice 'todas significativas al 1% salvo hispano' en BE/FE/PD/EA, pero: ", paste0(no1$var, " en ", no1$mod, " (", no1$stars_R, ")", collapse = "; "), "."))
+```
+
+```{r sig-pols, echo=FALSE, results='asis'}
+pa <- cmp2[cmp2$mod == "POLS" & cmp2$var == "afro", ]
+if (pa$stars_PDF == "" && pa$stars_R == "***") {
+  cat("<div class='disc'>⚠️ <b>DISCREPANCIA (formato, Tabla 2).</b> El PDF no imprime asteriscos en el coeficiente de <code>afro</code> en POLS (−0,142), aunque el propio texto lo declara significativo al 1% y R da p = ", fnum(pa$p, 6), " (***). Falta <code>***</code> en esa celda.</div>\n", sep = "")
+  reg("Ej. 3 · Tabla 2 (formato)", "POLS / afro: el PDF omite los asteriscos (***) aunque el texto lo declara significativo al 1%.")
+}
+```
+
+# Ejercicio 4
+
+## (a) Supuestos para consistencia (Tabla 3)
+
+Sección conceptual: se reproduce la Tabla 3 del PDF tal cual (no hay cálculo numérico).
+
+```{r tabla3}
+t3 <- data.frame(
+  Condicion = c("(1) Exogeneidad contemporánea  E(x'_it u_it) = 0", "(2) Exogeneidad contemporánea (*)  E(x'_it ε_it) = 0",
+                "(3) Ortogonalidad regresores–heterogeneidad inobservable  E(x'_it μ_i) = 0", "(4) Exogeneidad estricta  E(x'_is ε_it) = 0 (**)"),
+  POLS = c("X", "X", "X", ""), Between = c("", "", "X", "X"), Within = c("", "", "", "X"),
+  `Prim. Dif.` = c("", "", "", "X"), `Ef. Aleatorios` = c("", "", "X", "X"), check.names = FALSE)
+kable(t3, caption = "Tabla 3. Condiciones para consistencia. (*) Suficiente para POLS cuando μ_i = 0. (**) Suficiente para Between cuando μ_i = 0.")
+```
+
+## (b) Test de ausencia de efectos fijos
+
+$H_0: \mu_i = 0\ \forall i$. Se compara el modelo restringido (POLS con **los mismos regresores que varían en el tiempo**, `exper`, `casado`, `sindicato`) contra el modelo de efectos fijos, que es lo que hace `xtreg, fe` en Stata («F test that all u_i=0»).
+
+```{r ftest}
+xs_fe <- c("exper", "casado", "sindicato")
+rss_u <- sum(residuals(m_fe)^2)
+rss_r <- sum(residuals(lm(reformulate(xs_fe, "lnsalario"), data = datos))^2)
+n <- 545; Nobs <- 4360; k <- length(xs_fe)
+df1 <- n - 1; df2 <- Nobs - n - k
+Fst <- ((rss_r - rss_u) / df1) / (rss_u / df2)
+pF  <- pf(Fst, df1, df2, lower.tail = FALSE)
+cat(sprintf("F(%d, %d) = %.2f ; p-valor = %.4f\n", df1, df2, Fst, pF))
+
+# Alternativa de plm (modelo POLS completo, con educ/afro/hispano, vs. FE)
+pf_plm <- pFtest(m_fe, m_pols)
+cat(sprintf("plm::pFtest -> F(%d, %d) = %.2f ; p-valor = %.4g\n", pf_plm$parameter[1], pf_plm$parameter[2], pf_plm$statistic, pf_plm$p.value))
+```
+
+Como el PDF no explica cómo obtuvo su estadístico, se prueban las definiciones usuales del modelo restringido (todas con los mismos $n-1 = 544$ y $N-n-k = 3812$ grados de libertad, salvo `plm::pFtest`):
+
+```{r ftest-alt}
+b_fe <- coef(m_fe)[xs_fe]; xb_fe <- as.matrix(datos[xs_fe]) %*% b_fe
+Ff   <- function(rss_r) ((rss_r - rss_u) / df1) / (rss_u / df2)
+alt  <- data.frame(
+  Restringido = c("A. POLS con los mismos regresores (exper, casado, sindicato)  [= test de las dummies individuales]",
+                  "B. Pendientes del FE con una constante común",
+                  "C. Solo constante",
+                  "D. plm::pFtest (POLS completo con educ/afro/hispano; g.l. del numerador = 541)"),
+  F = c(Fst, Ff(sum((datos$lnsalario - xb_fe - mean(datos$lnsalario - xb_fe))^2)),
+        Ff(sum((datos$lnsalario - mean(datos$lnsalario))^2)), as.numeric(pf_plm$statistic)))
+kable(alt, digits = 2, caption = "Estadístico F de efectos fijos según la definición del modelo restringido (PDF: 10,08)")
+```
+
+```{r ftest-cmp, echo=FALSE, results='asis'}
+if (abs(Fst - 10.08) > 0.01 || df1 != 544 || df2 != 3812) {
+  cat("<div class='disc'>⚠️ <b>DISCREPANCIA (no resuelta).</b> El PDF informa F(544; 3812) = 10,08. Los grados de libertad coinciden, pero el estadístico en R es <b>F = ", fnum(Fst, 2),
+      "</b> (definición A, la estándar: POLS vs. FE con los mismos regresores). Ninguna de las definiciones alternativas de la tabla anterior (", fnum(alt$F[2], 2), ", ", fnum(alt$F[3], 2), ", ", fnum(alt$F[4], 2),
+      ") reproduce 10,08, por lo que no pude identificar el origen de ese valor sin Stata. La <b>conclusión no cambia</b>: con cualquier definición el p-valor es &lt; 0,0001 y se rechaza $H_0$ (existen efectos fijos individuales).</div>\n", sep = "")
+  reg("Ej. 4b · Test F", sprintf("PDF: F(544,3812)=10,08; R: F(%d,%d)=%s (def. estándar). Otras definiciones: %s / %s / %s. No reproduce el 10,08; misma conclusión (se rechaza H0).",
+      df1, df2, fnum(Fst, 2), fnum(alt$F[2], 2), fnum(alt$F[3], 2), fnum(alt$F[4], 2)))
+} else {
+  cat("<div class='ok'>✅ <b>Coincide con el PDF:</b> F(544; 3812) = 10,08, p-valor = 0,0000. Se rechaza $H_0$: existen efectos fijos individuales y el modelo de efectos fijos es preferible a POLS.</div>\n")
+}
+```
+
+## (c) Test de Hausman (EF vs. EA)
+
+$H_0$: los estimadores de EF y EA no difieren sustancialmente (EA consistente y eficiente); $H_a$: solo EF es consistente.
+
+```{r hausman}
+hs <- phtest(m_fe, m_re)
+cat(sprintf("chi2(%d) = %.2f ; p-valor = %.6f\n", hs$parameter, hs$statistic, hs$p.value))
+```
+
+```{r hausman-cmp, echo=FALSE, results='asis'}
+if (abs(hs$statistic - 22.69) > 0.01 || hs$parameter != 3) {
+  cat("<div class='disc'>⚠️ <b>DISCREPANCIA.</b> PDF: χ²(3) = 22,69. R: χ²(", hs$parameter, ") = ", fnum(hs$statistic, 2), ".</div>\n", sep = "")
+  reg("Ej. 4c · Hausman", sprintf("PDF: chi2(3)=22,69; R: chi2(%d)=%.2f", hs$parameter, hs$statistic))
+} else {
+  cat("<div class='ok'>✅ <b>Coincide con el PDF:</b> χ²(3) = 22,69, p-valor = 0,0000 (en R, ", format(hs$p.value, digits = 3), "). Se rechaza $H_0$: los efectos individuales están correlacionados con los regresores y se prefiere el modelo de efectos fijos.</div>\n", sep = "")
+}
+```
+
+# Parte II (no replicada)
+
+Es una discusión conceptual del artículo de Rockoff (2004), *The Impact of Individual Teachers on Student Achievement: Evidence from Panel Data*; no incluye cálculos para reproducir en R.
+
+# Resumen de puntos de discrepancia con el PDF
+
+```{r resumen}
+if (nrow(disc)) kable(disc, row.names = TRUE, caption = "Todas las discrepancias / observaciones detectadas respecto del PDF") else cat("Sin discrepancias.")
+```
+
+# Información de la sesión
+
+```{r sesion}
+sessionInfo()
+```

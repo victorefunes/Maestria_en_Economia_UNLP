@@ -1,0 +1,355 @@
+---
+title: "Evaluación Domiciliaria N° 2: Selección Muestral y Censura — Réplica en R"
+subtitle: "Maestría en Economía UNLP · Econometría Avanzada"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: readable
+    df_print: paged
+lang: es
+---
+
+```{css, echo=FALSE}
+.disc { background:#fff3cd; border-left:6px solid #e0a800; padding:8px 12px; margin:10px 0; }
+.ok   { background:#e8f5e9; border-left:6px solid #2e7d32; padding:8px 12px; margin:10px 0; }
+table { font-size: 90%; }
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+suppressPackageStartupMessages({library(haven); library(dplyr); library(knitr); library(sandwich); library(lmtest)
+                                library(sampleSelection); library(AER)})
+options(scipen = 999, knitr.kable.NA = "-")
+
+# Registro global de discrepancias respecto del PDF "Trabajo Práctico N° 2 (R)"
+disc <- data.frame(Seccion = character(), Detalle = character())
+reg  <- function(sec, det) { disc <<- rbind(disc, data.frame(Seccion = sec, Detalle = det)); invisible() }
+
+fnum <- function(x, d = 3) formatC(x, format = "f", digits = d, decimal.mark = ",")
+st   <- function(p) ifelse(p < .01, "***", ifelse(p < .05, "**", ifelse(p < .10, "*", "")))
+```
+
+**Cómo leer este documento.** Todos los resultados se calculan en R a partir de `ech-laboral-mujeres.dta` (el mismo que usa el `.do` de Stata). La guía es el PDF *Trabajo Práctico N° 2 (R)*: sus valores se cargan a mano en el código y se comparan celda por celda contra lo que produce R. Donde algo no coincide aparece un recuadro amarillo **⚠️ DISCREPANCIA** u **OBSERVACIÓN**; donde coincide, uno verde. Al final hay un resumen de todos los puntos marcados.
+
+```{r datos}
+raw   <- read_dta("Datos/ech-laboral-mujeres.dta")
+datos <- as.data.frame(lapply(raw, function(x) if (inherits(x, "haven_labelled")) as.numeric(x) else x))
+cat("Observaciones:", nrow(datos), "· con salario observado (trabaja = 1):", sum(!is.na(datos$lilaho)), "\n")
+
+vars  <- c("edad", "edad2", "pric", "seci", "secc", "supi", "supc")
+f_out <- reformulate(vars, "lilaho")                                  # ecuación de salario
+f_sel <- reformulate(c(vars, "asiste", "hijos12"), "trabaja")         # ecuación de selección
+f_hs  <- reformulate(c(vars, "asiste", "hijos12"), "hstrt")           # modelo de horas
+```
+
+# Modelo para el salario horario
+
+$lilaho_i = \beta_0 + \beta_1 edad_i + \beta_2 edad_i^2 + \beta_3 pric_i + \beta_4 seci_i + \beta_5 secc_i + \beta_6 supi_i + \beta_7 supc_i + u_i$
+
+## Ejercicio 1. MCO
+
+El `.do` usa `regress ..., robust` (errores robustos, HC1 en Stata).
+
+```{r ols}
+m_ols <- lm(f_out, data = datos)                       # lm excluye las filas con lilaho faltante
+ct    <- coeftest(m_ols, vcov = vcovHC(m_ols, type = "HC1"))
+kable(round(unclass(ct), 5), caption = "MCO con errores robustos (HC1)")
+cat("N =", nobs(m_ols), " R2 =", round(summary(m_ols)$r.squared, 4), "\n")
+```
+
+```{r ols-interp, echo=FALSE, results='asis'}
+b <- coef(m_ols)
+pico <- -b["edad"] / (2 * b["edad2"])
+ret  <- 100 * (exp(b[c("pric", "seci", "secc", "supi", "supc")]) - 1)
+cat("**Efecto de la edad:** $100\\,(", fnum(b["edad"], 4), " + 2\\cdot(", fnum(b["edad2"], 5), ")\\,edad)$ %; el efecto se vuelve negativo a partir de **", fnum(pico, 2), "** años (PDF: 57,32).\n\n", sep = "")
+cat("**Retornos a la educación** $100(e^{\\beta_j}-1)$ respecto de primaria incompleta: primaria completa ", fnum(ret[1], 1), "%, secundaria incompleta ", fnum(ret[2], 1),
+    "%, secundaria completa ", fnum(ret[3], 1), "%, superior incompleto ", fnum(ret[4], 1), "% y superior completo ", fnum(ret[5], 1),
+    "% (PDF: 12,4 / 41,6 / 93,9 / 130,3 / 241,4).\n", sep = "")
+pdf_ret <- c(12.4, 41.6, 93.9, 130.3, 241.4)
+if (all(abs(round(ret, 1) - pdf_ret) < 0.11) && abs(pico - 57.32) < 0.01) {
+  cat("\n<div class='ok'>✅ El punto de giro de la edad y los cinco retornos a la educación coinciden con el PDF.</div>\n")
+} else {
+  cat("\n<div class='disc'>⚠️ <b>DISCREPANCIA.</b> Punto de giro o retornos distintos a los del PDF (ver valores arriba).</div>\n")
+  reg("Ej. 1 · Interpretación", paste0("Punto de giro R = ", fnum(pico, 2), " (PDF 57,32); retornos R = ", paste(fnum(ret, 1), collapse = " / "), " (PDF ", paste(fnum(pdf_ret, 1), collapse = " / "), ")"))
+}
+```
+
+## Ejercicios 2 y 3. Heckman en dos etapas y test de selección
+
+```{r heckit}
+# Etapa 1: probit de participación (sobre toda la muestra)
+probit <- glm(f_sel, family = binomial("probit"), data = datos)
+# Etapa 2: MCO con razón inversa de Mills, con errores corregidos (equivale a `heckman, twostep`)
+h2 <- heckit(f_sel, f_out, data = datos, method = "2step")
+e2 <- summary(h2)$estimate
+print(rownames(e2))
+```
+
+```{r heckit-tests}
+lam <- e2["invMillsRatio", ]
+z_l <- lam[1] / lam[2]
+cat(sprintf("lambda = %.3f ; EE = %.3f ; z = %.2f ; p-valor = %.6f\n", lam[1], lam[2], z_l, 2 * pnorm(-abs(z_l))))
+```
+
+El test de ausencia de selección es un test $z$ sobre $\lambda$: $H_0: \gamma^* = \gamma\sigma_2 = 0$ contra $H_a: \gamma^* \neq 0$, con estadístico $\hat\gamma^*/SE(\hat\gamma^*) \xrightarrow{d} N(0,1)$.
+
+## Ejercicio 4. Heckman por máxima verosimilitud
+
+```{r heckml}
+hml <- selection(f_sel, f_out, data = datos, method = "ml")
+idx <- hml$param$index
+est <- summary(hml)$estimate
+rho_h <- est["rho", ]; sig_h <- est["sigma", ]       # Stata reporta athrho = atanh(rho) y lnsigma = log(sigma); se pasan por método delta
+athrho <- atanh(rho_h[1]); se_athrho <- rho_h[2] / (1 - rho_h[1]^2)
+lnsig  <- log(sig_h[1]);   se_lnsig  <- sig_h[2] / sig_h[1]
+cat(sprintf("athrho = %.3f (EE %.3f) ; lnsigma = %.3f (EE %.3f)\n", athrho, se_athrho, lnsig, se_lnsig))
+
+# Test de razón de verosimilitud de independencia (rho = 0), como el que reporta Stata al pie de `heckman`
+ll_h  <- as.numeric(logLik(hml))
+ll_pr <- as.numeric(logLik(probit))
+m_sel <- lm(f_out, data = datos); n1 <- nobs(m_sel); ll_lm <- -n1 / 2 * (log(2 * pi) + 1 + log(sum(resid(m_sel)^2) / n1))
+LR    <- -2 * (ll_pr + ll_lm - ll_h)
+cat(sprintf("LR test de rho = 0: chi2(1) = %.2f ; p-valor = %.4f\n", LR, pchisq(LR, 1, lower.tail = FALSE)))
+```
+
+# Tabla 1 (réplica) y comparación con el PDF
+
+```{r tabla1-build}
+mk <- function(mod, eq, v, coef, se, p) data.frame(mod = mod, eq = eq, var = v, coef = coef, se = se, p = p, stringsAsFactors = FALSE)
+nm <- function(x) sub("\\(Intercept\\)", "_cons", x)
+
+# MCO (robusto)
+r_ols <- mk("MCO", "lilaho", nm(rownames(ct)), ct[, 1], ct[, 2], ct[, 4])
+
+# Heckman 2 etapas: ecuación de salario + probit + lambda (p-valores z, como Stata)
+sel_names <- nm(names(coef(probit)))
+ps <- summary(probit)$coefficients
+pr_2e <- mk("H2E", "trabaja", sel_names, ps[, 1], ps[, 2], ps[, 4])
+e2o   <- e2[h2$param$index$betaO, , drop = FALSE]      # filas de la ecuación de salario (los nombres se repiten con la selección)
+r_h2  <- rbind(mk("H2E", "lilaho", nm(rownames(e2o)), e2o[, 1], e2o[, 2], 2 * pnorm(-abs(e2o[, 1] / e2o[, 2]))),
+               pr_2e,
+               mk("H2E", "mills", "lambda", lam[1], lam[2], 2 * pnorm(-abs(z_l))))
+
+# Heckman ML
+bS <- est[idx$betaS, , drop = FALSE]; bO <- est[idx$betaO, , drop = FALSE]
+r_ml <- rbind(mk("HML", "lilaho", nm(names(coef(m_ols))), bO[, 1], bO[, 2], 2 * pnorm(-abs(bO[, 1] / bO[, 2]))),
+              mk("HML", "trabaja", sel_names, bS[, 1], bS[, 2], 2 * pnorm(-abs(bS[, 1] / bS[, 2]))),
+              mk("HML", "mills", "athrho",  athrho, se_athrho, 2 * pnorm(-abs(athrho / se_athrho))),
+              mk("HML", "mills", "lnsigma", lnsig,  se_lnsig,  2 * pnorm(-abs(lnsig / se_lnsig))))
+res1 <- rbind(r_ols, r_h2, r_ml)
+
+# Presentación tipo Tabla 1
+orden <- list(lilaho = c(vars, "_cons"), trabaja = c(vars, "asiste", "hijos12", "_cons"))
+cel <- function(mod, eq, v) { r <- res1[res1$mod == mod & res1$eq == eq & res1$var == v, ]
+  if (!nrow(r)) c("-", "-") else c(paste0(fnum(r$coef), st(r$p)), paste0("(", fnum(r$se), ")")) }
+fila <- function(eq, v, etiqueta) { rr <- sapply(c("MCO", "H2E", "HML"), function(m) cel(m, eq, v))
+  data.frame(Ecuacion = c(etiqueta, ""), Variable = c(v, ""), MCO = rr[, 1], Heckman_2E = rr[, 2], Heckman_ML = rr[, 3], stringsAsFactors = FALSE) }
+tabla1 <- do.call(rbind, c(lapply(names(orden), function(eq) do.call(rbind, lapply(orden[[eq]], function(v) fila(eq, v, eq)))),
+                           lapply(c("lambda", "athrho", "lnsigma"), function(v) fila("mills", v, "/mills"))))
+pie <- data.frame(Ecuacion = c("Observaciones", "R²"), Variable = "", MCO = c(format(nobs(m_ols), big.mark = "."), fnum(summary(m_ols)$r.squared)),
+                  Heckman_2E = c(format(nrow(datos), big.mark = "."), "-"), Heckman_ML = c(format(nrow(datos), big.mark = "."), "-"))
+kable(rbind(tabla1, pie), row.names = FALSE, align = "llrrr", caption = "Tabla 1 (réplica). Estimaciones del modelo (1). * p<0,10; ** p<0,05; *** p<0,01.")
+```
+
+```{r tabla1-pdf}
+P <- function(mod, eq, v, coef, se, stars) data.frame(mod = mod, eq = eq, var = v, coef_PDF = coef, se_PDF = se, stars_PDF = stars, stringsAsFactors = FALSE)
+pdf1 <- rbind(
+  # MCO
+  P("MCO","lilaho","edad", 0.041,0.003,"***"), P("MCO","lilaho","edad2",-0.000,0.000,"***"), P("MCO","lilaho","pric",0.117,0.046,"**"),
+  P("MCO","lilaho","seci",0.348,0.044,"***"), P("MCO","lilaho","secc",0.662,0.045,"***"), P("MCO","lilaho","supi",0.834,0.045,"***"),
+  P("MCO","lilaho","supc",1.228,0.044,"***"), P("MCO","lilaho","_cons",4.396,0.069,"***"),
+  # Heckman 2 etapas
+  P("H2E","lilaho","edad",0.064,0.007,"***"), P("H2E","lilaho","edad2",-0.001,0.000,"***"), P("H2E","lilaho","pric",0.169,0.046,"***"),
+  P("H2E","lilaho","seci",0.440,0.048,"***"), P("H2E","lilaho","secc",0.790,0.055,"***"), P("H2E","lilaho","supi",0.973,0.057,"***"),
+  P("H2E","lilaho","supc",1.395,0.060,"***"), P("H2E","lilaho","_cons",3.676,0.199,"***"),
+  P("H2E","trabaja","edad",0.113,0.008,"***"), P("H2E","trabaja","edad2",-0.001,0.000,"***"), P("H2E","trabaja","pric",0.2851,0.099,"***"),
+  P("H2E","trabaja","seci",0.554,0.095,"***"), P("H2E","trabaja","secc",0.782,0.103,"***"), P("H2E","trabaja","supi",0.862,0.106,"***"),
+  P("H2E","trabaja","supc",1.251,0.106,"***"), P("H2E","trabaja","asiste",-0.088,0.054,""), P("H2E","trabaja","hijos12",-0.048,0.021,"**"),
+  P("H2E","trabaja","_cons",-1.790,0.174,"***"), P("H2E","mills","lambda",0.618,0.158,"***"),
+  # Heckman ML
+  P("HML","lilaho","edad",0.043,0.003,"***"), P("HML","lilaho","edad2",-0.000,0.000,"***"), P("HML","lilaho","pric",0.122,0.042,"***"),
+  P("HML","lilaho","seci",0.357,0.040,"***"), P("HML","lilaho","secc",0.674,0.042,"***"), P("HML","lilaho","supi",0.847,0.042,"***"),
+  P("HML","lilaho","supc",1.244,0.041,"***"), P("HML","lilaho","_cons",4.328,0.078,"***"),
+  P("HML","trabaja","edad",0.112,0.008,"***"), P("HML","trabaja","edad2",-0.001,0.000,"***"), P("HML","trabaja","pric",0.285,0.099,"***"),
+  P("HML","trabaja","seci",0.553,0.099,"***"), P("HML","trabaja","secc",0.784,0.103,"***"), P("HML","trabaja","supi",0.869,0.105,"***"),
+  P("HML","trabaja","supc",1.254,0.106,"***"), P("HML","trabaja","asiste",-0.096,0.054,"*"), P("HML","trabaja","hijos12",-0.047,0.021,"**"),
+  P("HML","trabaja","_cons",-1.774,0.174,"***"), P("HML","mills","athrho",0.100,0.060,"*"), P("HML","mills","lnsigma",-0.537,0.006,"***"))
+
+cmp1 <- merge(pdf1, res1, by = c("mod", "eq", "var"), all.x = TRUE)
+cmp1$stars_R <- st(cmp1$p)
+cmp1$ok_coef <- abs(round(cmp1$coef, 3) - cmp1$coef_PDF) < 1.1e-3
+cmp1$ok_se   <- abs(round(cmp1$se, 3)   - cmp1$se_PDF)   < 1.1e-3
+cmp1$ok_st   <- cmp1$stars_R == cmp1$stars_PDF
+cat("Celdas comparadas:", nrow(cmp1), "· coef. OK:", sum(cmp1$ok_coef), "· EE OK:", sum(cmp1$ok_se), "· asteriscos OK:", sum(cmp1$ok_st), "\n")
+bad1 <- cmp1[!(cmp1$ok_coef & cmp1$ok_se & cmp1$ok_st), c("mod", "eq", "var", "coef_PDF", "coef", "se_PDF", "se", "stars_PDF", "stars_R", "p")]
+if (nrow(bad1)) kable(bad1, digits = 4, row.names = FALSE, caption = "Celdas de la Tabla 1 que NO coinciden")
+for (i in which(!(cmp1$ok_coef & cmp1$ok_se)))
+  reg("Tabla 1", sprintf("%s / %s / %s: PDF = %s (%s) | R = %s (%s)", cmp1$mod[i], cmp1$eq[i], cmp1$var[i],
+      fnum(cmp1$coef_PDF[i]), fnum(cmp1$se_PDF[i]), fnum(cmp1$coef[i]), fnum(cmp1$se[i])))
+cat("N: MCO =", nobs(m_ols), "(PDF 13.522) · Heckman =", nrow(datos), "(PDF 14.837) · R2 MCO =", round(summary(m_ols)$r.squared, 3), "(PDF 0,341)\n")
+```
+
+```{r tabla1-notas, echo=FALSE, results='asis'}
+if (all(cmp1$ok_coef & cmp1$ok_se)) cat("<div class='ok'>✅ Todos los coeficientes y errores estándar de la Tabla 1 coinciden con el PDF (a 3 decimales).</div>\n")
+bs <- cmp1[!cmp1$ok_st, ]
+if (nrow(bs)) {
+  cat("<div class='disc'>⚠️ <b>DISCREPANCIA (asteriscos, Tabla 1).</b> ",
+      paste0("<code>", bs$mod, "/", bs$eq, "/", bs$var, "</code>: PDF «", ifelse(bs$stars_PDF == "", "sin *", bs$stars_PDF), "», R «", ifelse(bs$stars_R == "", "sin *", bs$stars_R), "» (p = ", fnum(bs$p, 4), ")", collapse = "; "), ".</div>\n", sep = "")
+  for (i in seq_len(nrow(bs))) reg("Tabla 1 (asteriscos)", sprintf("%s / %s / %s: PDF '%s', R '%s' (p = %s)", bs$mod[i], bs$eq[i], bs$var[i], bs$stars_PDF[i], bs$stars_R[i], fnum(bs$p[i], 4)))
+}
+cat("<div class='disc'>⚠️ <b>OBSERVACIÓN (formato).</b> En la Tabla 1 del PDF, el coeficiente de <code>pric</code> en la ecuación de selección de Heckman en dos etapas se imprime con 4 decimales (0,2851) y el resto con 3.</div>\n")
+reg("Tabla 1 (formato)", "H2E / trabaja / pric aparece como 0,2851 (4 decimales) en vez de 0,285.")
+```
+
+## Chequeo de las afirmaciones de significatividad del texto
+
+```{r sig-texto, echo=FALSE, results='asis'}
+sig_no1 <- function(mod, eq, excl = character()) { r <- res1[res1$mod == mod & res1$eq == eq & !(res1$var %in% c(excl)) & res1$p >= .01, ]
+  if (!nrow(r)) "ninguna" else paste0("<code>", r$var, "</code> (p = ", fnum(r$p, 3), ", ", ifelse(st(r$p) == "", "n.s.", st(r$p)), ")", collapse = "; ") }
+cat("<div class='disc'>⚠️ <b>DISCREPANCIA interna del PDF (texto vs. Tabla 1).</b> El texto afirma significatividad al 1% de <i>todas</i> las variables en MCO (salvo <code>pric</code> al 5%), en Heckman en dos etapas y en Heckman ML. La Tabla 1 y el cálculo en R muestran excepciones:<ul>",
+    "<li><b>MCO (salario), variables no significativas al 1%:</b> ", sig_no1("MCO", "lilaho", "_cons"), " — coincide con lo que dice el texto.</li>",
+    "<li><b>Heckman 2E, ecuación de selección:</b> ", sig_no1("H2E", "trabaja"), ".</li>",
+    "<li><b>Heckman ML, ecuación de selección:</b> ", sig_no1("HML", "trabaja"), ".</li>",
+    "<li><b>Heckman ML, parámetro athrho:</b> ", sig_no1("HML", "mills", "lnsigma"), ".</li></ul></div>\n", sep = "")
+reg("Ej. 2 y 4 · Texto", "El texto dice que todas las variables de Heckman (2E y ML) son significativas al 1%, pero en la ecuación de selección asiste no es significativa (2E) o solo al 10% (ML), hijos12 solo al 5%, y athrho (ML) solo al 10%.")
+```
+
+## Test de ausencia de selección: resultado
+
+```{r test-sel, echo=FALSE, results='asis'}
+p_l <- 2 * pnorm(-abs(z_l)); p_lr <- pchisq(LR, 1, lower.tail = FALSE); p_ath <- 2 * pnorm(-abs(athrho / se_athrho))
+cat("- **Test $z$ sobre $\\lambda$ (dos etapas):** $z = ", fnum(z_l, 2), "$, p-valor = ", fnum(p_l, 6), ". Se rechaza $H_0$ (PDF: «p-valor muy pequeño, se rechaza»). ✅\n", sep = "")
+cat("- **Test de Wald sobre athrho (ML):** p-valor = ", fnum(p_ath, 3), " · **Test LR de $\\rho = 0$ (ML):** $\\chi^2(1) = ", fnum(LR, 2), "$, p-valor = ", fnum(p_lr, 3), ".\n", sep = "")
+if (p_lr > .05 || p_ath > .05) {
+  cat("\n<div class='disc'>⚠️ <b>OBSERVACIÓN.</b> El PDF concluye que existe sesgo de selección apoyándose en $\\lambda$ del método en dos etapas. En la estimación por máxima verosimilitud, en cambio, la evidencia es bastante más débil: athrho solo es significativo al 10% (p = ", fnum(p_ath, 3), ") y el test LR de $\\rho = 0$ da p = ", fnum(p_lr, 3),
+      ". La conclusión «se rechaza la ausencia de sesgo» depende, por lo tanto, del método elegido, y el PDF no lo menciona.</div>\n", sep = "")
+  reg("Ej. 3 · Test de selección", sprintf("Dos etapas: z(lambda) = %s, p = %s (rechaza). ML: athrho p = %s y LR(rho=0) p = %s: evidencia más débil; el PDF no lo menciona.", fnum(z_l, 2), fnum(p_l, 4), fnum(p_ath, 3), fnum(p_lr, 3)))
+}
+```
+
+# Modelo para las horas trabajadas
+
+$hstrt_i = \beta_0 + \beta_1 edad_i + \beta_2 edad_i^2 + \beta_3 pric_i + \beta_4 seci_i + \beta_5 secc_i + \beta_6 supi_i + \beta_7 supc_i + \beta_8 asiste_i + \beta_9 hijos12_i + u_i$
+
+## Ejercicio 5. MCO vs. Tobit
+
+```{r tobit}
+m_hs  <- lm(f_hs, data = datos)
+ct_hs <- coeftest(m_hs, vcov = vcovHC(m_hs, type = "HC1"))        # regress ..., robust
+tb    <- tobit(f_hs, left = 0, data = datos)                      # tobit ..., ll(0)
+cat("Censurados en 0:", sum(datos$hstrt == 0), "de", nrow(datos), "\n")
+st_tb <- summary(tb)$coefficients
+sig2  <- tb$scale^2; se_sig2 <- 2 * tb$scale^2 * st_tb["Log(scale)", "Std. Error"]   # var(e.hstrt), método delta
+```
+
+```{r tabla2-build}
+no_ls <- rownames(st_tb) != "Log(scale)"
+res2 <- rbind(mk("MCO", "hstrt", nm(rownames(ct_hs)), ct_hs[, 1], ct_hs[, 2], ct_hs[, 4]),
+              mk("Tobit", "hstrt", nm(rownames(st_tb))[no_ls], st_tb[no_ls, 1], st_tb[no_ls, 2], st_tb[no_ls, 4]),
+              mk("Tobit", "hstrt", "var(e)", sig2, se_sig2, 2 * pnorm(-abs(sig2 / se_sig2))))
+v2 <- c(vars, "asiste", "hijos12", "_cons", "var(e)")
+cel2 <- function(mod, v) { r <- res2[res2$mod == mod & res2$var == v, ]
+  if (!nrow(r)) c("-", "-") else c(paste0(fnum(r$coef), st(r$p)), paste0("(", fnum(r$se), ")")) }
+tabla2 <- do.call(rbind, lapply(v2, function(v) data.frame(Variable = c(v, ""), MCO = cel2("MCO", v), Tobit = cel2("Tobit", v))))
+tabla2 <- rbind(tabla2, data.frame(Variable = c("Observaciones", "R²"), MCO = c(format(nobs(m_hs), big.mark = "."), fnum(summary(m_hs)$r.squared, 4)),
+                                   Tobit = c(format(nrow(datos), big.mark = "."), "-")))
+kable(tabla2, row.names = FALSE, align = "lrr", caption = "Tabla 2 (réplica). Estimaciones del modelo (2).")
+```
+
+```{r tabla2-pdf}
+P2 <- function(mod, v, coef, se, stars) data.frame(mod = mod, var = v, coef_PDF = coef, se_PDF = se, stars_PDF = stars, stringsAsFactors = FALSE)
+pdf2 <- rbind(
+  P2("MCO","edad",1.737,0.082,"***"), P2("MCO","edad2",-0.020,0.001,"***"), P2("MCO","pric",3.186,1.284,"**"), P2("MCO","seci",7.600,1.222,"***"),
+  P2("MCO","secc",9.560,1.245,"***"), P2("MCO","supi",8.820,1.264,"***"), P2("MCO","supc",10.723,1.223,"***"), P2("MCO","asiste",-3.355,0.504,"***"),
+  P2("MCO","hijos12",-2.250,0.200,"***"), P2("MCO","_cons",-6.647,1.978,"***"),
+  P2("Tobit","edad",1.984,0.085,"***"), P2("Tobit","edad2",-0.023,0.001,"***"), P2("Tobit","pric",3.680,1.191,"***"), P2("Tobit","seci",8.484,1.137,"***"),
+  P2("Tobit","secc",10.750,1.182,"***"), P2("Tobit","supi",10.195,1.205,"***"), P2("Tobit","supc",12.122,1.153,"***"), P2("Tobit","asiste",-3.508,0.558,"***"),
+  P2("Tobit","hijos12",-2.379,0.214,"***"), P2("Tobit","_cons",-13.671,1.970,"***"), P2("Tobit","var(e)",328.52,4.106,"***"))
+cmp2 <- merge(pdf2, res2, by = c("mod", "var"), all.x = TRUE)
+cmp2$stars_R <- st(cmp2$p)
+cmp2$ok_coef <- abs(cmp2$coef - cmp2$coef_PDF) < ifelse(cmp2$var == "var(e)", 5.1e-3, 1.1e-3)
+cmp2$ok_se   <- abs(cmp2$se   - cmp2$se_PDF)   < ifelse(cmp2$var == "var(e)", 5.1e-3, 1.1e-3)
+cmp2$ok_st   <- cmp2$stars_R == cmp2$stars_PDF
+cat("Celdas comparadas:", nrow(cmp2), "· coef. OK:", sum(cmp2$ok_coef), "· EE OK:", sum(cmp2$ok_se), "· asteriscos OK:", sum(cmp2$ok_st), "\n")
+bad2 <- cmp2[!(cmp2$ok_coef & cmp2$ok_se & cmp2$ok_st), c("mod", "var", "coef_PDF", "coef", "se_PDF", "se", "stars_PDF", "stars_R", "p")]
+if (nrow(bad2)) kable(bad2, digits = 4, row.names = FALSE, caption = "Celdas de la Tabla 2 que NO coinciden")
+for (i in which(!(cmp2$ok_coef & cmp2$ok_se)))
+  reg("Tabla 2", sprintf("%s / %s: PDF = %s (%s) | R = %s (%s)", cmp2$mod[i], cmp2$var[i], fnum(cmp2$coef_PDF[i], 3), fnum(cmp2$se_PDF[i], 3), fnum(cmp2$coef[i], 3), fnum(cmp2$se[i], 3)))
+for (i in which(cmp2$ok_coef & cmp2$ok_se & !cmp2$ok_st))
+  reg("Tabla 2 (asteriscos)", sprintf("%s / %s: PDF '%s', R '%s' (p = %s)", cmp2$mod[i], cmp2$var[i], cmp2$stars_PDF[i], cmp2$stars_R[i], fnum(cmp2$p[i], 4)))
+cat("R2 MCO =", round(summary(m_hs)$r.squared, 4), "(PDF 0,0787) · N =", nobs(m_hs), "(PDF 14.837)\n")
+```
+
+```{r sig-texto2, echo=FALSE, results='asis'}
+if (all(cmp2$ok_coef & cmp2$ok_se)) cat("<div class='ok'>✅ Todos los coeficientes, errores estándar y la varianza del error del Tobit de la Tabla 2 coinciden con el PDF.</div>\n")
+r_pric <- res2[res2$mod == "MCO" & res2$var == "pric", ]
+cat("<div class='disc'>⚠️ <b>DISCREPANCIA interna del PDF (texto vs. Tabla 2).</b> El texto del Ejercicio 5 dice que, en MCO y en Tobit, todas las variables son significativas al 1%. Pero en MCO <code>pric</code> es significativo solo al 5% (p = ", fnum(r_pric$p, 3), ", «**» en la propia tabla).</div>\n", sep = "")
+reg("Ej. 5 · Texto", sprintf("El texto dice que todas las variables son significativas al 1%% en MCO y Tobit, pero pric en MCO lo es solo al 5%% (p = %s).", fnum(r_pric$p, 3)))
+```
+
+## Ejercicio 6. Efectos parciales del Tobit
+
+Réplica de `margins, predict(ystar(0,.))` (valor esperado de la variable **censurada**, $E[y]=\Phi(x\beta/\sigma)\,x\beta+\sigma\phi(x\beta/\sigma)$) y `margins, predict(e(0,.))` (valor esperado de la variable **truncada**, $E[y^*|y^*>0]=x\beta+\sigma\lambda(x\beta/\sigma)$), evaluados para una mujer con edad promedio, secundaria completa, sin asistencia escolar y con 2 hijos menores de 12 años. Como en el `.do`, `edad` se fija en su media muestral y las demás variables que no figuran en `at()` (aquí, `edad2`) toman sus valores observados; el resultado es el promedio de los efectos individuales. Errores estándar por método delta.
+
+```{r margins}
+bt  <- coef(tb); th <- c(bt, `Log(scale)` = log(tb$scale)); V <- vcov(tb)
+m_edad <- mean(datos$edad); cat("Edad promedio:", m_edad, "(PDF: 39,69897)\n")
+Xat <- cbind(`(Intercept)` = 1, edad = m_edad, edad2 = datos$edad2, pric = 0, seci = 0, secc = 1, supi = 0, supc = 0, asiste = 0, hijos12 = 2)
+stopifnot(identical(colnames(Xat), names(bt)))
+
+# Efecto marginal promedio de `v` sobre E[y] censurada o truncada.
+# chain = TRUE incluye el término cuadrático de la edad (b1 + 2*b2*edad); FALSE replica a Stata (solo b1).
+ame <- function(theta, v, tipo, Xm = Xat, chain = FALSE) {
+  b <- theta[seq_along(bt)]; s <- exp(theta[length(theta)]); a <- as.vector(Xm %*% b) / s
+  lam <- dnorm(a) / pnorm(a)
+  coefv <- if (chain && v == "edad") b["edad"] + 2 * b["edad2"] * m_edad else b[v]
+  mean(coefv * (if (tipo == "cens") pnorm(a) else 1 - lam * (a + lam)))
+}
+grad <- function(f, th, h = 1e-6) sapply(seq_along(th), function(j) { e <- replace(rep(0, length(th)), j, h); (f(th + e) - f(th - e)) / (2 * h) })
+efecto <- function(v, tipo, ...) { f <- function(t) ame(t, v, tipo, ...); g <- grad(f, th); c(est = f(th), se = sqrt(as.numeric(t(g) %*% V %*% g))) }
+
+tab3 <- rbind(edad_cens = efecto("edad", "cens"), edad_trunc = efecto("edad", "trunc"),
+              hijos_cens = efecto("hijos12", "cens"), hijos_trunc = efecto("hijos12", "trunc"))
+celda3 <- function(i) c(paste0(fnum(tab3[i, 1]), st(2 * pnorm(-abs(tab3[i, 1] / tab3[i, 2])))), paste0("(", fnum(tab3[i, 2]), ")"))
+Tt <- data.frame(Variable = c("edad", "", "hijos12", ""),
+                 Censura = c(celda3(1), celda3(3)), Truncamiento = c(celda3(2), celda3(4)))
+kable(rbind(Tt, data.frame(Variable = "Observaciones", Censura = format(nrow(datos), big.mark = "."), Truncamiento = format(nrow(datos), big.mark = "."))),
+      row.names = FALSE, align = "lrr", caption = "Tabla 3 (réplica). Efectos parciales del modelo (2).")
+```
+
+```{r tabla3-cmp}
+pdf3 <- data.frame(clave = c("edad_cens", "edad_trunc", "hijos_cens", "hijos_trunc"),
+                   est_PDF = c(1.674, 1.512, -2.007, -1.813), se_PDF = c(0.056, 0.056, 0.172, 0.155))
+c3 <- cbind(pdf3, est_R = tab3[, 1], se_R = tab3[, 2])
+c3$ok <- abs(c3$est_R - c3$est_PDF) < 1.1e-3 & abs(c3$se_R - c3$se_PDF) < 1.1e-3
+kable(c3, digits = 4, row.names = FALSE, caption = "Tabla 3: PDF vs. R")
+for (i in which(!c3$ok)) reg("Tabla 3", sprintf("%s: PDF = %s (%s), R = %s (%s)", c3$clave[i], fnum(c3$est_PDF[i]), fnum(c3$se_PDF[i]), fnum(c3$est_R[i]), fnum(c3$se_R[i])))
+```
+
+```{r tabla3-notas, echo=FALSE, results='asis'}
+if (all(c3$ok)) cat("<div class='ok'>✅ Los cuatro efectos parciales y sus errores estándar coinciden con la Tabla 3 del PDF (replicando exactamente el procedimiento de <code>margins</code> del <code>.do</code>).</div>\n")
+
+cat("<div class='disc'>⚠️ <b>DISCREPANCIA (Tabla 3, observaciones).</b> La Tabla 3 del PDF informa <b>14.387</b> observaciones, pero la base (y las Tablas 1 y 2 del propio PDF) tiene <b>", format(nrow(datos), big.mark = "."), "</b>. Parece una transposición de dígitos (14.837 → 14.387).</div>\n", sep = "")
+reg("Tabla 3 (N)", sprintf("El PDF informa N = 14.387; la base tiene %s (transposición de dígitos).", format(nrow(datos), big.mark = ".")))
+
+# Efecto de la edad incluyendo el término cuadrático (edad2 coherente con edad fija en su media)
+Xq <- Xat; Xq[, "edad2"] <- m_edad^2
+ecq <- efecto("edad", "cens", Xm = Xq, chain = TRUE); etq <- efecto("edad", "trunc", Xm = Xq, chain = TRUE)
+cat("<div class='disc'>⚠️ <b>OBSERVACIÓN metodológica importante (efecto de la edad).</b> En el modelo, <code>edad2</code> es una variable aparte; en el <code>.do</code> el efecto se calcula con <code>dydx(edad)</code> sobre la variable <code>edad</code> (sin notación de factores <code>c.edad##c.edad</code>), de modo que Stata <b>deriva solo respecto del coeficiente de <code>edad</code> y no incluye el término $2\\beta_2\\,edad$</b>. Por eso el PDF obtiene +1,674 (censura) y +1,512 (truncamiento), que son simplemente $\\hat\\beta_{edad}\\cdot$(factor de ajuste), y los interpreta como el efecto de un año más de edad.<br>",
+    "Si se incluye el término cuadrático (derivada total $\\hat\\beta_1 + 2\\hat\\beta_2\\,edad$, con $edad = ", fnum(m_edad, 2), "$), el efecto de un año más de edad es <b>", fnum(ecq[1], 3), "</b> horas (censurada; EE ", fnum(ecq[2], 3), ") y <b>", fnum(etq[1], 3), "</b> horas (truncada; EE ", fnum(etq[2], 3),
+    "), es decir, bastante distinto de lo que informa el PDF. El efecto de <code>hijos12</code> no se ve afectado.</div>\n", sep = "")
+reg("Ej. 6 · Efecto de la edad", sprintf("El PDF/margins omite el término cuadrático de edad. Con d/dedad = b1+2*b2*edad: censurada %s (EE %s), truncada %s (EE %s) frente a 1,674 y 1,512 del PDF.", fnum(ecq[1]), fnum(ecq[2]), fnum(etq[1]), fnum(etq[2])))
+```
+
+# Resumen de puntos de discrepancia con el PDF
+
+```{r resumen}
+if (nrow(disc)) kable(disc, row.names = TRUE, caption = "Todas las discrepancias / observaciones detectadas respecto del PDF") else cat("Sin discrepancias.")
+```
+
+# Información de la sesión
+
+```{r sesion}
+sessionInfo()
+```

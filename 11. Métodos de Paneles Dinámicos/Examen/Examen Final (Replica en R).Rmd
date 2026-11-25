@@ -1,0 +1,780 @@
+---
+title: "Examen Final - Métodos de Paneles Dinámicos (UNLP)"
+subtitle: "Réplica en R del `Examen Final.do` y contraste con `Examen Final (R).pdf`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: false
+    df_print: paged
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, comment = "#>")
+options(digits = 5, scipen = 999)
+suppressPackageStartupMessages({
+  library(plm); library(lmtest); library(sandwich); library(MASS)
+})
+# Ruta de datos: el .Rmd vive en la carpeta Examen/
+ruta <- if (file.exists("Datos/Gasoline.txt")) "Datos/Gasoline.txt" else "Gasoline.txt"
+```
+
+```{css, echo=FALSE}
+.disc {border-left: 6px solid #c0392b; background: #fdecea; padding: 8px 14px; margin: 12px 0; border-radius: 3px;}
+.disc::before {content: "⚠ DISCREPANCIA CON EL PDF"; display: block; font-weight: bold; color: #c0392b; margin-bottom: 4px;}
+.ok {border-left: 6px solid #27ae60; background: #eafaf1; padding: 6px 14px; margin: 10px 0; border-radius: 3px;}
+.ok::before {content: "✔ COINCIDE CON EL PDF"; display: block; font-weight: bold; color: #27ae60; margin-bottom: 2px;}
+.nota {border-left: 6px solid #2980b9; background: #eaf2f8; padding: 6px 14px; margin: 10px 0; border-radius: 3px;}
+.nota::before {content: "ℹ NOTA"; display: block; font-weight: bold; color: #2980b9; margin-bottom: 2px;}
+```
+
+::: nota
+**Cómo leer este documento.** Cada bloque de código replica en R una sección del `.do` de Stata. Las cifras del PDF de respuestas (`Examen Final (R).pdf`) están cargadas a mano en las tablas de comparación. La columna **Marca** muestra ⚠ cuando la réplica en R se aparta del PDF más allá de la tolerancia indicada (redondeo en las tablas de regresión; ruido de Monte Carlo en los Ejercicios 2 y 3). Los recuadros rojos **⚠ DISCREPANCIA** señalan puntos donde el *texto*, las *cifras* o el *procedimiento* del PDF no coinciden con lo que se obtiene o con lo que hace el `.do`. Los recuadros verdes confirman coincidencias importantes. Al final hay un cuadro-resumen de todas las discrepancias.
+:::
+
+```{r helpers}
+# Tabla de comparación R vs PDF. tol = diferencia absoluta máxima tolerada.
+cmp <- function(nombre, r, pdf, tol, dig = 3) {
+  dif <- r - pdf
+  data.frame(Concepto = nombre, R = round(r, dig), PDF = pdf, Dif = round(dif, dig),
+             Marca = ifelse(abs(dif) > tol, "⚠", "✔"), check.names = FALSE, row.names = NULL)
+}
+# Significatividad estilo PDF (* 10%, ** 5%, *** 1%)
+stars <- function(p) ifelse(p < .01, "***", ifelse(p < .05, "**", ifelse(p < .10, "*", "")))
+```
+
+# Ejercicio 1: Contrastes de especificación para el consumo de gasolina per cápita
+
+```{r datos}
+d  <- read.table(ruta, header = TRUE)
+d$id <- as.integer(factor(d$COUNTRY))
+pd <- pdata.frame(d, index = c("id", "YEAR"))
+f  <- LGASPCAR ~ LRPMG + LINCOMEP + LCARPCAP
+cat("Países:", length(unique(d$id)), " Años:", length(unique(d$YEAR)),
+    " Obs:", nrow(d), " Balanceado:", is.pbalanced(pd), "\n")
+```
+
+## Inciso (a): estimaciones y tests de EA y correlación serial
+
+### Estimaciones POLS, EF y EA (Tabla 1)
+
+```{r est-basicas}
+po <- plm(f, pd, model = "pooling")
+fe <- plm(f, pd, model = "within")
+re <- plm(f, pd, model = "random")             # Swamy-Arora (= xtreg, re)
+ols <- lm(f, d)
+
+# R2 "overall" = corr(y, xb)^2 (lo que reporta Stata como overall en fe/re)
+r2o <- function(m) {
+  b <- coef(m); b <- b[names(b) != "(Intercept)"]
+  cor(d$LGASPCAR, as.matrix(d[, names(b)]) %*% b)^2
+}
+se_pols_hc1 <- sqrt(diag(vcovHC(ols, type = "HC1")))                    # regress, robust
+se_fe_cl    <- sqrt(diag(vcovHC(fe, type = "sss", cluster = "group")))  # xtreg fe, robust
+se_re_cl    <- sqrt(diag(vcovHC(re, type = "sss", cluster = "group")))  # xtreg re, robust
+
+v3 <- c("LRPMG", "LINCOMEP", "LCARPCAP"); v4 <- c(v3, "(Intercept)")
+et3 <- c("ln(Pmg/Pgdp)", "ln(Y/N)", "ln(Car/N)"); et4 <- c(et3, "Constante")
+tab1 <- data.frame(
+  Variable = et4,
+  POLS = coef(po)[v4], `ee POLS` = se_pols_hc1[v4],
+  EF = c(coef(fe)[v3], NA), `ee EF` = c(se_fe_cl[v3], NA),
+  EA = coef(re)[v4], `ee EA` = se_re_cl[v4],
+  check.names = FALSE, row.names = NULL)
+knitr::kable(tab1, digits = 3, caption = "Réplica de la Tabla 1 (ee robustas: POLS = White HC1; EF y EA = clusters por país).")
+
+c1 <- rbind(
+  cmp("", tab1$POLS, c(-0.892, 0.890, -0.763, 2.391), 0.0015),
+  cmp("", tab1$`ee POLS`, c(0.039, 0.045, 0.022, 0.119), 0.0015),
+  cmp("", tab1$EF[1:3], c(-0.322, 0.662, -0.640), 0.0015),
+  cmp("", tab1$`ee EF`[1:3], c(0.126, 0.158, 0.100), 0.0015),
+  cmp("", tab1$EA, c(-0.420, 0.555, -0.607, 1.997), 0.0015),
+  cmp("", tab1$`ee EA`, c(0.121, 0.122, 0.091, 0.526), 0.0015))
+c1$Concepto <- c(paste(et4, "- POLS coef."), paste(et4, "- POLS ee"),
+                 paste(et3, "- EF coef."), paste(et3, "- EF ee"),
+                 paste(et4, "- EA coef."), paste(et4, "- EA ee"))
+r2 <- rbind(cmp("R2 POLS", summary(po)$r.squared[1], 0.855, 0.0015),
+            cmp("R2 EF (overall)", r2o(fe), 0.615, 0.0015), cmp("R2 EA (overall)", r2o(re), 0.731, 0.0015))
+knitr::kable(rbind(c1, r2), caption = "Tabla 1: R vs PDF (tolerancia 0,0015 = redondeo a 3 decimales).", row.names = FALSE)
+r2_within_fe <- summary(fe)$r.squared[1]
+```
+
+::: ok
+Todos los coeficientes y desvíos de la Tabla 1 (y las R² de POLS, EF y EA) se reproducen. Los desvíos de POLS corresponden a White (HC1); los de EF y EA, a errores agrupados por país (`robust` en `xtreg` equivale a `cluster(id)`).
+:::
+
+::: disc
+**(1.a-i) Etiqueta del R² en la Tabla 1.** La tabla reporta 0,615 (EF) y 0,731 (EA), pero **no aclara que son R² *overall*** (`corr(y, xb)^2`). El R² *within* del modelo de efectos fijos es **`r round(r2_within_fe, 3)`**, bastante mayor. Mezclar el R² de POLS (0,855) con el *overall* de EF/EA sin aclararlo induce a leer que EF ajusta peor que POLS, cosa que no es cierta en términos *within*.
+:::
+
+::: disc
+**(1.a-ii) El texto del PDF describe un modelo *two-way* que no es el estimado.** El PDF plantea $u_{it}=\mu_i+\lambda_t+\nu_{it}$ y dice estimar considerando "el efecto temporal no observado ($\lambda_t$)", pero el `.do` estima el modelo **one-way** (`xtreg ..., fe/re` sin dummies de año), y las cifras de la Tabla 1 coinciden con ese modelo one-way. El efecto temporal $\lambda_t$ nunca se introduce en las estimaciones del inciso (a).
+:::
+
+### Tests de efectos aleatorios y correlación serial (Tabla 2)
+
+```{r tests-a}
+# Breusch-Pagan (xttest0)
+bp <- plmtest(po, type = "bp", effect = "individual")
+# Wooldridge (xtserial): MCO en primeras diferencias sin constante; regresión de e_t sobre e_{t-1} con cluster; H0: rho = -0.5
+dd <- data.frame(id = index(pd)[, 1], y = diff(pd$LGASPCAR), x1 = diff(pd$LRPMG),
+                 x2 = diff(pd$LINCOMEP), x3 = diff(pd$LCARPCAP))
+dd <- na.omit(dd); dd$e <- resid(lm(y ~ x1 + x2 + x3 - 1, dd))
+dd$el <- ave(dd$e, dd$id, FUN = function(z) c(NA, head(z, -1)))
+dd2 <- na.omit(dd); m_ar <- lm(e ~ el - 1, dd2)
+Vcl <- vcovCL(m_ar, cluster = dd2$id, type = "HC1", cadjust = TRUE)
+woo_F <- unname((coef(m_ar) + 0.5)^2 / Vcl[1, 1]); woo_p <- pf(woo_F, 1, 17, lower.tail = FALSE)
+# Hausman (hausman fe re) y Mundlak (versión regresión: medias de los regresores en el modelo RE)
+haus <- phtest(fe, re)
+mund <- phtest(f, pd, method = "aux")
+
+tab2 <- rbind(
+  cmp("Breusch-Pagan (chi2)", unname(bp$statistic), 1465.55, 0.01, 2),
+  cmp("Wooldridge (F(1,17))", woo_F, 21.374, 0.001, 3),
+  cmp("Hausman (chi2(3))", unname(haus$statistic), 302.80, 0.01, 2),
+  cmp("Mundlak (chi2(3))", unname(mund$statistic), 26.50, 0.01, 2))
+knitr::kable(tab2, row.names = FALSE, caption = "Tabla 2: R vs PDF.")
+cat("p-valores:  BP =", format.pval(bp$p.value), "| Wooldridge =", format.pval(woo_p),
+    "| Hausman =", format.pval(haus$p.value), "| Mundlak =", format.pval(mund$p.value), "\n")
+pw <- pwfdtest(f, pd)    # versión empaquetada de plm, para comparar
+```
+
+::: ok
+Se reproducen los cuatro estadísticos de la Tabla 2 (Breusch-Pagan, Wooldridge, Hausman y Mundlak) y su rechazo con p-valor ≈ 0. Como en ambos contrastes EF vs. EA se rechaza H0, la conclusión del PDF (EF preferible a EA) es la correcta.
+:::
+
+::: nota
+`pwfdtest` de plm no coincide con `xtserial` (F = `r round(unname(pw$statistic), 3)` con gl2 = `r pw$parameter[2]`, en vez de F(1,17) con *clusters* por país). Para replicar el 21,374 del PDF hay que programar el test como lo hace `xtserial` (chunk anterior).
+:::
+
+::: disc
+**(1.a-iii) Redacción de las hipótesis.** El PDF describe ambos tests con la misma frase ("bajo $H_0$, no hay heterogeneidad inobservable (no existe correlación serial); bajo $H_a$, hay heterogeneidad inobservable (existe correlación serial)"). Son hipótesis distintas: Breusch-Pagan contrasta $\sigma^2_\mu=0$ (efectos aleatorios) y Wooldridge contrasta ausencia de correlación serial en $\nu_{it}$ (en primeras diferencias, $\rho=-0{,}5$). La Tabla 2 los pone en la misma casilla de $H_0$ y no aclara que Wooldridge se evalúa sobre primeras diferencias.
+:::
+
+::: disc
+**(1.a-iv) Alcance del Hausman.** El estadístico 302,80 sale de `hausman fe re`, que usa varianzas **no robustas**. El PDF no lo aclara, aunque en la Tabla 1 los desvíos de EF y EA son robustos (cluster) y él mismo documenta correlación serial. La versión robusta es el test de Mundlak con errores agrupados (ver abajo); el PDF no la reporta.
+:::
+
+```{r mundlak-cluster}
+dm <- d
+for (v in v3) dm[[paste0("mean_", v)]] <- ave(dm[[v]], dm$id)
+pdm <- pdata.frame(dm, index = c("id", "YEAR"))
+mu <- plm(LGASPCAR ~ LRPMG + LINCOMEP + LCARPCAP + mean_LRPMG + mean_LINCOMEP + mean_LCARPCAP, pdm, model = "random")
+w <- waldtest(mu, . ~ . - mean_LRPMG - mean_LINCOMEP - mean_LCARPCAP,
+              vcov = function(x) vcovHC(x, type = "sss", cluster = "group"), test = "Chisq")
+cat("Mundlak con errores agrupados (test conjunto de las medias): chi2 =", round(w$Chisq[2], 2), " p =", format.pval(w$`Pr(>Chisq)`[2]), "\n")
+```
+
+## Inciso (b): Bera, Sosa-Escudero y Yoon (2001)
+
+```{r bsy}
+b_re  <- pbsytest(f, pd, test = "re")    # z, una cola: EA robusto a CS local
+b_ar  <- pbsytest(f, pd, test = "ar")    # chi2(1): CS robusto a EA local
+b_j   <- pbsytest(f, pd, test = "j")     # conjunto EA+CS (Baltagi-Li)
+z <- unname(b_re$statistic)
+tab3 <- rbind(
+  cmp("PDF 'EA (two-way)' = EA individual, dos colas (z^2)", z^2, 1180.50, 0.01, 2),
+  cmp("PDF 'EA (one-way)' = EA individual, una cola (z)", z, 34.36, 0.01, 2),
+  cmp("CS robusto a EA (chi2(1))", unname(b_ar$statistic), 32.63, 0.01, 2),
+  cmp("EA + CS conjunto (chi2(2))", unname(b_j$statistic), 1498.18, 0.01, 2))
+knitr::kable(tab3, row.names = FALSE, caption = "Tabla 3: R vs PDF. (La columna Concepto indica qué es realmente cada estadístico.)")
+# Test BP de dos efectos (individual + temporal), para ver qué sería realmente "two-way"
+bp2 <- plmtest(po, type = "bp", effect = "twoways")
+```
+
+::: ok
+Los cuatro estadísticos de la Tabla 3 se reproducen numéricamente (1.180,50; 34,36; 32,63; 1.498,18).
+:::
+
+::: disc
+**(1.b-i) Mal etiquetado de la Tabla 3 ("two-way" / "one-way").** El PDF rotula las columnas como **EA (two-way) = 1.180,50** y **EA (one-way) = 34,36**. Pero ambos números son *el mismo test de EA individual* de Bera-Sosa-Escudero-Yoon: 34,36 es el estadístico $z$ de **una cola** y 1.180,50 es su cuadrado, el $\chi^2(1)$ de **dos colas** ($34{,}358^2\approx1.180{,}5$). "Two-way/one-way" en el sentido de *efectos individuales y temporales* no tiene relación con esas columnas: el `.do` (`xttest1`) sólo contempla efectos individuales. El test BP con ambos efectos (individual y temporal) da `r round(unname(bp2$statistic), 2)`, no 1.180,50.
+:::
+
+::: disc
+**(1.b-ii) La conclusión del PDF no se sigue de la Tabla 3.** El PDF concluye que la mejor estructura de varianzas incluye "un efecto individual ($\mu_i$), **un efecto temporal ($\lambda_t$)** y un efecto que varía por individuo y en el tiempo ($\nu_{it}$)". Como la columna "two-way" es en realidad el test de EA de dos colas, la Tabla 3 **no aporta evidencia de efecto temporal**. Lo que sí respalda la Tabla 3 es: efectos aleatorios individuales **y** correlación serial en $\nu_{it}$ (rechazo de EA robusto a CS, de CS robusto a EA y del test conjunto).
+:::
+
+::: disc
+**(1.b-iii) "Ajustado" vs. `unadjusted`.** La Tabla 3 del PDF dice "Estadístico (ajustado)", pero el `.do` corre `xttest1, unadjusted`. Los números de la Tabla 3 que se reproducen son los de las versiones ajustadas/robustas de Bera et al. (1.180,50; 34,36; 32,63) más el conjunto (1.498,18). Lo que el PDF informa no es lo que dice el comando del `.do`.
+:::
+
+## Inciso (c): OLS con clusters vs. efectos aleatorios (Tabla 4)
+
+```{r tabla4}
+se_ols_cl <- sqrt(diag(vcovHC(po, type = "sss", cluster = "group")))   # regress, cluster(id)
+se_ols_cla <- sqrt(diag(vcov(ols)))                                    # regress (clásico)
+se_re_cla <- sqrt(diag(vcov(re)))                                      # xtreg re (clásico)
+tab4 <- data.frame(Variable = et4,
+  `OLS` = coef(po)[v4], `ee OLS cluster` = se_ols_cl[v4],
+  `EA` = coef(re)[v4], `ee EA (sin cluster)` = se_re_cla[v4], `ee EA (cluster)` = se_re_cl[v4],
+  check.names = FALSE, row.names = NULL)
+knitr::kable(tab4, digits = 3, caption = "Réplica de la Tabla 4.")
+c4 <- rbind(cmp("", tab4[[3]], c(0.146, 0.172, 0.070, 0.442), 0.0015),
+            cmp("", tab4[[5]], c(0.040, 0.059, 0.026, 0.184), 0.0015),
+            cmp("", tab4[[6]], c(0.121, 0.122, 0.091, 0.526), 0.0015))
+c4$Concepto <- c(paste(et4, "- OLS cluster"), paste(et4, "- EA sin cluster"), paste(et4, "- EA cluster"))
+knitr::kable(c4, row.names = FALSE, caption = "Tabla 4: R vs PDF (errores estándar).")
+```
+
+::: ok
+Todos los desvíos de la Tabla 4 coinciden.
+:::
+
+::: disc
+**(1.c-i) La interpretación del PDF contradice sus propios resultados.** El PDF atribuye la caída de los coeficientes de OLS a EA a que "existen heterogeneidades inobservables [...] los estimadores OLS son sesgados e inconsistentes; al controlar por heterogeneidades [...] (a través de efectos aleatorios), se evitan sesgos". Pero en el inciso (a) el propio PDF **rechaza** que EA sea consistente (Hausman = 302,80 y Mundlak = 26,50 rechazan $H_0$; $\hat\beta_{EF}$ difiere de $\hat\beta_{EA}$, p. ej. −0,322 vs. −0,420 para el precio). Si los efectos están correlacionados con los regresores, **EA tampoco evita el sesgo**; sólo EF lo hace. EA reduce el sesgo respecto de POLS pero no lo elimina.
+:::
+
+::: disc
+**(1.c-ii) "Los clusters introducen sesgo (negativo)".** El PDF dice que los desvíos agrupados de OLS son mucho mayores "reflejando el sesgo (negativo) existente que introducen los clusters si el modelo no condiciona en ellos". La estructura de clusters **no introduce sesgo**: los desvíos clásicos de OLS están **sesgados hacia abajo** porque ignoran la correlación intra-país del error, y el estimador *cluster-robust* lo corrige. Para el precio, el desvío con clusters (`r round(se_ols_cl["LRPMG"], 3)`) es `r round(se_ols_cl["LRPMG"] / se_ols_cla["LRPMG"], 1)` veces el clásico (`r round(se_ols_cla["LRPMG"], 3)`).
+:::
+
+::: nota
+Para EA el PDF señala bien que los desvíos aumentan al agrupar (0,040 → 0,121 para el precio): es la señal de correlación serial/heterocedasticidad residual en $\nu_{it}$ que el modelo de componentes de error no captura. También es correcto que la consistencia del estimador de varianza por clusters requiere $C\to\infty$; aquí C = 18, un número bajo, y el PDF no lo cuestiona.
+:::
+
+## Inciso (d): modelo dinámico
+
+### Tests de raíz unitaria sobre `lgaspcar` (presentes en el `.do`, ausentes en el PDF)
+
+```{r unit-root}
+yy <- data.frame(split(pd$LGASPCAR, index(pd)[, 1]))        # panel balanceado, T x N
+ur <- function(te, ...) { r <- purtest(yy, test = te, exo = "intercept", ...); c(stat = unname(r$statistic$statistic), p = unname(r$statistic$p.value)) }
+llc <- ur("levinlin", lags = 1, pmax = 1)
+ips <- ur("ips", lags = 1, pmax = 1)
+fish <- ur("madwu", lags = 1, pmax = 1)
+had <- ur("hadri")
+
+# Harris-Tzavalis (implementación propia, sólo medias de panel)
+ht_fun <- function(Y) {
+  Tt <- nrow(Y) - 1; N <- ncol(Y)
+  y1 <- Y[-1, ]; y0 <- Y[-nrow(Y), ]
+  num <- sum(sapply(1:N, function(i) sum((y0[, i] - mean(y0[, i])) * (y1[, i] - mean(y1[, i])))))
+  den <- sum(sapply(1:N, function(i) sum((y0[, i] - mean(y0[, i]))^2)))
+  rho <- num / den; Tm <- Tt + 1
+  mu <- 1 - 3 / (Tm + 1); s2 <- 3 * (17 * Tm - 20) / (5 * (Tm - 1) * (Tm + 1)^3 * N)
+  z <- (rho - mu) / sqrt(s2); c(stat = z, p = pnorm(z), rho = rho)
+}
+ht <- ht_fun(as.matrix(yy))
+# Breitung (2000), sólo constante (implementación propia, estadístico lambda)
+br_fun <- function(Y) {
+  Tt <- nrow(Y); N <- ncol(Y); ys <- c(); xs <- c()
+  for (i in 1:N) {
+    y <- Y[, i]; dy <- diff(y)
+    for (t in 2:(Tt - 1)) {
+      fwd <- mean(dy[t:(Tt - 1)])
+      ys <- c(ys, sqrt((Tt - t) / (Tt - t + 1)) * (dy[t - 1] - fwd))
+      xs <- c(xs, y[t - 1] - y[1])
+    }
+  }
+  s2 <- sum(ys^2) / (N * (Tt - 2)); lam <- sum(ys * xs) / sqrt(s2 * sum(xs^2))
+  c(stat = lam, p = pnorm(lam))
+}
+br <- br_fun(as.matrix(yy))
+tab_ur <- data.frame(
+  Test = c("Levin-Lin-Chu (xtunitroot llc)", "Harris-Tzavalis (ht)", "Breitung (breitung)", "Hadri (hadri)",
+           "Im-Pesaran-Shin (ips)", "Fisher-ADF (fisher)"),
+  H0 = c("raíz unitaria", "raíz unitaria", "raíz unitaria", "estacionariedad", "raíz unitaria", "raíz unitaria"),
+  Estadístico = c(llc[1], ht[1], br[1], had[1], ips[1], fish[1]),
+  `p-valor` = c(llc[2], ht[2], br[2], had[2], ips[2], fish[2]),
+  `Comentario del .do` = c("Se rechaza H0", "No se rechaza H0", "No se rechaza H0", "Se rechaza H0", "Se rechaza H0", "Se rechaza H0"),
+  check.names = FALSE)
+tab_ur$`Rechaza H0 al 5% (R)` <- ifelse(tab_ur$`p-valor` < 0.05, "Sí", "No")
+tab_ur$Marca <- ifelse((tab_ur$`Comentario del .do` == "Se rechaza H0") == (tab_ur$`Rechaza H0 al 5% (R)` == "Sí"), "✔", "⚠")
+knitr::kable(tab_ur, digits = 4, caption = "Raíz unitaria en ln(Gas/Car): R vs comentarios del .do (HT y Breitung: implementación propia).")
+```
+
+::: disc
+**(1.d-i) Omisión.** El `.do` corre siete tests de raíz unitaria y deja anotado el resultado de cada uno (LLC, IPS y Fisher rechazan raíz unitaria; HT y Breitung no; Hadri rechaza estacionariedad), pero **el PDF no los presenta ni los comenta**, aunque son el sustento natural para plantear el modelo dinámico (2) con $|\alpha|<1$. La evidencia mixta (algunos tests no rechazan la raíz unitaria) debería haberse discutido: un $\hat\alpha=0{,}949$ (columna "One-Lag" de la Tabla 5) sugiere persistencia cercana a la unidad.
+:::
+
+::: nota
+La columna **Marca** de esta tabla compara contra los comentarios dejados en el `.do`, no contra el PDF. HT y Breitung no existen en plm; se programaron según sus fórmulas para el caso con constante y pueden diferir en detalles de muestra finita respecto de `xtunitroot` de Stata.
+:::
+
+### Estimación dinámica: efectos aleatorios (Tabla 5, columna EA)
+
+```{r dyn-re}
+dre <- plm(LGASPCAR ~ lag(LGASPCAR, 1) + LRPMG + LINCOMEP + LCARPCAP, pd, model = "random")
+Vre <- vcovHC(dre, type = "sss", cluster = "group")
+bre <- coef(dre)
+a_re <- bre["lag(LGASPCAR, 1)"]
+# elasticidad de largo plazo y su error estándar por método delta
+lp_delta <- function(b, V, a_name, x_names) {
+  a <- b[a_name]; out <- NULL
+  for (xn in x_names) {
+    g <- setNames(rep(0, length(b)), names(b)); g[xn] <- 1 / (1 - a); g[a_name] <- b[xn] / (1 - a)^2
+    est <- b[xn] / (1 - a); se <- sqrt(drop(t(g) %*% V %*% g))
+    out <- rbind(out, data.frame(var = xn, cp = b[xn], se_cp = sqrt(V[xn, xn]), lp = est, se_lp = se,
+      p_cp = 2 * pnorm(-abs(b[xn] / sqrt(V[xn, xn]))), p_lp = 2 * pnorm(-abs(est / se)), row.names = NULL))
+  }
+  out
+}
+lp_re <- lp_delta(bre, Vre, "lag(LGASPCAR, 1)", v3)
+knitr::kable(lp_re, digits = 3, row.names = FALSE, caption = "EA dinámico: elasticidades de corto (cp) y largo plazo (lp) con ee por método delta.")
+c5re <- rbind(cmp("alpha EA", a_re, 0.842, 0.0015),
+  cmp("CP ln(Pmg/Pgdp)", lp_re$cp[1], -0.144, 0.0015), cmp("LP ln(Pmg/Pgdp)", lp_re$lp[1], -0.912, 0.0015),
+  cmp("CP ln(Y/N)", lp_re$cp[2], 0.132, 0.0015), cmp("LP ln(Y/N)", lp_re$lp[2], 0.834, 0.0015),
+  cmp("CP ln(Car/N)", lp_re$cp[3], -0.105, 0.0015), cmp("LP ln(Car/N)", lp_re$lp[3], -0.666, 0.0015))
+knitr::kable(c5re, row.names = FALSE, caption = "Tabla 5 (columna EA): R vs PDF.")
+```
+
+::: ok
+Se reproduce la columna EA de la Tabla 5 ($\hat\alpha=0{,}842$; elasticidades de corto plazo −0,144; 0,132; −0,105 y de largo plazo −0,912; 0,834; −0,666), todas significativas.
+:::
+
+### Arellano-Bond (1991): GMM en diferencias
+
+El `.do` usa `xtabond2 y x l.(y x) yr*, gmmstyle(l.(y x)) ivstyle(yr*, equation(level)) robust noleveleq`. Como `xtabond2` no existe en R, se programó el estimador en diferencias de un paso con $H$ = matriz de diferencias ($2$ en la diagonal, $-1$ fuera de ella), instrumentos tipo GMM para $l.y$ y $l.x$ (niveles rezagados desde el lag 1 de cada variable, es decir $y_{t-2},\dots$), dummies de año como regresores y errores estándar robustos (sandwich de un paso).
+
+```{r gmm-fun}
+ids <- unique(d$COUNTRY); N <- length(ids); Tt <- 19
+Wd <- function(v) t(sapply(ids, function(i) d[[v]][d$COUNTRY == i]))
+Y <- Wd("LGASPCAR"); Xl <- list(Wd("LRPMG"), Wd("LINCOMEP"), Wd("LCARPCAP")); Vv <- c(list(Y), Xl)
+
+# Réplica del xtabond2 (difference GMM, one-step, robust, noleveleq)
+xtb2 <- function(lagmin = 1, lagmax = Inf, collapse = FALSE) {
+  per <- 3:Tt; nT <- length(per)
+  Xi <- vector("list", N); yi <- vector("list", N)
+  for (i in 1:N) {
+    Xi[[i]] <- do.call(rbind, lapply(per, function(t)
+      c(Y[i, t-1] - Y[i, t-2],                                   # D l.y
+        sapply(Xl, function(M) M[i, t] - M[i, t-1]),             # D x
+        sapply(Xl, function(M) M[i, t-1] - M[i, t-2]),           # D l.x
+        sapply(2:Tt, function(s) (t == s) - (t - 1 == s)))))     # D dummies de año
+    yi[[i]] <- Y[i, per] - Y[i, per - 1]
+  }
+  Zi <- vector("list", N)
+  for (i in 1:N) {
+    Z <- NULL
+    for (v in Vv) {
+      lv <- c(NA, v[i, 1:(Tt - 1)])                              # (l.v)_s = v_{s-1}
+      if (!collapse) {
+        blk <- matrix(0, nT, 0)
+        for (k in seq_along(per)) {
+          t <- per[k]; ss <- (t - lagmin):2
+          if (is.finite(lagmax)) ss <- ss[ss >= t - lagmax]
+          c0 <- ncol(blk); blk <- cbind(blk, matrix(0, nT, length(ss)))
+          if (length(ss)) blk[k, c0 + seq_along(ss)] <- lv[ss]
+        }
+      } else {
+        lags <- lagmin:min(lagmax, 17); blk <- matrix(0, nT, length(lags))
+        for (k in seq_along(per)) for (j in seq_along(lags)) { s <- per[k] - lags[j]; if (s >= 2) blk[k, j] <- lv[s] }
+      }
+      Z <- cbind(Z, blk)
+    }
+    Zi[[i]] <- Z
+  }
+  Za <- do.call(rbind, Zi); keep <- colSums(Za != 0) > 0
+  Zi <- lapply(Zi, function(z) z[, keep, drop = FALSE]); Za <- Za[, keep, drop = FALSE]
+  Xa <- do.call(rbind, Xi); ya <- unlist(yi)
+  qx <- qr(Xa); kc <- sort(qx$pivot[seq_len(qx$rank)])           # elimina dummies colineales
+  Xi <- lapply(Xi, function(x) x[, kc, drop = FALSE]); Xa <- Xa[, kc, drop = FALSE]
+  H <- diag(2, nT); H[cbind(1:(nT-1), 2:nT)] <- -1; H[cbind(2:nT, 1:(nT-1))] <- -1
+  A <- Reduce(`+`, lapply(Zi, function(z) t(z) %*% H %*% z)); Wm <- ginv(A)
+  ZX <- t(Za) %*% Xa; Zy <- t(Za) %*% ya
+  M <- solve(t(ZX) %*% Wm %*% ZX)
+  b <- drop(M %*% t(ZX) %*% Wm %*% Zy)
+  e <- lapply(1:N, function(i) yi[[i]] - Xi[[i]] %*% b)
+  S <- Reduce(`+`, lapply(1:N, function(i) t(Zi[[i]]) %*% e[[i]] %*% t(e[[i]]) %*% Zi[[i]]))
+  Vb <- M %*% (t(ZX) %*% Wm %*% S %*% Wm %*% ZX) %*% M
+  nm <- c("L.y", "x1", "x2", "x3", "L.x1", "L.x2", "L.x3")
+  list(b = setNames(b[1:7], nm), V = `dimnames<-`(Vb[1:7, 1:7], list(nm, nm)), ninst = ncol(Za))
+}
+res_ab <- list(
+  full      = xtb2(1, Inf, FALSE),
+  onelag    = xtb2(1, 1,   FALSE),
+  collapsed = xtb2(1, Inf, TRUE))
+```
+
+```{r gmm-tab}
+mk <- function(r) {
+  g <- lp_delta(r$b, r$V, "L.y", c("x1", "x2", "x3"))
+  g$alpha <- r$b["L.y"]; g$ninst <- r$ninst; g }
+g_full <- mk(res_ab$full); g_one <- mk(res_ab$onelag); g_col <- mk(res_ab$collapsed)
+resumen <- data.frame(
+  Variable = et3,
+  `AB-Full CP` = g_full$cp, `AB-Full LP` = g_full$lp,
+  `AB-OneLag CP` = g_one$cp, `AB-OneLag LP` = g_one$lp,
+  `AB-Collapsed CP` = g_col$cp, `AB-Collapsed LP` = g_col$lp, check.names = FALSE)
+knitr::kable(resumen, digits = 3, row.names = FALSE, caption = "Réplica de la Tabla 5 (columnas GMM) con el estimador programado en R.")
+
+nombres9 <- paste(rep(c("Full", "One-Lag", "Collapsed"), each = 3), rep(et3, 3))
+pdfT5 <- cmp("", c(g_full$cp, g_one$cp, g_col$cp), c(-0.196, -0.177, -0.787, -0.267, -0.103, -1.008, -0.307, -0.059, -1.003), 0.0015)
+pdfT5$Concepto <- paste("CP", nombres9)
+knitr::kable(pdfT5, row.names = FALSE, caption = "Tabla 5, elasticidades de corto plazo GMM: R vs PDF.")
+pdfLP <- cmp("", c(g_full$lp, g_one$lp, g_col$lp), c(-0.990, -0.894, -3.975, -5.235, -2.020, -19.765, -1.093, -0.210, -3.569), 0.0015)
+pdfLP$Marca <- ifelse(abs(pdfLP$Dif) > 0.005 * pmax(1, abs(pdfLP$PDF)), "⚠", "✔")
+pdfLP$Concepto <- paste("LP", nombres9)
+knitr::kable(pdfLP, row.names = FALSE, caption = "Tabla 5, elasticidades de largo plazo GMM: R vs PDF.")
+pdfA <- data.frame(Especificación = c("Full", "One-Lag", "Collapsed"),
+  `alpha R` = c(g_full$alpha[1], g_one$alpha[1], g_col$alpha[1]), `alpha PDF` = c(0.802, 0.949, 0.719),
+  `N° instr. R` = c(g_full$ninst[1], g_one$ninst[1], g_col$ninst[1]), `N° instr. PDF` = c(274, 68, 68), check.names = FALSE)
+pdfA$`Marca alpha` <- ifelse(abs(pdfA$`alpha R` - pdfA$`alpha PDF`) > 0.0015, "⚠", "✔")
+pdfA$`Marca instr.` <- ifelse(pdfA$`N° instr. R` != pdfA$`N° instr. PDF`, "⚠", "✔")
+knitr::kable(pdfA, digits = 3, row.names = FALSE, caption = "α̂ y número de instrumentos: R vs PDF.")
+```
+
+```{r gmm-signif}
+sig <- function(g, etiqueta) data.frame(Especificación = etiqueta, Variable = et3,
+  CP = sprintf("%.3f%s", g$cp, stars(g$p_cp)), LP = sprintf("%.3f%s", g$lp, stars(g$p_lp)))
+knitr::kable(rbind(sig(g_full, "Full"), sig(g_one, "One-Lag"), sig(g_col, "Collapsed")), row.names = FALSE,
+  caption = "Significatividad (ee robustas de un paso; LP por método delta). * 10%, ** 5%, *** 1%.")
+```
+
+Para interpretar los $\hat\alpha$ de la Tabla 5 hace falta también el estimador de **Blundell-Bond** (sistema GMM) que el `.do` corre en las líneas 102-103 y que el PDF no reporta. Se estima con `plm::pgmm` (aproximación; no es idéntico a `xtabond2`):
+
+```{r bb}
+bb <- function(lags, collapse) {
+  vs <- c("LGASPCAR", "LRPMG", "LINCOMEP", "LCARPCAP")
+  inst <- paste(sprintf("lag(%s, %s)", vs, lags), collapse = " + ")
+  fo <- as.formula(paste("LGASPCAR ~ lag(LGASPCAR,1) + LRPMG + LINCOMEP + LCARPCAP + lag(LRPMG,1) + lag(LINCOMEP,1) + lag(LCARPCAP,1) |", inst))
+  m <- try(pgmm(fo, data = pd, effect = "twoways", model = "onestep", collapse = collapse, transformation = "ld"), silent = TRUE)
+  if (inherits(m, "try-error")) return(NULL)
+  b <- coef(m); a <- b[1]
+  data.frame(alpha = a, cp_pmg = b[2], cp_y = b[3], cp_car = b[4], lp_pmg = b[2]/(1-a), lp_y = b[3]/(1-a), lp_car = b[4]/(1-a), row.names = NULL)
+}
+bb1 <- bb("2:99", FALSE); bb2 <- bb("2:2", TRUE)
+res_bb <- rbind(`BB full (gmmstyle)` = bb1, `BB laglimits(1 1) collapse` = bb2)
+knitr::kable(res_bb, digits = 3, caption = "Blundell-Bond con plm::pgmm (aproximación a las líneas 102-103 del .do).")
+```
+
+::: ok
+En la especificación **One-Lag** (`laglimits(1 1)`) los tres coeficientes de corto plazo coinciden con el PDF (−0,267; −0,103; −1,008), igual que el número de instrumentos (68). En **Collapsed** coinciden los de precio y autos per cápita (−0,307; −1,004 vs. −1,003) y también el número de instrumentos (68). Esto valida la réplica del estimador `xtabond2` en diferencias.
+:::
+
+::: disc
+**(1.d-ii) El $\hat\alpha$ de las columnas One-Lag y Collapsed de la Tabla 5 no es el de la estimación en diferencias.** Con los mismos coeficientes de corto plazo que el PDF, el $\hat\alpha$ de Arellano-Bond es **`r round(g_one$alpha[1], 3)`** (One-Lag) y **`r round(g_col$alpha[1], 3)`** (Collapsed), no 0,949 y 0,719. Los $\hat\alpha$ del PDF aparecen en cambio en las estimaciones de **Blundell-Bond** (sistema GMM, líneas 102-103 del `.do`): ver tabla de BB más abajo, con $\hat\alpha=$ `r round(bb1$alpha, 3)` (full) y `r round(bb2$alpha, 3)` (laglimits(1 1) collapse); el 0,719 coincide exactamente con el PDF y 0,943 es muy cercano a 0,949 (la diferencia se atribuye a que `pgmm` no es idéntico a `xtabond2`). Es decir, el PDF parece combinar **coeficientes de corto plazo de Arellano-Bond (diferencias)** con **$\hat\alpha$ de Blundell-Bond (sistema)**, y las elasticidades de largo plazo de esas dos columnas (−5,235; −2,020; −19,765 y −1,093; −0,210; −3,569) no son $\hat\beta/(1-\hat\alpha)$ de una misma estimación. Con el $\hat\alpha$ de Arellano-Bond, las de largo plazo serían las de la tabla de arriba (One-Lag: −0,453; −0,174; −1,709; Collapsed: −0,594; −0,097; −1,941). La cifra de −19,765 para autos per cápita es un síntoma de esa mezcla. (Esto es una inferencia a partir de la coincidencia numérica; sin Stata no puede confirmarse el origen exacto.)
+:::
+
+::: disc
+**(1.d-iii) Columna Arellano-Bond "Full": número de instrumentos y coeficientes.** El PDF informa **274** instrumentos (nota 2 de la Tabla 5). La especificación del `.do` (`gmmstyle(l.(y x))`, 4 variables, 17 períodos en diferencias) genera **`r g_full$ninst[1]`** en la réplica. La columna Full de la réplica difiere del PDF no sólo en el conteo: $\hat\alpha=$ `r round(g_full$alpha[1], 3)` (PDF 0,802), precio `r round(g_full$cp[1], 3)` (PDF −0,196), autos `r round(g_full$cp[3], 3)` (PDF −0,787) y, sobre todo, **ln(Y/N) = `r round(g_full$cp[2], 3)` (PDF −0,177)**: **cambia el signo** de la elasticidad-ingreso de corto plazo. No pudo reproducirse sin Stata cómo `xtabond2` llega a 274 instrumentos (posible descarte/colapso automático de instrumentos redundantes); lo cierto es que con el `.do` tal cual está escrito no se obtiene la columna Full del PDF y que el signo del ingreso es sensible a esa elección.
+:::
+
+::: disc
+**(1.d-iv) Error de signo en el texto.** Para Arellano-Bond colapsado el PDF escribe que las elasticidades de corto plazo son "−0,307%, −0,059% y **1,003%**", pero la Tabla 5 tiene **−1,003** para ln(Car/N) (y la réplica da −1,004). Además se usa "%" para magnitudes que ya son elasticidades (−0,307 es el cambio porcentual ante un 1% de aumento). Por otra parte, el ln(Y/N) colapsado es −0,059 en el PDF y `r round(g_col$cp[2], 3)` en la réplica (diferencia 0,009, mayor que el redondeo); es no significativo en ambos casos, de modo que la conclusión no cambia.
+:::
+
+::: disc
+**(1.d-v) Tabla 5 sin los desvíos que anuncia.** La nota dice "Los datos en paréntesis corresponden a los desvíos estándar", pero **la tabla no tiene paréntesis ni desvíos**; sólo asteriscos. Tampoco se documenta cómo se obtuvo la significatividad de las elasticidades de largo plazo (requiere método delta, como en la réplica).
+:::
+
+::: disc
+**(1.d-vi) Conclusiones de la Tabla 5 que exceden la evidencia.** (i) El PDF dice que con GMM la elasticidad-ingreso "cambia de signo pero deja de ser estadísticamente significativa". Eso vale para One-Lag y Collapsed, pero **no para la columna Full del propio PDF** (−0,177\*\*\*; −0,894\*\*\*). (ii) Se afirma que las elasticidades de precio y de autos son "significativamente mayores en valor absoluto" bajo GMM que en EA, sin ningún test de diferencia (los intervalos de confianza no se muestran). (iii) Se advierte que, con $N=18$, 68 instrumentos superan la cantidad de países e impiden concluir sobre Sargan-Hansen, pero no se informa ningún test de sobreidentificación ni AR(1)/AR(2) para ninguna columna (el Full tiene 274 instrumentos), aunque `xtabond2` los imprime por defecto; la elección entre columnas queda sin respaldo diagnóstico.
+:::
+
+::: disc
+**(1.d-vii) Omisión de Blundell-Bond.** El `.do` estima dos especificaciones de Blundell-Bond (líneas 102-103; resultados en la tabla BB de arriba), pero el PDF **no las reporta ni las menciona**, aun cuando (i) con $\hat\alpha$ cercano a 1 los instrumentos en niveles de Arellano-Bond son débiles y el estimador de sistema es el recomendado (Roodman, 2009, material de la carpeta), y (ii) como se vio en (1.d-ii), parece que su $\hat\alpha$ se coló en la Tabla 5.
+:::
+
+# Ejercicio 2: Varianza y eficiencia de modelos de efectos aleatorios
+
+```{r mc2}
+mc2 <- function(caso, M = 1000, n = 100, tt = 10, seed = 12345) {
+  set.seed(seed)
+  id <- rep(1:n, each = tt); nt <- n * tt
+  out <- matrix(NA_real_, M, 6, dimnames = list(NULL, c("bMCO", "bMCOC", "bEA", "vMCO", "vMCOC", "vEA")))
+  for (m in 1:M) {
+    mu <- rep(rnorm(n), each = tt); v <- rnorm(nt)
+    x <- switch(caso,
+      a = rnorm(nt),
+      b = mu + rnorm(nt),
+      c = { e <- matrix(rnorm(n * tt), n, tt, byrow = TRUE); as.vector(t(e + 0.5 * cbind(0, e[, -tt]))) },   # eps_i0 = 0 para cada i (enunciado)
+      cdo = { e <- rnorm(nt); e + 0.5 * c(0, e[-nt]) })    # tal como lo hace el .do: e[_n-1] sin by id, 0 sólo en la 1a obs. de toda la base
+    y <- 1 + 1 * x + mu + v
+    fit <- lm(y ~ x)
+    out[m, c("bMCO", "vMCO")]  <- c(coef(fit)["x"], vcov(fit)["x", "x"])
+    out[m, c("bMCOC", "vMCOC")] <- c(coef(fit)["x"], vcovCL(fit, cluster = id, type = "HC1")["x", "x"])
+    dm <- pdata.frame(data.frame(id = id, t = rep(1:tt, n), y = y, x = x), index = c("id", "t"))
+    ea <- plm(y ~ x, dm, model = "random")
+    out[m, c("bEA", "vEA")] <- c(coef(ea)["x"], vcov(ea)["x", "x"])
+  }
+  out
+}
+sims <- lapply(c(a = "a", b = "b", c = "c", cdo = "cdo"), mc2)
+sim_do <- sims$cdo; sims$cdo <- NULL     # (c) con la construcción del .do, sólo para comparar
+resumen_mc <- function(o) c(
+  `1. Var. observada MCO`   = var(o[, "bMCO"]),
+  `2. Var. observada EA`    = var(o[, "bEA"]),
+  `3. Var. estimada prom. MCO` = mean(o[, "vMCO"]),
+  `4. Var. estimada prom. MCO cluster` = mean(o[, "vMCOC"]),
+  `5. Var. estimada prom. EA` = mean(o[, "vEA"]))
+T6 <- sapply(sims, resumen_mc)
+T6pdf <- cbind(a = c(0.0019948, 0.0010545, 0.0019945, 0.0019711, 0.0011025),
+               b = c(0.0018648, 0.0026939, 0.0007575, 0.0018554, 0.0008746),
+               c = c(0.0021945, 0.0009309, 0.0015988, 0.0021347, 0.0009511))
+rownames(T6pdf) <- rownames(T6)
+knitr::kable(format(T6, digits = 4, scientific = FALSE), caption = "Réplica de la Tabla 6 (R, 1.000 repeticiones, set.seed(12345)).")
+knitr::kable(format(T6pdf, digits = 4, scientific = FALSE), caption = "Tabla 6 del PDF.")
+dif_rel <- (T6 - T6pdf) / T6pdf * 100
+tol <- c(9, 9, 2, 2, 2)           # observada: ±9% (≈2 EE de una varianza con M=1000); promedios estimados: ±2%
+marca <- ifelse(abs(dif_rel) > tol, "⚠", "✔")
+tab_dif <- matrix(sprintf("%+.1f%% %s", dif_rel, marca), nrow = 5, dimnames = dimnames(T6))
+knitr::kable(tab_dif, caption = "Diferencia porcentual R vs PDF (tolerancia: ±9% en varianzas observadas; ±2% en promedios de varianzas estimadas).")
+```
+
+::: nota
+R y Stata generan números aleatorios distintos aunque se use la misma semilla, por lo que **no se pueden reproducir dígito a dígito** las cifras de Stata; se compara con tolerancia de ruido de simulación. Los promedios de varianza estimada son estables entre corridas (error ≈ 0,5 %); las varianzas observadas, no (error relativo ≈ $\sqrt{2/M}\approx4{,}5\%$).
+:::
+
+```{r conc}
+# Criterio del PDF: brecha |var. estimada - var. observada| / var. observada, de cada estimador contra su propia varianza observada
+# (MCO y MCO-cluster contra la observada de MCO; EA contra la observada de EA)
+brechas <- function(M) apply(M, 2, function(col) { col <- unname(col)
+  100 * c(MCO = abs(col[3] - col[1]) / col[1], `MCO cluster` = abs(col[4] - col[1]) / col[1], EA = abs(col[5] - col[2]) / col[2]) })
+BR <- brechas(T6); BP_ <- brechas(T6pdf)
+knitr::kable(data.frame(Estimador = rownames(BR), `(a) R` = BR[, "a"], `(a) PDF` = BP_[, "a"], `(b) R` = BR[, "b"], `(b) PDF` = BP_[, "b"],
+                        `(c) R` = BR[, "c"], `(c) PDF` = BP_[, "c"], check.names = FALSE), digits = 2, row.names = FALSE,
+             caption = "Brecha (%) entre varianza estimada promedio y varianza observada de cada estimador: R vs PDF.")
+cercana_R <- apply(BR, 2, function(g) names(which.min(g))); cercana_P <- apply(BP_, 2, function(g) names(which.min(g)))
+efic_R <- apply(T6[1:2, ], 2, function(v) c("MCO", "EA")[which.min(v)]); efic_P <- apply(T6pdf[1:2, ], 2, function(v) c("MCO", "EA")[which.min(v)])
+# ¿la diferencia entre R y PDF en "más cercana" está dentro del ruido de MC (brecha de la elección del PDF - mínima brecha de R < 4,5 pp)?
+ruido <- sapply(colnames(BR), function(j) BR[cercana_P[j], j] - min(BR[, j]) < 4.5)
+conc_tab <- data.frame(Caso = c("(a)", "(b)", "(c)"),
+  `Más cercana a la observada (R)` = cercana_R, `Más cercana (PDF)` = c("MCO", "MCO cluster", "EA"),
+  `Más eficiente (R)` = efic_R, `Más eficiente (PDF)` = c("EA", "MCO", "EA"), check.names = FALSE, row.names = NULL)
+conc_tab$Marca <- ifelse(conc_tab[[2]] == conc_tab[[3]] & conc_tab[[4]] == conc_tab[[5]], "✔",
+                         ifelse(ruido & conc_tab[[4]] == conc_tab[[5]], "≈ (dentro del ruido de MC)", "⚠"))
+knitr::kable(conc_tab, row.names = FALSE, caption = "Conclusiones de eficiencia por caso: R vs PDF.")
+sesgo <- sapply(sims, function(o) c(MCO = mean(o[, "bMCO"]) - 1, EA = mean(o[, "bEA"]) - 1))
+knitr::kable(round(sesgo, 4), caption = "Sesgo de Monte Carlo de $\\hat\\beta$ (media de las 1.000 estimaciones − 1) por caso (columnas).")
+# Viñetas del PDF: caso donde cada varianza es mínima
+minimo <- apply(T6, 1, function(r) colnames(T6)[which.min(r)])
+knitr::kable(data.frame(Varianza = rownames(T6), `Caso mínimo (R)` = minimo, `Caso mínimo (PDF)` = c("b", "c", "b", "b", "b"),
+           Marca = ifelse(minimo == c("b", "c", "b", "b", "b"), "✔", "⚠"), check.names = FALSE, row.names = NULL),
+           caption = "Caso en que cada varianza es mínima (viñetas del PDF): R vs PDF.")
+```
+
+## Comentarios por inciso
+
+### Inciso (a): $x_{it}\sim N(0,1)$
+
+::: ok
+Las cifras de la Tabla 6 en el caso (a) se reproducen dentro del ruido de Monte Carlo y las conclusiones principales coinciden: la varianza estimada promedio de MCO es prácticamente igual a la de MCO con clusters (cociente `r round(T6["3. Var. estimada prom. MCO", "a"] / T6["4. Var. estimada prom. MCO cluster", "a"], 3)`; PDF 1,0119), ambas son ≈ `r round(T6["3. Var. estimada prom. MCO", "a"] / T6["5. Var. estimada prom. EA", "a"] * 100, 0)` % de la de EA (PDF 180,91 % y 178,78 %), y **EA es el estimador más eficiente** (menor varianza observada).
+:::
+
+::: nota
+El PDF dice que el estimador con varianza más cercana a la observada es MCO sin clusters ("sólo difiere 0,015 %"). En la réplica las brechas de los tres estimadores son todas de pocos puntos porcentuales (ver tabla de brechas), es decir, **del orden del ruido de simulación (≈ 4,5 % para una varianza observada con $M=1.000$)**; cuál queda "más cerca" depende de la semilla. No es una discrepancia sustantiva, pero el 0,015 % del PDF es una coincidencia afortunada de esa corrida y no un resultado robusto.
+:::
+
+### Inciso (b): $x_{it}=\mu_i+N(0,1)$
+
+```{r conc-b-extra}
+r_b <- c(`EA/MCO (estimadas)` = T6[5, "b"] / T6[3, "b"] - 1, `MCO cluster vs observada MCO` = T6[4, "b"] / T6[1, "b"] - 1)
+```
+
+::: ok
+Se reproducen los rasgos cualitativos del caso (b): la varianza estimada de EA es mayor que la de MCO sin clusters (`r round(100 * r_b[1], 1)` %; PDF 15,46 %); ambas son mucho menores que la de MCO con clusters; y la varianza estimada que más se acerca a la observada es la de **MCO con clusters** (brecha `r round(BR["MCO cluster", "b"], 2)` %; PDF 0,50 %). La varianza observada de MCO es menor que la de EA (`r format(T6[1, "b"], digits = 3)` vs. `r format(T6[2, "b"], digits = 3)`; PDF 0,0018648 vs. 0,0026939).
+:::
+
+::: disc
+**(2.b-i) El PDF llama "más eficiente" a un estimador sesgado e inconsistente y no mide el sesgo.** En el caso (b), $x_{it}=\mu_i+\varepsilon_{it}$ está **correlacionado con el efecto individual** $\mu_i$, que forma parte del error compuesto. Entonces MCO **y también EA** son **inconsistentes**: el sesgo de Monte Carlo de $\hat\beta$ es `r round(sesgo["MCO", "b"], 3)` para MCO y `r round(sesgo["EA", "b"], 3)` para EA (tabla de sesgos arriba; en (a) y (c) es ≈ 0). El PDF concluye que "el estimador más eficiente es el de MCO sin estructura de clusters" sólo por tener la menor varianza observada, sin advertir que (i) ese estimador tiene el mayor sesgo, (ii) EA es menos sesgado, y (iii) sólo el estimador *within* (EF) sería consistente aquí. Comparar eficiencia entre estimadores inconsistentes carece de sentido.
+:::
+
+::: disc
+**(2.b-ii) Varianza estimada de MCO sin clusters en (b).** En el PDF la varianza estimada promedio de MCO sin clusters (0,0007575) es sólo ≈ 41 % de su varianza observada (0,0018648), es decir, **subestima la variabilidad real en ≈ 59 %** (la réplica da `r round(100 * (1 - T6[3, "b"] / T6[1, "b"]), 0)` %). El PDF registra esto sólo de pasada (los porcentajes 47,14 % y 40,83 % respecto de MCO con clusters) y, en cambio, califica a ese mismo estimador como "más eficiente". Un estimador cuya varianza estimada es 2,5 veces menor que la verdadera lleva a inferencia sesgada (tests con tamaño excesivo); la eficiencia observada no debería leerse sin mencionar esto.
+:::
+
+### Inciso (c): $x_{it}=\epsilon_{it}+0{,}5\epsilon_{it-1}$
+
+```{r conc-c-extra}
+Tc <- cbind(`R (enunciado: eps_i0=0 por i)` = T6[, "c"], `R (construcción del .do)` = resumen_mc(sim_do), `PDF` = T6pdf[, "c"])
+rel <- function(x, ref) 100 * (x - ref) / ref
+tc_txt <- data.frame(Varianza = rownames(Tc),
+  `R enunciado` = format(Tc[, 1], digits = 4, scientific = FALSE), `Dif. vs PDF` = sprintf("%+.1f%%", rel(Tc[, 1], Tc[, 3])),
+  `R .do` = format(Tc[, 2], digits = 4, scientific = FALSE), `Dif. vs PDF ` = sprintf("%+.1f%%", rel(Tc[, 2], Tc[, 3])),
+  PDF = format(Tc[, 3], digits = 4, scientific = FALSE), check.names = FALSE, row.names = NULL)
+knitr::kable(tc_txt, caption = "Caso (c): variantes de la construcción de $x_{it}$ en R vs PDF.")
+```
+
+::: ok
+En el caso (c) se reproducen las conclusiones del PDF: la varianza estimada de MCO con clusters es mayor que la de MCO sin clusters (`r round(100 * (T6[4, "c"] / T6[3, "c"] - 1), 1)` %; PDF 33,52 %), ambas mayores que la de EA (`r round(100 * T6[4, "c"] / T6[5, "c"], 0)` % y `r round(100 * T6[3, "c"] / T6[5, "c"], 0)` %; PDF 224,45 % y 168,10 %), y **EA es el más eficiente**.
+:::
+
+::: disc
+**(2.c-i) El `.do` no implementa $\epsilon_{i0}=0$ para cada individuo.** El enunciado exige $\epsilon_{i0}=0$ (es decir, $x_{i1}=\epsilon_{i1}$ para cada $i$). El `.do` calcula `e_L1=e[_n-1]` **sin `by id`** y sólo reemplaza por 0 el primer valor de toda la base (`replace e_L1=0 if (e_L1==.)`); para $i\ge2$, $x_{i1}$ usa como "rezago" el último $\epsilon$ del individuo anterior. Eso agrega varianza a $x_{i1}$ y reduce las varianzas de $\hat\beta$ en ≈ 2-4 %. Las dos variantes de la tabla de arriba lo muestran: la construcción del `.do` (columna "R .do") se acerca más al PDF en las varianzas estimadas que la del enunciado, lo que es consistente con que **el PDF reporta resultados de la construcción del `.do`, no la del enunciado** (con la del `.do` las cinco varianzas quedan dentro de ±1,4 % del PDF en los promedios estimados). El PDF presenta el caso (c) como $x_{it}\sim\epsilon_{it}+0{,}5\epsilon_{it-1}$ con $\epsilon_{i0}=0$ sin advertir esta diferencia.
+:::
+
+::: disc
+**(2-vi) La fórmula de "varianza observada" de la nota 5 no es lo que se reporta.** La nota 5 define la varianza observada como $\sum_{m=1}^{M}[\hat\beta^{(m)}-\overline{\hat\beta}]^2$ (suma sin dividir por $M$ ni $M-1$). Las cifras de la Tabla 6 (≈ 0,002) **no** son esa suma (que valdría ≈ 2 con $M=1.000$), sino la varianza muestral (el cuadrado del desvío que imprime `summarize`). La nota (que repite el enunciado) y las cifras no se corresponden.
+:::
+
+::: nota
+El PDF resume que el caso (b) minimiza las varianzas estimadas promedio de MCO, MCO con clusters y EA, y la varianza observada de MCO, siendo la excepción la varianza observada de EA, que es **máxima** en (b). La última tabla del chunk anterior ("Caso mínimo") verifica que esa lista de viñetas se reproduce, salvo diferencias de ruido.
+:::
+
+```{r figs, fig.width=10, fig.height=4}
+for (cs in c("a", "b", "c")) {
+  o <- sims[[cs]]
+  op <- par(mfrow = c(1, 3), mar = c(4, 4, 3, 1))
+  for (v in c("vMCO", "vMCOC", "vEA")) {
+    hist(o[, v], breaks = 30, freq = FALSE, col = "#c9bf7a", border = "white", main = paste0("Caso (", cs, "): ", v), xlab = paste0("r(", v, ")"))
+    curve(dnorm(x, mean(o[, v]), sd(o[, v])), add = TRUE, lwd = 2)
+  }
+  par(op)
+}
+```
+
+# Ejercicio 3: Sesgo de Nickell (1981)
+
+```{r nickell}
+# Réplica del .do: year = 0..t-1, y_0 = u+v, y_s = alpha*y_{s-1}+u+v, v ~ N(0, sd = sigmav*t) (!!), u ~ N(0, sigmau); xtreg y l.y, fe
+nickell_sim <- function(tobs, alpha, M = 1000, n = 100, su = 1, sv = 1, sdv = sv * tobs) {
+  est <- numeric(M)
+  for (m in 1:M) {
+    u <- rnorm(n, 0, su)
+    v <- matrix(rnorm(n * tobs, 0, sdv), n, tobs)
+    y <- matrix(NA_real_, n, tobs); y[, 1] <- u + v[, 1]
+    for (s in 2:tobs) y[, s] <- alpha * y[, s - 1] + u + v[, s]
+    x <- y[, -tobs]; z <- y[, -1]                         # (y_{s-1}, y_s)
+    xd <- x - rowMeans(x); zd <- z - rowMeans(z)          # estimador within
+    est[m] <- sum(xd * zd) / sum(xd^2)
+  }
+  mean(est - alpha)
+}
+Ts  <- c(2, 3, 5, 10, 15, 20); tobs <- Ts + 1               # el .do usa t = 3,4,6,11,16,21 (= T+1 observaciones por panel)
+als <- c(0, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95, 0.99)
+set.seed(12345)
+Nmc <- matrix(NA_real_, length(Ts), length(als), dimnames = list(Ts, als))
+for (i in seq_along(Ts)) for (j in seq_along(als)) Nmc[i, j] <- nickell_sim(tobs[i], als[j])
+
+# Ecuación (18) de Nickell
+plim_n <- function(T, a) {
+  h <- (1 / (1 - a)) * (1 - (1 / T) * ((1 - a^T) / (1 - a)))
+  -(1 - a^2) * h / (T - 1 - 2 * a * h)
+}
+Pl <- outer(Ts, als, Vectorize(function(T, a) if (a == 0) plim_n(T, 1e-12) else plim_n(T, a)))
+dimnames(Pl) <- dimnames(Nmc)
+knitr::kable(Nmc, digits = 3, caption = "Tabla 7 (R): sesgo dinámico por Monte Carlo.")
+knitr::kable(Pl, digits = 3, caption = "Sesgo asintótico de Nickell (ecuación 18).")
+```
+
+```{r nickell-cmp}
+T7pdf <- matrix(c(
+  -0.503, -0.555, -0.640, -0.785, -0.891, -0.911, -0.909, -0.904,
+  -0.334, -0.374, -0.440, -0.564, -0.673, -0.697, -0.693, -0.686,
+  -0.199, -0.223, -0.264, -0.349, -0.449, -0.484, -0.482, -0.474,
+  -0.100, -0.112, -0.130, -0.168, -0.228, -0.270, -0.274, -0.267,
+  -0.067, -0.074, -0.085, -0.108, -0.145, -0.183, -0.191, -0.187,
+  -0.050, -0.056, -0.064, -0.080, -0.106, -0.136, -0.146, -0.144), 6, 8, byrow = TRUE, dimnames = dimnames(Nmc))
+T8pdf <- matrix(c(
+   0.60,  0.91,  2.40,  4.67,  1.83, -4.11, -6.77, -9.15,
+   0.30,  0.27,  1.62,  5.22,  4.83, -1.27, -4.81, -8.04,
+  -0.50, -0.45,  1.15,  5.44,  9.25,  4.54,  0.21, -4.44,
+   0.00,  0.90,  0.78,  3.70, 10.14, 11.11,  6.61, -1.11,
+   0.00,  0.00,  0.00,  1.89,  7.41, 12.96,  9.77,  1.08,
+   0.00,  1.82,  1.59,  2.56,  7.07, 13.33, 12.31,  2.86), 6, 8, byrow = TRUE, dimnames = dimnames(Nmc))
+Tobj <- matrix(c(
+  -0.500, -0.550, -0.625, -0.750, -0.875, -0.950, -0.975, -0.995,
+  -0.333, -0.373, -0.433, -0.536, -0.642, -0.706, -0.728, -0.746,
+  -0.200, -0.224, -0.261, -0.331, -0.411, -0.463, -0.481, -0.496,
+  -0.100, -0.111, -0.129, -0.162, -0.207, -0.243, -0.257, -0.270,
+  -0.067, -0.074, -0.085, -0.106, -0.135, -0.162, -0.174, -0.185,
+  -0.050, -0.055, -0.063, -0.078, -0.099, -0.120, -0.130, -0.140), 6, 8, byrow = TRUE, dimnames = dimnames(Nmc))
+
+dif8 <- (Nmc - Pl) / Pl * 100
+t7_txt <- matrix(sprintf("%.3f%s", Nmc, ifelse(abs(Nmc - T7pdf) > 0.006, " ⚠", "")), 6, 8, dimnames = dimnames(Nmc))
+knitr::kable(t7_txt, caption = "Tabla 7 (R) con ⚠ donde |R − PDF| > 0,006 (ruido de Monte Carlo esperable ≈ 0,002).")
+knitr::kable(round(Nmc - T7pdf, 3), caption = "R − PDF (Tabla 7).")
+t8_txt <- matrix(sprintf("%+.2f%%%s", dif8, ifelse(abs(dif8) > 5, " ◀", "")), 6, 8, dimnames = dimnames(Nmc))
+knitr::kable(t8_txt, caption = "Tabla 8 (R): diferencia % entre Monte Carlo y ecuación (18). ◀ = |dif| > 5% (criterio del PDF).")
+knitr::kable(round(dif8 - T8pdf, 2), caption = "R − PDF (Tabla 8, puntos porcentuales).")
+chk <- abs((T7pdf - Pl) / Pl * 100 - T8pdf)
+cat("Máxima discrepancia interna del PDF entre su Tabla 8 y (Tabla 7 - plim)/plim recalculada: ", round(max(chk), 2), " p.p.\n", sep = "")
+cat("Máx. |Ecuación (18) en R - tabla objetivo del enunciado| =", round(max(abs(Pl - Tobj)), 4), "\n")
+mono_alpha <- function(M) apply(M, 1, function(r) all(diff(abs(r)) > 0))
+mono_T <- function(M) apply(M, 2, function(r) all(diff(abs(r)) < 0))
+cat("|sesgo| creciente en alpha, por T: PDF Tabla 7 =", mono_alpha(T7pdf), "| R =", mono_alpha(Nmc), "| Ec.(18) =", mono_alpha(Pl), "\n")
+cat("|sesgo| decreciente en T, por alpha: PDF Tabla 7 =", mono_T(T7pdf), "| R =", mono_T(Nmc), "\n")
+```
+
+```{r nickell-burnin}
+# Contraste: Monte Carlo con y_0 en estado estacionario y nu ~ N(0,1) (sin inflar la varianza)
+nickell_est <- function(T, alpha, M = 1000, n = 100) {
+  est <- numeric(M)
+  for (m in 1:M) {
+    u <- rnorm(n); v <- matrix(rnorm(n * (T + 1)), n, T + 1)
+    y <- matrix(NA_real_, n, T + 1)
+    y[, 1] <- u / (1 - alpha) + rnorm(n, 0, 1 / sqrt(1 - alpha^2))
+    for (s in 2:(T + 1)) y[, s] <- alpha * y[, s - 1] + u + v[, s]
+    x <- y[, -(T + 1)]; z <- y[, -1]; xd <- x - rowMeans(x); zd <- z - rowMeans(z)
+    est[m] <- sum(xd * zd) / sum(xd^2)
+  }
+  mean(est - alpha)
+}
+set.seed(12345)
+alt <- outer(seq_along(Ts), seq_along(als), Vectorize(function(i, j) nickell_est(Ts[i], als[j])))
+dimnames(alt) <- dimnames(Nmc)
+knitr::kable(alt, digits = 3, caption = "Monte Carlo con $y_{i0}$ estacionario y $\\nu\\sim N(0,1)$ (sin inflar la varianza).")
+cat("Máxima diferencia % con ec. (18) (todas las celdas): ", round(max(abs((alt - Pl) / Pl * 100)), 1), "%; excluyendo alpha=0: ",
+    round(max(abs((alt - Pl) / Pl * 100)[, -1]), 1), "%\n", sep = "")
+```
+
+```{r nickell-sd1}
+# ¿Qué pasa con la parametrización original (mu, nu ~ N(0,1)) y y_0 = mu + nu_0, sin inflar la varianza?
+set.seed(12345)
+sel_T <- c(2, 5, 10); sel_a <- c(0.5, 0.75, 0.9, 0.99)
+orig <- sapply(sel_a, function(a) sapply(sel_T, function(T) nickell_sim(T + 1, a, sdv = 1)))
+dimnames(orig) <- list(sel_T, sel_a)
+knitr::kable(orig, digits = 3, caption = "Monte Carlo con $\\mu,\\nu\\sim N(0,1)$ y $y_{i0}=\\mu_i+\\nu_{i0}$ (parametrización original, no estacionaria).")
+knitr::kable(Pl[as.character(sel_T), as.character(sel_a)], digits = 3, caption = "Ecuación (18) para las mismas celdas.")
+```
+
+::: ok
+**Tablas 7 y 8.** La réplica en R reproduce la Tabla 7 del PDF con diferencias de a lo sumo `r round(max(abs(Nmc - T7pdf)), 3)` en todas las celdas (ruido de Monte Carlo; ninguna celda supera el umbral de 0,006) y la Tabla 8 con diferencias de a lo sumo `r round(max(abs(dif8 - T8pdf)), 2)` puntos porcentuales. Las celdas con $|dif|>5\%$ (resaltadas en el PDF) son exactamente las mismas que en la réplica, y la ecuación (18) programada reproduce la tabla objetivo del enunciado (error máximo 0,0005, por redondeo). Las Tablas 7 y 8 del PDF son además internamente consistentes (la Tabla 8 recalculada a partir de la Tabla 7 difiere en a lo sumo `r round(max(chk), 2)` p.p., por redondeo).
+:::
+
+::: ok
+**Ecuación (18).** La cadena de igualdades del PDF es algebraicamente correcta: $\mathrm{plim}(\hat\alpha_{EF}-\alpha)=-(1-\alpha^2)h_T(\alpha)/[T-1-2\alpha h_T(\alpha)]$, que se reduce a $-(1+\alpha)/2$ para $T=2$ y a $\approx-(1+\alpha)/(T-1)$ para $T$ grande; es la expresión que usa el `.do`.
+:::
+
+::: disc
+**(3-i) La varianza de $\nu_{it}$ en el `.do` no es la que dice el PDF.** El PDF dice que impone "la siguiente estructura temporal a la varianza del término de error: $\nu_{it}$ i.i.d. $\sim\mathcal N(0,t)$". El `.do` usa `rnormal(0, sigmav*t)`, y en Stata el segundo argumento es el **desvío estándar**: es decir $\nu_{it}\sim\mathcal N(0,t^2)$ (varianza $t^2$, no $t$). Además, `t` en el `.do` es el número de observaciones por panel (3, 4, 6, 11, 16, 21), no el $T$ de Nickell (2, 3, 5, 10, 15, 20), así que el desvío usado es $T+1$. La réplica en R reproduce el `.do` (desvío $=t$), que es lo que da las cifras del PDF.
+:::
+
+::: disc
+**(3-ii) Correspondencia entre `t` del `.do` y $T$ del PDF.** El `.do` genera `year = 0, …, t-1` y estima `xtreg y l.y, fe`; cada panel aporta $t-1=T$ pares $(y_{s-1},y_s)$, por eso para $T=2,3,5,10,15,20$ se usa `t = 3,4,6,11,16,21`. El PDF habla de $T$ en las tablas pero no explicita que $y_{i0}$ se observa y queda fuera de $T$ (convención de Nickell), ni que el `.do` genera $y_{i0}=\mu_i+\nu_{i0}$ **sin burn-in**, es decir, un proceso que no parte de su distribución estacionaria.
+:::
+
+::: disc
+**(3-iii) "A mayor $\alpha$, mayor sesgo" no se cumple en la Tabla 7 del PDF.** El PDF concluye: "1. Para una cantidad de períodos dada, a medida que el coeficiente autorregresivo aumenta, el sesgo dinámico aumenta." En su propia Tabla 7 el sesgo en valor absoluto **deja de crecer para $\alpha\ge0{,}95$**: para $T=2,3,5$ ya decrece de $\alpha=0{,}90$ a $0{,}95$ y a $0{,}99$ (p. ej. $T=2$: −0,911, −0,909, −0,904), y para $T=10,15,20$ cae en $\alpha=0{,}99$ (p. ej. $T=10$: −0,274 → −0,267). La verificación en el código arriba (`creciente en alpha`) da `FALSE` en las seis filas de la Tabla 7 del PDF **y** de la réplica, y `TRUE` en las seis filas de la ecuación (18). Como la réplica reproduce la no monotonía, **no es ruido de simulación**: es un artefacto del diseño de la simulación (inicialización no estacionaria) que contradice la teoría, y la conclusión 1 del PDF es válida sólo hasta $\alpha\approx0{,}9$. (La conclusión 2, que el sesgo cae con $T$, sí se cumple en todas las columnas.)
+:::
+
+::: disc
+**(3-iv) El remedio elegido (inflar $\sigma_\nu$ con $t$) no es la causa del problema.** El PDF explica que con $\mu,\nu\sim N(0,1)$ el sesgo "disminuye para $\alpha>0{,}50$ (cuando debería aumentar)" y que por eso cambió las varianzas relativas. El sesgo menor de lo esperado proviene de que $y_{i0}=\mu_i+\nu_{i0}$ **no está en el estado estacionario** (con $\alpha$ alto, el nivel de $y_{i0}$ debería ser $\mu_i/(1-\alpha)+\dots$), no de las varianzas relativas. La tabla "Monte Carlo con $y_{i0}$ estacionario" muestra que, con $\nu\sim N(0,1)$ y la inicialización correcta, el Monte Carlo reproduce la ecuación (18) con una diferencia máxima de `r round(max(abs((alt - Pl) / Pl * 100)), 1)` %, sin necesidad de ninguna estructura temporal en $\sigma_\nu$. Inflar $\sigma_\nu$ con $T$ cambia la relación señal/ruido de una manera que el enunciado no prevé y deja diferencias >5 % con la ecuación (18) en 15 celdas, como el propio PDF reconoce en la Tabla 8. (La tabla con la parametrización original muestra el efecto de la inicialización no estacionaria.)
+:::
+
+# Resumen de discrepancias con `Examen Final (R).pdf`
+
+| # | Sección | Qué no coincide con el PDF |
+|---|---------|----------------------------|
+| 1.a-i | Tabla 1 | Los R² de EF/EA (0,615/0,731) son *overall*; el *within* de EF es mucho mayor y no se aclara |
+| 1.a-ii | Inciso (a) | El texto describe un modelo *two-way* ($\lambda_t$); lo estimado es *one-way* |
+| 1.a-iii | Tabla 2 | Se mezclan las hipótesis de Breusch-Pagan (EA) y Wooldridge (CS) |
+| 1.a-iv | Tabla 2 | Hausman no robusto junto a tablas con errores robustos; no se reporta el Mundlak robusto |
+| 1.b-i | Tabla 3 | "EA (two-way)" y "EA (one-way)" son en realidad el mismo test de EA de dos colas ($z^2$) y una cola ($z$) |
+| 1.b-ii | Inciso (b) | La conclusión sobre efecto temporal $\lambda_t$ no está respaldada por la Tabla 3 |
+| 1.b-iii | Tabla 3 | "Ajustado" en el PDF vs. `xttest1, unadjusted` en el `.do` |
+| 1.c-i | Inciso (c) | Se afirma que EA "evita sesgos" aunque Hausman/Mundlak lo rechazan |
+| 1.c-ii | Inciso (c) | Se atribuye "sesgo" a los clusters; el sesgado es el desvío clásico de OLS |
+| 1.d-i | Inciso (d) | Los tests de raíz unitaria del `.do` no figuran en el PDF |
+| 1.d-ii | Tabla 5 | El $\hat\alpha$ de One-Lag (0,949) y Collapsed (0,719) y los LP asociados provienen de Blundell-Bond, no de las estimaciones en diferencias cuyos CP se reportan |
+| 1.d-iii | Tabla 5 | AB-Full: 274 instrumentos (PDF) vs. 612 (réplica); coeficientes distintos y signo del ingreso opuesto |
+| 1.d-iv | Texto (d) | "1,003%" vs. −1,003 de la tabla; "%" mal usado; ln(Y/N) colapsado −0,059 vs. −0,050 |
+| 1.d-v | Tabla 5 | La nota habla de desvíos entre paréntesis que no existen |
+| 1.d-vi | Texto (d) | Conclusiones sobre significatividad del ingreso, comparación EA vs GMM y validez de instrumentos sin tests |
+| 1.d-vii | Inciso (d) | Blundell-Bond (en el `.do`) no se reporta |
+| 2.b-i | Ej. 2(b) | Se declara "más eficiente" a un estimador inconsistente; no se mide el sesgo |
+| 2.b-ii | Ej. 2(b) | Varianza estimada de MCO subestima 59 % la observada y aun así se lo llama "más eficiente" |
+| 2.c-i | Ej. 2(c) | $\epsilon_{i0}=0$ por individuo no está implementado en el `.do`; el PDF reporta la versión del `.do` |
+| 2-vi | Ej. 2 | La nota 5 define una suma que no es la varianza muestral que se reporta |
+| 3-i | Ej. 3 | $\nu\sim N(0,t)$ en el PDF vs. $N(0,t^2)$ en el `.do` (y $t=T+1$) |
+| 3-ii | Ej. 3 | $y_{i0}$ no estacionario, sin burn-in; relación $t$ vs. $T$ no explicitada |
+| 3-iii | Ej. 3 | "A mayor $\alpha$, mayor sesgo" no se cumple en la Tabla 7 para $\alpha\ge0{,}95$ (artefacto del diseño) |
+| 3-iv | Ej. 3 | El remedio (inflar $\sigma_\nu$) no ataca la causa (inicialización no estacionaria) |
+
+Lo que **sí coincide** con el PDF: Tablas 1, 2, 3 y 4 (cifras), columna EA de la Tabla 5, columnas One-Lag y Collapsed de la Tabla 5 (CP y número de instrumentos), Tabla 6 (dentro del ruido de Monte Carlo), Tablas 7 y 8 (diferencias ≤ 0,005 y celdas >5 % idénticas), y la ecuación (18).
+
+```{r info}
+sessionInfo()
+```
