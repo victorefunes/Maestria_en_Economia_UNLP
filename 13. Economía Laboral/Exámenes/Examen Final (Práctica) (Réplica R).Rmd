@@ -1,0 +1,481 @@
+---
+title: "Examen Final (Práctica) — Réplica en R"
+subtitle: "Maestría en Economía UNLP - Economía Laboral. Respuestas originales: Juan Menduiña"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+    self_contained: true
+    code_folding: hide
+---
+
+```{css, echo=FALSE}
+mark { background: #ffe27a; padding: 0 2px; }
+.disc { border-left: 6px solid; border-radius: 4px; padding: 10px 14px; margin: 14px 0; font-size: 0.95em; }
+.disc p:last-child { margin-bottom: 0; }
+.error { border-color: #c0392b; background: #fdecea; }
+.impr  { border-color: #d68910; background: #fef5e7; }
+.metodo{ border-color: #2874a6; background: #eaf2f8; }
+.enunciado { font-style: italic; color: #444; }
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 8, fig.height = 5, dpi = 120)
+library(haven); library(knitr); library(kableExtra); library(sandwich)
+
+num <- function(x, d = 0) {
+  x <- ifelse(abs(x) < 10^-d / 2, 0, x)            # evita "-0,000"
+  formatC(x, format = "f", digits = d, big.mark = ".", decimal.mark = ",")
+}
+pval <- function(p) ifelse(p < .001, "< 0,001", num(p, 3))
+pin <- function(p) ifelse(p < .001, "p < 0,001", paste("p =", num(p, 3)))
+estrellas <- function(p) ifelse(p < .01, "***", ifelse(p < .05, "**", ifelse(p < .1, "*", "")))
+```
+
+# Cómo leer este documento {-}
+
+El texto de cada ejercicio es el del PDF *Examen Final (Práctica) (R)*. El código replica en R el archivo `Datos/Examen Final (Práctica).do`, y las tablas, la figura y los números de los recuadros se calculan a partir de `Datos/Examen Final (Práctica).dta`, una base ficticia según el enunciado. Lo <mark>resaltado</mark> es una frase, un número o un rótulo con alguna discrepancia, explicada en el recuadro correspondiente:
+
+::: {.disc .error}
+**Error**: la afirmación contradice los datos, el enunciado o el *do-file*, la inferencia no se sigue, o falta algo que se pide expresamente.
+:::
+
+::: {.disc .impr}
+**Imprecisión**: redacción, notación, formato u omisión menor que puede inducir a error.
+:::
+
+::: {.disc .metodo}
+**Observación metodológica**: el resultado depende de una decisión discutible o no documentada.
+:::
+
+**Resultado de la réplica.** La tabla 2 y la figura 1 se reproducen; en la tabla 1 el coeficiente publicado no coincide en el tercer decimal ([D2](#d2)). Lo más importante: el tratamiento quedó definido por el **ingreso de 2018**, el propio año del programa ([D5](#d5)); la estimación **no excluye 2018** aunque el texto lo llama año de transición ([D7](#d7)); y los controles salariales **eliminan de la muestra a quienes no trabajan** ([D6](#d6)).
+
+| N° | Ej. | Tipo | Discrepancia |
+|----|-----|------|--------------|
+| [D1](#d1) | 1 | Imprecisión | Especificación y notas de las tablas |
+| [D2](#d2) | 1 | Error | Coeficiente de la tabla 1 |
+| [D3](#d3) | 1 | Error | El coeficiente de `tratado` no es una reducción causada por el programa |
+| [D4](#d4) | 1 | Error | La regresión sí controla por observables |
+| [D5](#d5) | 1 | Error | La crítica omite cómo se asignó el tratamiento |
+| [D6](#d6) | 1 | Metodológica | Controles endógenos y pérdida de muestra |
+| [D7](#d7) | 2 | Error | El año 2018 no se excluye |
+| [D8](#d8) | 2 | Imprecisión | Notación y redacción |
+| [D9](#d9) | 2 | Error | Otras intervenciones "identificables en los datos" |
+| [D10](#d10) | 2 | Error | No se evalúan empíricamente los supuestos ni sus dificultades |
+| [D11](#d11) | 2 | Metodológica | Lectura de la figura 1 |
+| [D12](#d12) | 2 | Metodológica | No se aprovecha el panel |
+| [D13](#d13) | 3 | Error | Las triples diferencias no resuelven la adopción escalonada |
+| [D14](#d14) | 3 | Imprecisión | Notación del modelo (3) |
+| [D15](#d15) | 4 | Imprecisión | Diseño de la asignación aleatoria |
+| [D16](#d16) | 4 | Metodológica | Amenazas que la aleatorización no resuelve |
+
+# Datos y funciones
+
+```{r datos}
+base <- as.data.frame(zap_labels(read_dta("Datos/Examen Final (Práctica).dta")))
+d <- base
+d$edad2    <- d$edad^2
+d$salarioh2 <- d$salarioh * d$salarioh
+d$postrat  <- as.numeric(d$anio == 2019)
+d$tratado_postrat <- d$tratado * d$postrat
+s2018 <- d[d$anio != 2018, ]                   # sin el año de transición
+c(observaciones = nrow(d), personas = length(unique(d$id)), con_horas = sum(!is.na(d$horas)))
+table(anio = d$anio, tratado = d$tratado)
+```
+
+```{r funciones}
+controles <- c("edad", "edad2", "hombre", "salarioh", "salarioh2",
+               "factor(empresa)", "factor(relab)", "factor(anio)")
+exogenos <- c("edad", "edad2", "hombre", "factor(anio)")
+
+# regress y x, robust   (cluster = TRUE: errores agrupados por individuo)
+mco <- function(rhs, datos = d, y = "horas", cluster = FALSE) {
+  r <- lm(reformulate(rhs, y), data = datos)
+  u <- datos[rownames(model.frame(r)), ]
+  V <- if (cluster) vcovCL(r, cluster = u$id, type = "HC1") else vcovHC(r, type = "HC1")
+  gl <- if (cluster) length(unique(u$id)) - 1 else df.residual(r)
+  b <- coef(r); se <- sqrt(diag(V))[names(b)]
+  list(b = b, se = se, p = 2 * pt(-abs(b / se), gl), n = nobs(r), r2 = summary(r)$r.squared,
+       ids = length(unique(u$id)), u = u)
+}
+co <- function(m, v) c(b = m$b[[v]], se = m$se[[v]], p = m$p[[v]])
+con_se <- function(m, v, dec = 2) paste0(num(m$b[[v]], dec), " (", num(m$se[[v]], dec), ")")
+# Tabla con el formato de las tablas 1 y 2 del PDF
+tabla_pdf <- function(m, vars, titulo) {
+  cuerpo <- do.call(rbind, Map(function(v, e) rbind(
+    c(e, paste0(num(m$b[[v]], 3), estrellas(m$p[[v]]))), c("", paste0("(", num(m$se[[v]], 3), ")"))),
+    vars, names(vars)))
+  pie <- rbind(c("Variables control", "Sí"), c("Efectos fijos por año", "Sí"),
+               c("Observaciones", num(m$n)), c("R²", num(m$r2, 4)))
+  kable(rbind(cuerpo, pie), row.names = FALSE, caption = titulo, align = "lc",
+        col.names = c("Variables", "Cantidad de horas trabajadas")) |>
+    kable_styling(full_width = FALSE) |>
+    row_spec(nrow(cuerpo) + 2, extra_css = "border-bottom: 1px solid #333;")
+}
+```
+
+# Ejercicio 1
+
+::: {.enunciado}
+Realizar una regresión simple donde la variable dependiente es la cantidad de horas trabajadas y la variable de interés es el tratamiento (controlar por otras variables que considere relevante). ¿Qué dice el resultado? ¿Se le puede hacer alguna crítica?
+:::
+
+Se realiza <mark>un regresión simple</mark> en donde la variable dependiente es la cantidad de horas trabajadas y la variable de interés es el tratamiento, controlando por <mark>la edad y el sexo del individuo, por el tamaño de la empresa y por efectos fijos por año</mark>:
+
+$$horas_{it} = \alpha + \beta\, tratado_{it} + X_{it}'\gamma + \delta_t + \varepsilon_{it}, \tag{1}$$
+
+donde $i$ indica individuo y $t$ tiempo, $horas_{it}$ indica la cantidad de horas trabajadas semanales, $tratado_{it}$ indica si el individuo recibió el bono, la matriz $X_{it}$ contiene covariables individuales (edad, sexo, salario horario, tamaño de la empresa, relación laboral), $\delta_t$ son efectos fijos por año y $\varepsilon_{it}$ es el término de error del modelo.
+
+```{r ej1}
+m1 <- mco(c("tratado", controles))
+```
+
+En la tabla 1, se presenta la estimación por MCO del modelo (1). Se puede observar que la variable de interés, si el individuo fue tratado o no, es estadísticamente significativa. En particular, deja de manifiesto que <mark>los individuos que fueron tratados tuvieron una reducción en la cantidad de horas trabajadas semanales, en promedio, de 3,91 horas</mark> (*céteris páribus*). Esta estimación expone el cambio promedio en la cantidad de horas trabajadas al considerar si el individuo fue o no tratado, pero, <mark>dado que no permite controlar por cualquier diferencia en características observables entre el grupo de tratamiento y el grupo de control</mark>, no es posible identificar el efecto causal del tratamiento en la cantidad de horas trabajadas. Para esto, sería necesario estimar el modelo utilizando el método de *Diff-in-Diff*. Además, <mark>se puede pensar que ser *tratado* es una variable endógena, que depende de características observables (omitidas) o inobservables</mark> que afectan también a la cantidad de horas trabajadas, generando un "sesgo por endogeneidad" en las estimaciones.
+
+```{r tabla1}
+tabla_pdf(m1, c("tratado" = "tratado"), "Tabla 1. Estimación por MCO del modelo (1).")
+```
+
+Fuente: Elaboración propia. En el PDF el coeficiente figura como <mark>-3,912</mark>.
+
+::: {.disc .impr #d1}
+**D1.** La primera oración omite el **salario horario** y la **relación laboral**, que sí se mencionan después, y ninguna indica que edad y salario entran también al cuadrado. Las tablas no informan qué son las cifras entre paréntesis (errores estándar **robustos**, según el *do-file*) ni el significado de los asteriscos (\* 10%, \*\* 5%, \*\*\* 1%). "Un regresión" debe ser "una regresión".
+:::
+
+```{r ej1-float}
+# Stata guarda salarioh2 en precisión simple: se comprueba si eso explica la diferencia
+simple <- function(x) readBin(writeBin(x, raw(), size = 4), "numeric", n = length(x), size = 4)
+df <- d; ok <- !is.na(df$salarioh2); df$salarioh2[ok] <- simple(df$salarioh2[ok])
+m1_f <- mco(c("tratado", controles), df)
+c(doble = m1$b[["tratado"]], simple = m1_f$b[["tratado"]])
+```
+
+::: {.disc .error #d2}
+**D2.** El comando del *do-file* sobre la base da **`r num(m1$b["tratado"], 4)`**, que redondea a `r num(m1$b["tratado"], 3)` y no a −3,912; guardar `salarioh2` en precisión simple, como Stata, no cambia el resultado. El error estándar, las observaciones y el $R^2$ coinciden, y también los dos coeficientes de la tabla 2. En el texto corresponde "`r num(-m1$b["tratado"], 2)` horas".
+:::
+
+```{r ej1-brechas}
+brecha <- with(d, tapply(horas, list(anio, tratado), mean, na.rm = TRUE))
+brecha <- brecha[, "1"] - brecha[, "0"]
+round(brecha, 2)
+```
+
+::: {.disc .error #d3}
+**D3.** `tratado` es un indicador de **grupo**, constante para cada persona en los cuatro años, incluidos 2016 y 2017, cuando nadie recibía el bono. Su coeficiente es la diferencia promedio de horas entre ambos grupos en todo el período, no una "reducción" que hayan tenido los tratados ni un cambio. De hecho, el grupo ya trabajaba menos antes del programa (`r num(-brecha["2016"], 1)` horas menos en 2016 y `r num(-brecha["2017"], 1)` en 2017, sin controles).
+:::
+
+::: {.disc .error #d4}
+**D4.** Es al revés: la regresión **sí controla** por las características observables que incluye. Lo que no puede controlar es lo **no observado** que difiere entre grupos (y lo observable que se omita o se modele mal). La frase contradice además a la siguiente, que sí menciona los inobservables.
+:::
+
+```{r ej1-asignacion}
+t18 <- d[d$anio == 2018, ]
+regla <- with(t18, table(`Ingreso laboral 2018` = ifelse(is.na(ila), "Sin dato", ifelse(ila < 5000, "Menor a 5.000", "5.000 o más")),
+                          tratado = tratado))
+kable(regla, caption = "Agregado en la réplica: ingreso de 2018 y condición de tratado (personas).") |>
+  kable_styling(full_width = FALSE)
+antes <- d[d$anio == 2017 & !is.na(d$ila), ]
+sobre_antes <- 100 * mean(antes$ila[antes$tratado == 1] >= 5000)
+bajo_ctrl <- sum(antes$ila[antes$tratado == 0] < 5000)
+cero <- with(d, tapply(horas == 0, list(anio, tratado), mean, na.rm = TRUE))
+bono <- sapply(2016:2019, function(a) {
+  s <- d[d$anio == a & d$tratado == 1 & !is.na(d$itot), ]; mean(abs(s$itot - s$ila - 3000) < .01) })
+```
+
+::: {.disc .error #d5}
+**D5.** La crítica es genérica y omite la más importante, que está en el enunciado y en los datos. El bono se otorga a quienes tienen ingreso total menor a \$5.000, y en la base `tratado` coincide **exactamente** con el ingreso laboral de **2018** por debajo de ese umbral (tabla anterior, sin contar los casos sin dato). Ese ingreso es horas por salario del mismo año: el grupo se define por el **resultado** que se quiere estudiar. Entre los tratados, `r num(100 * cero["2018", "1"], 0)`% declara cero horas en 2018, contra `r num(100 * cero["2017", "1"], 0)`% en 2017. En 2017, `r num(sobre_antes, 0)`% de ellos ganaba 5.000 o más, y `r bajo_ctrl` personas del grupo de control ganaban menos. Hay **causalidad inversa** y selección por una caída transitoria del ingreso, además del incentivo a trabajar menos para calificar. (El bono se registra en `itot` en 2018 y 2019: `r num(100 * mean(bono[3:4]), 0)`% de los tratados con dato.)
+:::
+
+```{r ej1-controles}
+con_horas <- d[!is.na(d$horas), ]
+fuera <- con_horas[is.na(con_horas$salarioh) | is.na(con_horas$empresa), ]
+r_sal <- d$salarioh / (d$ila / d$horas)
+v1 <- list("Como en el do-file" = m1,
+           "Sin salario, misma muestra" = mco(c("tratado", "edad", "edad2", "hombre", "factor(empresa)", "factor(relab)", "factor(anio)"), m1$u),
+           "Solo controles exógenos, todas las horas" = mco(c("tratado", exogenos)),
+           "Sin controles (solo año)" = mco(c("tratado", "factor(anio)")))
+kable(data.frame(names(v1), sapply(v1, con_se, v = "tratado"), num(sapply(v1, `[[`, "n"))), row.names = FALSE,
+      align = "lcc", col.names = c("Especificación", "Coeficiente de tratado (EE)", "Obs."),
+      caption = "Agregado en la réplica: sensibilidad del modelo (1) a los controles.") |>
+  kable_styling(full_width = FALSE)
+perdidos <- table(m1$u$anio, m1$u$tratado)
+```
+
+::: {.disc .metodo #d6}
+**D6.** `salarioh` es exactamente `ila / horas` (razón entre `r num(min(r_sal, na.rm = TRUE), 4)` y `r num(max(r_sal, na.rm = TRUE), 4)`): el control se construye con la **variable dependiente** en el denominador, lo que induce correlación mecánica. Salario, tamaño de empresa y relación laboral son además resultados que el programa puede afectar. Y como solo existen para quienes trabajan, la regresión usa `r num(m1$n)` de las `r num(nrow(con_horas))` observaciones con horas: quedan fuera todos los desocupados, y de los `r sum(d$anio == 2018 & d$tratado == 1)` tratados observados en 2018 quedan `r perdidos["2018", "1"]`. Se elimina así el ajuste en la participación, y el coeficiente depende fuertemente de qué se controla.
+:::
+
+# Ejercicio 2
+
+::: {.enunciado}
+Realizar la estimación utilizando el método de diferencias en diferencias (puede considerar 2018 como año de transición). ¿Qué dice el resultado? Comentar los supuestos para validar la estrategia de identificación e intentar evaluarlos empíricamente, mencionando las dificultades que presentan los datos para realizar esos chequeos de validez.
+:::
+
+Se realiza la estimación utilizando el método de diferencias en diferencias, <mark>considerando el año 2018 como año de transición</mark>. El modelo a estimar es el siguiente:
+
+$$horas_{it} = \alpha + \beta\, tratado_{it} + \beta_2\, (tratado_{it} * Post) + X_{it}'\gamma + \delta_t + \varepsilon_{it}, \tag{2}$$
+
+donde, ahora, al modelo (1), se le adiciona la variable *Post*, que es una variable binaria que vale 1 si el año es posterior a la política <mark>(2019) y 0 en caso contrario</mark>. El parámetro $\beta_2$ (si se cumple el supuesto de tendencia común en ausencia de tratamiento) captura el efecto causal del tratamiento en la cantidad de horas trabajadas semanales:
+
+$$\beta_2 = (\overline{horas}^T_{i1} - \overline{horas}^T_{i0}) - (\overline{horas}^C_{i1} - \overline{horas}^C_{i0}),$$
+
+donde $\overline{horas}^T_{i0}$, $\overline{horas}^T_{i1}$, $\overline{horas}^C_{i0}$ y $\overline{horas}^C_{i1}$ son la cantidad de horas trabajadas semanales promedio del grupo de tratamiento y control, antes y después del tratamiento, respectivamente.
+
+```{r ej2}
+did <- c("tratado", "tratado_postrat")
+m2 <- mco(c(did, controles))
+```
+
+En la tabla 2, se presenta la estimación por MCO del modelo (2). Se puede observar que <mark>el coeficiente que capta la relación causal ($\rho$)</mark> es estadísticamente significativo. En particular, deja de manifiesto que, debido al tratamiento, hubo una reducción en la cantidad de horas trabajadas semanales para el grupo de tratamiento en <mark>3,74 horas</mark> (*céteris páribus*). <mark>Al igual que en ejercicio anterior</mark>, puede existir "sesgo por endogeneidad".
+
+```{r tabla2}
+tabla_pdf(m2, c("tratado" = "tratado", "tratado * Post" = "tratado_postrat"),
+          "Tabla 2. Estimación por MCO del modelo (2).")
+```
+
+Fuente: Elaboración propia.
+
+```{r ej2-2018}
+esp <- list("Controles del do-file" = c(did, controles),
+            "Controles exógenos" = c(did, exogenos),
+            "Solo efectos de año" = c(did, "factor(anio)"))
+comp <- lapply(esp, function(x) list(con = mco(x), sin = mco(x, s2018)))
+kable(data.frame(names(esp),
+                 sapply(comp, function(z) con_se(z$con, "tratado_postrat")), num(sapply(comp, function(z) z$con$n)),
+                 sapply(comp, function(z) con_se(z$sin, "tratado_postrat")), num(sapply(comp, function(z) z$sin$n))),
+      row.names = FALSE, align = "lcccc",
+      col.names = c("Especificación", "2018 como año previo (EE)", "Obs.", "Excluyendo 2018 (EE)", "Obs."),
+      caption = "Agregado en la réplica: coeficiente de tratado * Post según el tratamiento de 2018.") |>
+  kable_styling(full_width = FALSE)
+```
+
+::: {.disc .error #d7}
+**D7.** El texto dice tratar 2018 como año de transición, pero el *do-file* **no lo excluye**: define `Post = 1` solo en 2019 y deja 2018, con el programa ya vigente, dentro del período **previo**. El grupo de comparación incluye así un año tratado, y precisamente el de la caída más fuerte. Excluyéndolo, el coeficiente con los controles del *do-file* pasa de `r num(comp[[1]]$con$b["tratado_postrat"], 3)` a **`r num(comp[[1]]$sin$b["tratado_postrat"], 3)`** (`r num(comp[[1]]$sin$n)` observaciones). Sin los controles de [D6](#d6), usar 2018 como previo cambia la conclusión: el efecto pasa de `r num(comp[[3]]$sin$b["tratado_postrat"], 2)` a `r num(comp[[3]]$con$b["tratado_postrat"], 2)` (`r pin(comp[[3]]$con$p["tratado_postrat"])`). Ninguna de las dos cifras resuelve el problema de selección de [D5](#d5).
+:::
+
+::: {.disc .impr #d8}
+**D8.** El coeficiente se llama $\beta_2$ en la ecuación (2) y $\rho$ en el texto ($\rho$ es el nombre que se usa en la ecuación (3)). La fórmula de $\beta_2$ en medias es la del caso sin covariables; con $X_{it}$ es una versión condicional. "Al igual que en ejercicio anterior" y, más abajo, "un interpretación" y "se presentan la cantidad" tienen errores de redacción.
+:::
+
+Para que las estimaciones que surgen del modelo *Diff-in-Diff* tengan una interpretación causal, el supuesto de identificación clave es el de tendencia común en ausencia de tratamiento (*common trend*), lo cual implica que, en ausencia de tratamiento, la tendencia para la variable *horas* sería la misma para los grupos de tratamiento y control. Esto es:
+
+$$E\left[(\varepsilon^T_{i1} - \varepsilon^T_{i0}) - (\varepsilon^C_{i1} - \varepsilon^C_{i0})\right] = 0,$$
+
+donde $\varepsilon^T_{i0}$, $\varepsilon^T_{i1}$, $\varepsilon^C_{i0}$ y $\varepsilon^C_{i1}$ son los términos de error del grupo de tratamiento y control, antes y después del tratamiento, respectivamente. Además, el otro supuesto de identificación necesario para obtener <mark>un interpretación</mark> causal es que, por fuera de la intervención estatal, no hay otros *shocks* contemporáneos que afecten, de manera diferencial, la elección de cantidad de horas trabajadas semanales de los individuos de ambos grupos después de la intervención.
+
+El primer supuesto se puede verificar comparando las tendencias previas al tratamiento, mientras que <mark>la validez del segundo supuesto viene dada por el hecho de que otras intervenciones estatales, que pueden haber afectado las decisiones del mercado laboral de los grupos de tratamiento y control, son identificables en los datos y, por lo tanto, es posible controlar por ellas</mark>.
+
+```{r variables}
+names(base)
+```
+
+::: {.disc .error #d9}
+**D9.** La base tiene `r ncol(base)` variables y **ninguna** describe otras intervenciones estatales, y tampoco se controla por ellas. La afirmación no puede sostenerse con estos datos (la frase es casi idéntica a la usada en el trabajo práctico 1 para otro estudio). El segundo supuesto no es verificable aquí.
+:::
+
+En la figura 1, <mark>se presentan la cantidad</mark> de horas trabajadas semanales por grupo para los años 2016-2019. Se puede observar que, <mark>durante el período previo al tratamiento (años 2016 y 2017), ambos grupos (tratamiento y control) tienen tendencias semejantes, lo cual nos da una aproximación gráfica del cumplimiento de tendencia común</mark> en ausencia de tratamiento. <mark>Del año 2017 al año 2018, se observa un quiebre, reduciéndose drásticamente la cantidad de horas trabajadas semanales para el grupo de tratamiento, mientras que se achica la brecha con el grupo de control en el año 2019.</mark>
+
+```{r figura1, fig.cap="Figura 1. Cantidad de horas trabajadas semanales por grupo (2016-2019)."}
+# table anio tratado, contents(mean horas) replace
+medias <- with(d, tapply(horas, list(anio, tratado), mean, na.rm = TRUE))
+anios <- 2016:2019
+par(mar = c(4, 4.5, 1, 1))
+plot(anios, medias[, "1"], type = "o", pch = 19, col = "#1a476f", ylim = c(15, 30), las = 1, xaxt = "n",
+     xlab = "Año", ylab = "Cantidad de Horas Trabajadas Semanales")
+lines(anios, medias[, "0"], type = "o", pch = 19, lty = 2, col = "#90353b")
+axis(1, anios); abline(v = 2017, col = "red")
+legend("bottomleft", c("Tratados", "No Tratados"), col = c("#1a476f", "#90353b"), lty = 1:2, pch = 19, bty = "n")
+```
+
+Fuente: Elaboración propia.
+
+```{r ej2-pretendencias}
+pre <- d[d$anio <= 2017, ]
+pre$falso <- pre$tratado * (pre$anio == 2017)
+pl <- list("Controles del do-file" = mco(c("tratado", "falso", controles), pre),
+           "Controles exógenos" = mco(c("tratado", "falso", exogenos), pre),
+           "Solo efectos de año" = mco(c("tratado", "falso", "factor(anio)"), pre))
+kable(data.frame(names(pl), sapply(pl, con_se, v = "falso"),
+                 sapply(pl, function(r) paste0("[", num(r$b[["falso"]] - 1.96 * r$se[["falso"]], 2), "; ",
+                                                num(r$b[["falso"]] + 1.96 * r$se[["falso"]], 2), "]")),
+                 pval(sapply(pl, function(r) r$p[["falso"]])), num(sapply(pl, `[[`, "n"))),
+      row.names = FALSE, align = "lcccc",
+      col.names = c("Experimento falso (2017 contra 2016)", "Coeficiente (EE)", "IC 95%", "p", "Obs."),
+      caption = "Agregado en la réplica: prueba de tendencias previas.") |>
+  kable_styling(full_width = FALSE)
+for (a in c(2016, 2018, 2019)) d[[paste0("t", a)]] <- d$tratado * (d$anio == a)
+dinamico <- mco(c("tratado", "t2016", "t2018", "t2019", controles))
+sin_ctrl <- mco(c("tratado", "t2016", "t2018", "t2019", "factor(anio)"))
+kable(data.frame(c("tratado * 2016", "tratado * 2018", "tratado * 2019"),
+                 sapply(c("t2016", "t2018", "t2019"), con_se, m = dinamico),
+                 sapply(c("t2016", "t2018", "t2019"), con_se, m = sin_ctrl)),
+      row.names = FALSE, align = "lcc",
+      col.names = c("Respecto de 2017", "Controles del do-file", "Solo efectos de año"),
+      caption = "Agregado en la réplica: especificación dinámica.") |>
+  kable_styling(full_width = FALSE)
+faltan <- with(base, tapply(is.na(horas), list(anio, tratado), mean))
+balance <- sapply(c("edad", "hombre", "ocupado", "horas", "ila"), function(v)
+  tapply(base[[v]][base$anio <= 2017], base$tratado[base$anio <= 2017], mean, na.rm = TRUE))
+```
+
+```{r ej2-dificultades}
+kable(data.frame(c("Edad", "Proporción de varones", "Proporción de ocupados", "Horas semanales", "Ingreso laboral"),
+                 num(balance["0", ], 2), num(balance["1", ], 2)), row.names = FALSE, align = "lcc",
+      col.names = c("Promedios 2016-2017", "Control", "Tratados"),
+      caption = "Agregado en la réplica: los grupos difieren antes del programa.") |>
+  kable_styling(full_width = FALSE)
+kable(data.frame(anios, num(100 * faltan[, "0"], 1), num(100 * faltan[, "1"], 1)), row.names = FALSE, align = "ccc",
+      col.names = c("Año", "Control", "Tratados"), caption = "Agregado en la réplica: % sin dato de horas.") |>
+  kable_styling(full_width = FALSE)
+obs_persona <- table(table(base$id))
+```
+
+::: {.disc .error #d10}
+**D10.** La consigna pide evaluar los supuestos y señalar las **dificultades de los datos**; la respuesta solo compara a la vista dos años. No hay prueba ni mención de dificultades. En la réplica: el experimento falso de 2017 no rechaza tendencias iguales (`r pin(pl[[1]]$p["falso"])` con los controles del *do-file*; `r pin(pl[[3]]$p["falso"])` sin ellos), pero con intervalos amplios, y no rechazar no demuestra el supuesto. Las dificultades son: (i) **solo dos años previos**, una única diferencia para comparar tendencias; (ii) grupo definido con el ingreso de 2018 ([D5](#d5)), que además hace que en ese año los tratados no tengan datos faltantes de horas (`r num(100 * faltan["2018", "1"], 0)`% contra `r num(100 * faltan["2017", "1"], 0)`% en 2017); (iii) niveles previos muy distintos entre grupos; (iv) alrededor de un tercio de datos faltantes y un panel no balanceado (`r num(obs_persona[["4"]])` de `r num(sum(obs_persona))` personas tienen los cuatro años); y (v) no hay variables sobre otras políticas.
+:::
+
+::: {.disc .metodo #d11}
+**D11.** La caída de los tratados en 2018 (de `r num(medias["2017", "1"], 1)` a `r num(medias["2018", "1"], 1)` horas) no puede leerse como efecto del bono: están en ese grupo **porque** en 2018 tuvieron ingresos bajos. Parte de la recuperación de 2019 es la reversión esperable después de un año malo (regresión a la media), y las dos tendencias previas "semejantes" no informan sobre esa selección. La línea vertical en 2017 marca el último año previo; el programa empieza en 2018.
+:::
+
+```{r ej2-panel}
+cl <- mco(c(did, controles), cluster = TRUE)
+cl_sin <- mco(c(did, controles), s2018, cluster = TRUE)
+# Efectos fijos individuales (transformación within), excluyendo 2018
+w <- s2018[!is.na(s2018$horas), ]
+w$y16 <- as.numeric(w$anio == 2016); w$y17 <- as.numeric(w$anio == 2017)
+for (v in c("horas", "tratado_postrat", "y16", "y17")) w[[v]] <- w[[v]] - ave(w[[v]], w$id)
+ef <- lm(horas ~ 0 + tratado_postrat + y16 + y17, data = w)
+ef_se <- sqrt(diag(vcovCL(ef, cluster = w$id, type = "HC1")))
+c(ee_robusto = m2$se[["tratado_postrat"]], ee_agrupado = cl$se[["tratado_postrat"]],
+  ef_individuales = coef(ef)[["tratado_postrat"]], ee_ef = ef_se[["tratado_postrat"]])
+```
+
+::: {.disc .metodo #d12}
+**D12.** La base sigue a las mismas personas, pero el modelo no incluye **efectos fijos individuales**, que absorben diferencias permanentes entre grupos, ni agrupa los errores por persona. Agrupar cambia muy poco el error del coeficiente (`r num(m2$se["tratado_postrat"], 3)` a `r num(cl$se["tratado_postrat"], 3)`). Con efectos fijos y sin 2018, el coeficiente es `r num(coef(ef)["tratado_postrat"], 2)` (`r num(ef_se["tratado_postrat"], 2)`). Tampoco esto corrige la selección basada en 2018.
+:::
+
+# Ejercicio 3
+
+::: {.enunciado}
+Ahora, suponer que la implementación del tratamiento fue en etapas. Es decir, primero lo recibieron algunos estados y luego los demás de manera progresiva. ¿Cómo modificaría esto el procedimiento realizado en el punto 2 para realizar la estimación? Se espera una respuesta teórica/conceptual, sin aplicación en los datos.
+:::
+
+Se supone que la implementación del tratamiento fue en etapas. Es decir, primero, lo recibieron algunos estados y, luego, los demás de manera progresiva. En este caso, el procedimiento realizado en el ejercicio 2 para realizar la estimación debería modificarse <mark>para controlar por cualquier diferencia en características observables</mark> entre el grupo de tratamiento y el grupo de control en los diferentes estados. De lo contrario, no sería posible identificar el efecto causal del tratamiento en la cantidad de horas trabajadas. Para esto, <mark>sería necesario estimar el modelo utilizando el método de *Diff-in-Diff-in-Diff* (triple diferencias)</mark>.
+
+El modelo a estimar podría ser el siguiente:
+
+$$\begin{aligned}
+horas_{it} = {} & \alpha + \beta_1\, tratado_{it} + \beta_2\, estado_{it} + \beta_3\, (tratado_{it} * estado_{it}) \\
+& + \delta_1\, Post + \delta_2\, (tratado_{it} * Post) + \delta_3\, (estado_{it} * Post) \\
+& + \rho\, (tratado_{it} * estado_{it} * Post) + X_{it}'\gamma + \delta_t + \varepsilon_{it},
+\end{aligned} \tag{3}$$
+
+donde, ahora, al modelo (2), se le adiciona la variable <mark>$estado_{it}$</mark> (con todas las interacciones), que es una variable binaria que vale 1 si el individuo es de un estado que recibió primero el tratamiento y 0 en caso contrario. El parámetro $\rho$ (si se cumple el supuesto de tendencia común en ausencia de tratamiento) captura el efecto causal del tratamiento en la cantidad de horas trabajadas semanales:
+
+$$\begin{aligned}
+\rho = {} & \left[(\overline{horas}^{T,E}_{i1} - \overline{horas}^{T,E}_{i0}) - (\overline{horas}^{C,E}_{i1} - \overline{horas}^{C,E}_{i0})\right] \\
+ & - \left[(\overline{horas}^{T,NE}_{i1} - \overline{horas}^{T,NE}_{i0}) - (\overline{horas}^{C,NE}_{i1} - \overline{horas}^{C,NE}_{i0})\right],
+\end{aligned}$$
+
+donde, ahora, el supraíndice $E$ indica si el individuo es de un estado que recibió primero el tratamiento y $NE$ en caso contrario.
+
+::: {.disc .error #d13}
+**D13.** La razón para cambiar el método no es controlar observables, sino que la **fecha de tratamiento varía entre estados**. Las triples diferencias propuestas, con un único *Post*, solo identifican el efecto si *Post* es la ventana en que los estados tempranos ya reciben el bono y los demás **todavía no**; el texto no lo dice. En esa ventana, el segundo corchete sirve de control. Pero cuando todos están tratados, $\rho$ mide la **diferencia** entre los efectos de unos y otros, que es cero si son iguales. Además, "de manera progresiva" implica varias fechas, que una variable binaria no representa. Lo habitual es definir $D_{st} = 1$ desde que el estado $s$ implementa, con efectos fijos de estado y de período, y estimar efectos por cohorte y tiempo desde la adopción comparando con unidades **aún no tratadas** (por ejemplo, Callaway y Sant'Anna, 2021; Sun y Abraham, 2021), porque la regresión con efectos fijos dobles puede estar sesgada cuando los efectos difieren entre cohortes o cambian con el tiempo (Goodman-Bacon, 2021; de Chaisemartin y D'Haultfœuille, 2020). Se conserva la dimensión de ingreso como tercera diferencia si interesa, definida con datos **anteriores** al programa.
+:::
+
+::: {.disc .impr #d14}
+**D14.** El indicador depende del estado, no del individuo en cada momento (debería ser $estado_s$); faltan el índice de estado y los efectos fijos de estado; y *Post* sin subíndice, junto con $\delta_t$, es **colineal** con los efectos de año ($\delta_1$ no se puede estimar).
+:::
+
+# Ejercicio 4
+
+::: {.enunciado}
+Imaginar, ahora, que, antes de la implementación de la política, a usted lo contratan desde el Estado para que proponga un diseño de cómo implementar este tipo de programas y llevar adelante una evaluación de impacto. Suponga que usted no tiene ninguna restricción temporal ni financiera para su evaluación. ¿Qué tipo de estrategia/diseño utilizaría para evitar los problemas de endogeneidad discutidos en los puntos anteriores? Se espera una respuesta teórica/conceptual, sin aplicación en los datos.
+:::
+
+Para evitar <mark>los problema</mark> de endogeneidad, se puede realizar una estrategia que constara de realizar una asignación aleatoria, un experimento controlado. <mark>Se deberían tomar dos muestras aleatorias de individuos de la población y a una aplicarle el tratamiento ($D = 1$) y a la otra no ($D = 0$).</mark> La asignación aleatoria implica que $D_i$ es independiente de los resultados potenciales. Entonces, dado que el "sesgo de selección" es igual a cero ($E(Y_{0i} \mid D_i = 1) - E(Y_{0i} \mid D_i = 0) = 0$), se obtiene que la diferencia promedio observada ($E(Y_{1i} \mid D_i = 1) - E(Y_{0i} \mid D_i = 0)$) es igual al efecto del tratamiento ($E(Y_{1i} \mid D_i = 1) - E(Y_{0i} \mid D_i = 1)$), es decir:
+
+$$E(Y_{1i} \mid D_i = 1) - E(Y_{0i} \mid D_i = 0) = E(Y_{1i} \mid D_i = 1) - E(Y_{0i} \mid D_i = 1)$$
+
+$$E(Y_{1i} \mid D_i = 1) - E(Y_{0i} \mid D_i = 0) = E\left[(Y_{1i} - Y_{0i}) \mid D_i = 1\right].$$
+
+Considerando un análisis de regresión, como los presentados anteriormente (modelos 1 a 3), si $D$ fue asignada aleatoriamente, en promedio, los grupos de tratamiento y control están balanceados en términos de observables e inobservables y, por lo tanto, el sesgo de selección desaparece:
+
+$$E(\varepsilon_i \mid D_i = 1) - E(\varepsilon_i \mid D_i = 0) = 0.$$
+
+::: {.disc .impr #d15}
+**D15.** El razonamiento y el álgebra son correctos, pero el diseño queda poco definido para **este** programa, dirigido a personas de bajos ingresos. Conviene medir la elegibilidad con ingresos **anteriores al anuncio** (para que nadie cambie sus horas para calificar, el problema de [D5](#d5)), tomar una muestra de elegibles y **sortear dentro de ella** quién recibe el bono. Así el efecto estimado corresponde a la población objetivo. "Dos muestras aleatorias de la población" no describe ese procedimiento, y "los problema" debe ser "los problemas".
+:::
+
+::: {.disc .metodo #d16}
+**D16.** La aleatorización elimina la selección **al momento de asignar**, pero la respuesta no discute lo que puede romperla después: incumplimiento (se estima entonces la intención de tratar), pérdida diferencial de participantes, contagios o efectos de equilibrio entre tratados y controles (que pueden requerir sortear por localidad), cambios de conducta por saberse evaluado o por expectativas sobre la duración del bono, y las cuestiones éticas y de factibilidad. Tampoco menciona línea de base, tamaño muestral, estratificación, seguimiento de varios períodos ni la alternativa de una implementación escalonada al azar o de explotar el umbral de ingreso con regresión discontinua, útil si el sorteo no es viable.
+:::
+
+# Verificación {#verificacion -}
+
+## Contra el PDF
+
+Cada cifra recalculada se compara con la publicada, redondeada a los mismos decimales. La única diferencia es la de [D2](#d2).
+
+```{r verif-pdf}
+comparar <- function(nombre, r, publicado, dec) {
+  r <- unname(c(r)); publicado <- c(publicado)
+  data.frame(Tabla = nombre, Cifras = length(publicado),
+             Coinciden = sum(abs(round(r, dec) - publicado) < 10^-dec / 2))
+}
+ver <- rbind(
+  comparar("Tabla 1, coeficiente y EE", co(m1, "tratado")[1:2], c(-3.912, .320), 3),
+  comparar("Tabla 2, coeficientes y EE",
+           c(co(m2, "tratado")[1:2], co(m2, "tratado_postrat")[1:2]), c(-2.955, .379, -3.739, .623), 3),
+  comparar("R² (tablas 1 y 2)", c(m1$r2, m2$r2), c(.2061, .2084), 4),
+  comparar("Observaciones (tablas 1 y 2)", c(m1$n, m2$n), c(10897, 10897), 0))
+kable(ver) |> kable_styling(full_width = FALSE)
+```
+
+## Contra la figura de Stata
+
+```{r verif-gph}
+# Series (sersets) guardadas dentro de un .gph
+leer_gph <- function(archivo) {
+  b <- readBin(archivo, "raw", file.size(archivo))
+  ini <- grepRaw("sersetreadwrite", b, all = TRUE, fixed = TRUE)
+  fin <- grepRaw("<EndSersetData>", b, all = TRUE, fixed = TRUE)
+  lapply(seq_along(ini), function(k) {
+    i <- ini[k]
+    nv <- readBin(b[i + 18:21], "integer", size = 4, endian = "little")
+    n  <- readBin(b[i + 22:25], "integer", size = 4, endian = "little")
+    tipo <- as.integer(b[i + 25 + seq_len(nv)])          # 251 a 255: byte, int, long, float, double
+    tam <- c(1, 2, 4, 4, 8)[tipo - 250]
+    mat <- matrix(b[(fin[k] - 2 - n * sum(tam)):(fin[k] - 3)], nrow = sum(tam))
+    desde <- cumsum(c(0, tam))
+    m <- sapply(seq_len(nv), function(j)
+      readBin(as.vector(mat[desde[j] + seq_len(tam[j]), ]),
+              if (tipo[j] >= 254) "double" else "integer", n, size = tam[j], endian = "little"))
+    m[abs(m) > 1e30] <- NA
+    m[complete.cases(m), , drop = FALSE]
+  })
+}
+columnas <- unlist(lapply(leer_gph("Figuras/Figura 1.gph"), function(m)
+  lapply(seq_len(ncol(m)), function(j) m[, j])), recursive = FALSE)
+dif <- function(y) min(sapply(columnas, function(z) if (length(z) == length(y)) max(abs(z - y)) else Inf))
+kable(data.frame(Serie = c("Tratados", "No tratados"),
+                 Dif = format(c(dif(medias[, "1"]), dif(medias[, "0"])), scientific = TRUE, digits = 2)),
+      row.names = FALSE, align = "lr", col.names = c("Serie de la figura 1", "Máxima diferencia con R")) |>
+  kable_styling(full_width = FALSE)
+```
+
+# Referencias de la réplica {-}
+
+El PDF no incluye bibliografía. Obras citadas en los recuadros:
+
+- Callaway, B. y Sant'Anna, P. H. C. (2021). Difference-in-Differences with Multiple Time Periods. *Journal of Econometrics*, 225(2), 200-230.
+- de Chaisemartin, C. y D'Haultfœuille, X. (2020). Two-Way Fixed Effects Estimators with Heterogeneous Treatment Effects. *American Economic Review*, 110(9), 2964-2996.
+- Goodman-Bacon, A. (2021). Difference-in-Differences with Variation in Treatment Timing. *Journal of Econometrics*, 225(2), 254-277.
+- Sun, L. y Abraham, S. (2021). Estimating Dynamic Treatment Effects in Event Studies with Heterogeneous Treatment Effects. *Journal of Econometrics*, 225(2), 175-199.
+
+```{r sesion}
+sessionInfo()
+```

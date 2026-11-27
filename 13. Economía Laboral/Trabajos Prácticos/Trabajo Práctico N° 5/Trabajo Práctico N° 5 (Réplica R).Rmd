@@ -1,0 +1,587 @@
+---
+title: "Trabajo Práctico N° 5 — Réplica en R"
+subtitle: "Maestría en Economía UNLP - Economía Laboral. Respuestas originales: Juan Menduiña"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+    self_contained: true
+    code_folding: hide
+---
+
+```{css, echo=FALSE}
+mark { background: #ffe27a; padding: 0 2px; }
+.disc { border-left: 6px solid; border-radius: 4px; padding: 10px 14px; margin: 14px 0; font-size: 0.95em; }
+.disc p:last-child { margin-bottom: 0; }
+.error { border-color: #c0392b; background: #fdecea; }
+.impr  { border-color: #d68910; background: #fef5e7; }
+.metodo{ border-color: #2874a6; background: #eaf2f8; }
+.enunciado { font-style: italic; color: #444; }
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 8, fig.height = 5, dpi = 120)
+library(haven); library(knitr); library(kableExtra); library(quadprog)
+
+num <- function(x, d = 0) {
+  x <- ifelse(abs(x) < 10^-d / 2, 0, x)            # evita "-0,000"
+  formatC(x, format = "f", digits = d, big.mark = ".", decimal.mark = ",")
+}
+```
+
+# Cómo leer este documento {-}
+
+El texto de cada ejercicio es el del PDF *Trabajo Práctico N° 5 (R)*. El código replica en R el archivo `Datos/Trabajo Práctico N° 5.do`, y las tablas, las figuras y los números de los recuadros de los ejercicios 1 a 4 se calculan a partir de `Datos/synth_smoking.dta`. El comando `synth` de Stata se reimplementa con `quadprog`. Lo <mark>resaltado</mark> es una frase, un número o un rótulo con alguna discrepancia, explicada en el recuadro correspondiente:
+
+::: {.disc .error}
+**Error**: la afirmación contradice los datos o el paper, la respuesta omite lo que se pide, o el cálculo no corresponde.
+:::
+
+::: {.disc .impr}
+**Imprecisión**: redacción, rótulo, formato u omisión que puede inducir a error.
+:::
+
+::: {.disc .metodo}
+**Observación metodológica**: la conclusión depende de una decisión discutible o no documentada.
+:::
+
+**Resultado de la réplica.** Las estimaciones del *do-file* se reproducen en R, pero la tabla 1 del PDF tiene dos cifras mal transcritas ([D8](#d8)) y las tablas 1 y 2 **no replican las del paper** porque el *do-file* usa la optimización por defecto de `synth` ([D9](#d9)). Además, no se responde por qué no usar diferencias en diferencias ([D1](#d1)), se describe mal el objetivo de la prueba de placebo ([D5](#d5)) y la figura 8 se calcula con otro período previo ([D11](#d11)).
+
+| N° | Ej. | Tipo | Discrepancia |
+|----|-----|------|--------------|
+| [D1](#d1) | 1 | Error | No se responde por qué no usar diferencias en diferencias |
+| [D2](#d2) | 2 | Imprecisión | Fecha de la Proposition 99 |
+| [D3](#d3) | 2 | Imprecisión | "Resto de Estados Unidos" es un promedio simple de 38 estados |
+| [D4](#d4) | 2 | Imprecisión | No se informa la magnitud del efecto |
+| [D5](#d5) | 2 | Error | Objetivo de la figura 4 |
+| [D6](#d6) | 2 | Imprecisión | Rótulo del eje de la figura 4 |
+| [D7](#d7) | 2 | Metodológica | Placebos con muy mal ajuste previo |
+| [D8](#d8) | 3 | Error | Dos cifras mal transcritas en la tabla 1 |
+| [D9](#d9) | 3 | Error | Las tablas 1 y 2 difieren de las del paper |
+| [D10](#d10) | 3 | Imprecisión | Título, variables y promedio de la tabla 1 |
+| [D11](#d11) | 4 | Error | Período previo del MSPE y valor para California |
+| [D12](#d12) | 4 | Imprecisión | No se informa el valor p |
+| [D13](#d13) | 4 | Imprecisión | Nombres de estados mal asignados en el *do-file* |
+| [D14](#d14) | 5 | Error | La brecha no se hace cada vez más negativa |
+| [D15](#d15) | 5 | Metodológica | El 7,14% y los dos gráficos de la fuente no coinciden |
+| [D16](#d16) | 5 | Imprecisión | Omite ponderadores, predictores y pruebas de robustez |
+| [D17](#d17) | 5 | Imprecisión | La "única unidad tratada" |
+| [D18](#d18) | Ref. | Imprecisión | Referencias bibliográficas |
+
+# Datos y funciones
+
+```{r datos}
+cruda <- read_dta("Datos/synth_smoking.dta")
+estados <- names(attr(cruda$state, "labels"))[order(attr(cruda$state, "labels"))]
+base <- as.data.frame(zap_labels(cruda))
+base <- base[order(base$state, base$year), ]
+ca <- which(estados == "California")
+c(filas = nrow(base), estados = length(estados), codigo_California = ca,
+  periodo = paste(range(base$year), collapse = "-"))
+```
+
+```{r funciones}
+anios <- 1970:2000
+pre <- anios <= 1988; post <- anios >= 1989
+Y <- matrix(base$cigsale, nrow = length(anios), dimnames = list(anios, estados))
+media <- function(v, a) sapply(seq_along(estados), function(s)
+  mean(base[base$state == s & base$year %in% a, v], na.rm = TRUE))
+# Predictores del comando synth
+X <- rbind(lnincome = media("lnincome", 1980:1988), age15to24 = media("age15to24", 1980:1988),
+           retprice = media("retprice", 1980:1988), beer = media("beer", 1984:1988),
+           cig1988 = media("cigsale", 1988), cig1980 = media("cigsale", 1980), cig1975 = media("cigsale", 1975))
+colnames(X) <- estados
+
+# synth ..., trunit(tr) trperiod(1989)
+control <- function(tr, v = NULL, redondear = TRUE) {
+  u <- c(tr, setdiff(seq_along(estados), tr))
+  Z <- X[, u] / apply(X[, u], 1, sd)                    # predictores estandarizados
+  if (is.null(v)) {                                     # V por defecto: basada en regresión
+    A <- cbind(1, t(Z))
+    B <- solve(crossprod(A), crossprod(A, t(Y[pre, u])))[-1, ]
+    v <- rowSums(B^2); v <- v / sum(v)
+  }
+  # W: mínimos cuadrados ponderados con ponderadores no negativos que suman uno
+  M <- Z[, -1] * sqrt(v); m1 <- Z[, 1] * sqrt(v); J <- ncol(M)
+  H <- crossprod(M); H <- H + diag(1e-9 * mean(diag(H)), J)
+  w <- solve.QP(H, crossprod(M, m1), cbind(1, diag(J)), c(1, rep(0, J)), meq = 1)$solution
+  w <- pmax(w, 0); w <- w / sum(w)
+  perdida <- sum((m1 - M %*% w)^2)
+  if (redondear) w <- round(w, 3)                       # synth redondea W a tres decimales
+  names(w) <- estados[u[-1]]
+  sint <- drop(Y[, names(w)] %*% w)
+  list(w = w, v = v, sint = sint, brecha = Y[, tr] - sint, perdida = perdida)
+}
+mspe <- function(g, periodo) mean(g[periodo]^2)
+```
+
+# Ejercicio 1
+
+::: {.enunciado}
+Explicar, brevemente, la metodología propuesta por los autores. ¿Por qué no usan Diferencias en Diferencias?
+:::
+
+La metodología propuesta por los autores es Control Sintético. En la práctica, muchas veces (por ejemplo, cuando las observaciones son unidades agregadas -países, provincias, etc.-), es difícil encontrar una unidad no expuesta que se aproxime a las características más relevantes de la unidad expuesta al evento de interés. Es así que la idea detrás del método de control sintético es que una combinación de unidades proporciona una mejor comparación para la unidad expuesta a la intervención que cualquier unidad por separado.
+
+En particular, el método de control sintético:
+
+- debido a que un control sintético es un promedio ponderado de las unidades de control disponibles, hace explícita la contribución relativa de cada unidad de control al contrafactual de interés y las similitudes (o falta de ellas) entre la unidad afectada por el evento o intervención de interés y el control sintético, en términos de resultados previos a la intervención y otros predictores de resultados posteriores a la intervención;
+- debido a que los ponderadores pueden restringirse para ser positivos y sumar uno, proporciona una protección contra la extrapolación; y
+- debido a que la elección de un control sintético no requiere acceso a los resultados posteriores a la intervención, permite a los investigadores decidir el diseño del estudio sin saber cómo esas decisiones afectarán las conclusiones de sus estudios, lo cual promueve cierta "honestidad" de la investigación en los estudios observacionales.
+
+<mark>[El PDF no contiene ninguna referencia a Diferencias en Diferencias en este ejercicio.]</mark>
+
+::: {.disc .error #d1}
+**D1.** La segunda pregunta queda **sin responder**. El argumento del paper (sección 2.2) parte de un modelo factorial,
+$$Y^N_{it} = \delta_t + \theta_t Z_i + \lambda_t \mu_i + \varepsilon_{it},$$
+donde $\mu_i$ son factores no observados. Diferencias en Diferencias es el caso particular con $\lambda_t$ **constante**: admite factores no observados solo si su efecto no cambia en el tiempo, de modo que las diferencias temporales los eliminan (tendencias comunes). El control sintético permite que su efecto **varíe**. En esta aplicación, además, las tendencias previas de California y del resto difieren (figura 1), y no hay un estado que por sí solo sea un buen control. (Los ponderadores son no negativos: pueden ser cero.)
+:::
+
+# Ejercicio 2
+
+::: {.enunciado}
+Replicar las Figura 1, 2, 3 y 4 del paper. Explicar, brevemente, por qué están esos gráficos en el trabajo.
+:::
+
+La figura 1 muestra las tendencias en las ventas de cigarrillos per cápita en <mark>California y en 38 estados de Estados Unidos</mark> para el período 1970-2000. Esta figura está en el trabajo para mostrar que el resto de Estados Unidos puede no proporcionar una unidad de control adecuada para analizar los efectos de *Proposition 99*^[<mark>Programa de control del tabaco a gran escala que California implementó en 1988.</mark>] sobre las ventas de cigarrillos per cápita en California, ya que, antes de la aprobación del programa, la tendencia de las ventas de cigarrillos per cápita en California y en el resto de Estados Unidos diferían notablemente.
+
+```{r figura1, fig.cap="Figura 1. Tendencias en la venta de cigarrillos per cápita: California vs. el resto de Estados Unidos."}
+resto <- rowMeans(Y[, -ca])                          # bysort year: egen mean_cigsale if state!=3
+dos_lineas <- function(a, b, etiquetas) {
+  par(mar = c(4, 4.5, 1, 1))
+  plot(anios, a, type = "l", ylim = c(0, 140), las = 1, xlab = "year",
+       ylab = "per-capita cigarette sales (in packs)")
+  lines(anios, b, lty = 2); abline(v = 1989, lty = 3)
+  legend("bottomleft", etiquetas, lty = 1:2, bty = "n")
+}
+dos_lineas(Y[, ca], resto, c("California", "Rest of the U.S."))
+```
+
+Fuente: Elaboración propia.
+
+::: {.disc .impr #d2}
+**D2.** La Proposition 99 se **aprobó en noviembre de 1988 y entró en vigencia en enero de 1989** (sección 3.2 del paper). Por eso el tratamiento se fecha en 1989 (`trperiod(1989)`). El resumen del paper también usa la expresión "implementado en 1988".
+:::
+
+::: {.disc .impr #d3}
+**D3.** La línea llamada "Rest of the U.S." es el **promedio simple de los 38 estados del grupo de donantes**: excluye a los estados con programas propios o grandes subas de impuestos y al Distrito de Columbia, y no pondera por población. La figura 1 del paper termina visiblemente más abajo (poco más de 80 paquetes en 2000, según se lee en el gráfico, contra `r num(resto["2000"], 1)` aquí). La base no incluye población, así que no se puede reconstruir esa versión. La conclusión cualitativa se mantiene.
+:::
+
+La figura 2 muestra las tendencias en las ventas de cigarrillos per cápita en California y en su contraparte sintética para el período 1970-2000. Esta figura está en el trabajo para mostrar que California sintética proporciona una unidad de control (sintética) adecuada para analizar los efectos de *Proposition 99*, ya que la tendencia (y los valores) de la variable de interés previa a la aprobación del programa en California y en su contraparte sintética son muy similares.
+
+```{r figura2, fig.cap="Figura 2. Tendencias en las ventas de cigarrillos per cápita: California vs. California sintética."}
+sc <- control(ca)
+dos_lineas(Y[, ca], sc$sint, c("California", "Synthetic California"))
+```
+
+Fuente: Elaboración propia.
+
+<mark>La figura 3 muestra la brecha en las ventas de cigarrillos per cápita entre California y su contraparte sintética para el período 1970-2000.</mark> Esta figura está en el trabajo para mostrar la brecha pre-intervención y post-intervención en las ventas de cigarrillos per cápita entre California y su contraparte sintética. <mark>Se observa una brecha acentuada post-intervención, que aumentó con el tiempo.</mark>
+
+```{r figura3, fig.cap="Figura 3. Brecha en las ventas de cigarrillos per cápita entre California y California sintética."}
+par(mar = c(4, 4.5, 1, 1))
+plot(anios, sc$brecha, type = "l", ylim = c(-30, 30), las = 1, xlab = "year",
+     ylab = "gap in per-capita cigarette sales (in packs)")
+abline(h = 0, lty = 5); abline(v = 1989, lty = 3)
+efecto <- c(medio = mean(sc$brecha[post]), pct = 100 * mean(sc$brecha[post]) / mean(sc$sint[post]),
+            y2000 = unname(sc$brecha[length(anios)]))
+```
+
+Fuente: Elaboración propia.
+
+::: {.disc .impr #d4}
+**D4.** La respuesta describe el gráfico pero no informa **cuánto** cambió el consumo, que es el resultado central. Según la réplica, entre 1989 y 2000 las ventas fueron en promedio `r num(-efecto["medio"], 1)` paquetes per cápita menores que en la California sintética (`r num(-efecto["pct"], 1)`%), y `r num(-efecto["y2000"], 1)` paquetes en 2000. El paper informa casi 20 paquetes (alrededor de 25%) y unos 26 en 2000 ([D9](#d9)).
+:::
+
+<mark>La figura 4 muestra los resultados de la prueba de placebo para el período 1970-2000. Esta figura está en el trabajo para mostrar cuán bueno es el ajuste que proporciona el método de control sintético para las ventas de cigarrillos per cápita en California en relación a los 38 estados de Estados Unidos.</mark>
+
+```{r placebos}
+# Un control sintético por estado; California pasa al grupo de donantes de los demás
+todos <- lapply(seq_along(estados), control)
+G <- sapply(todos, `[[`, "brecha"); colnames(G) <- estados
+```
+
+```{r figura4, fig.cap="Figura 4. Brechas de ventas de cigarrillos per cápita en California y brechas de placebo en los 38 estados de control."}
+brechas <- function(incluir, titulo = NULL, ylim = range(G), ylab = "gap in per-capita cigarette state (in packs)") {
+  matplot(anios, G[, incluir], type = "l", lty = 1, col = "gray65", ylim = ylim, las = 1,
+          xlab = "year", ylab = ylab, main = titulo)
+  lines(anios, G[, ca], lwd = 2); abline(h = 0, lty = 5); abline(v = 1989, lty = 3)
+}
+par(mar = c(4, 4.5, 1, 1))
+brechas(setdiff(estados, "California"))
+```
+
+Fuente: Elaboración propia.
+
+::: {.disc .error #d5}
+**D5.** El objetivo de la prueba de placebo es la **inferencia**, no mostrar el ajuste. Se asigna ficticiamente el tratamiento a cada uno de los 38 estados de control y se compara la brecha estimada para California con la distribución de esas brechas. Si fuera una más, no habría evidencia de un efecto; como es inusualmente grande y negativa, el paper concluye que el efecto es significativo (sección 3.4). El buen ajuste previo es un requisito para que la comparación sea informativa.
+:::
+
+::: {.disc .impr #d6}
+**D6.** El eje vertical dice <mark>"cigarette state"</mark> en lugar de "cigarette sales". El error está en el `ytitle` del *do-file* y se reproduce aquí.
+:::
+
+```{r placebos-ajuste}
+ajuste <- apply(G[pre, ], 2, function(g) mean(g^2))
+veces <- ajuste / ajuste["California"]
+cortes <- c(20, 5, 2)
+quedan <- sapply(cortes, function(k) sum(veces[-ca] <= k))
+aj_s <- as.data.frame(zap_labels(read_dta("Datos/placebo.dta")))
+aj_s <- sapply(seq_along(estados), function(i) mean(aj_s[[paste0("gap", i)]][pre]^2))
+quedan_st <- sapply(cortes, function(k) sum(aj_s[-ca] <= k * aj_s[ca]))
+```
+
+```{r figura4-filtrada, fig.cap="Agregado en la réplica: placebos con MSPE previo (1970-1988) no mayor a 5 y a 2 veces el de California.", fig.width=11, fig.height=4.5}
+par(mfrow = c(1, 2), mar = c(4, 4.5, 2, 1))
+for (k in c(5, 2))
+  brechas(estados[veces <= k & estados != "California"], paste("Hasta", k, "veces"),
+          ylim = c(-35, 35), ylab = "gap (in packs)")
+```
+
+::: {.disc .metodo #d7}
+**D7.** La figura 4 incluye estados que el método no logra reproducir antes de 1989: el MSPE previo de `r names(which.max(ajuste))` es `r num(max(ajuste))`, contra `r num(ajuste["California"], 1)` de California. Sus brechas posteriores no informan sobre la rareza del resultado de California y comprimen la escala. El paper repite la figura excluyendo placebos con MSPE previo mayor a 20, 5 y 2 veces el de California (figuras 5 a 7); en la réplica quedan `r paste(quedan, collapse = ", ")` estados de control, respectivamente (con las series de Stata, `r paste(quedan_st, collapse = ", ")`; la diferencia viene de los placebos sin solución única). El PDF no lo menciona.
+:::
+
+# Ejercicio 3
+
+::: {.enunciado}
+Replicar la tabla 1 y 2 del paper.
+:::
+
+```{r tabla1-calculo}
+donantes <- base[base$state != ca, ]
+prom <- c(sapply(c("lnincome", "age15to24", "retprice"), function(v)
+            mean(donantes[donantes$year %in% 1980:1988, v], na.rm = TRUE)),
+          beer = mean(donantes$beer[donantes$year %in% 1984:1988], na.rm = TRUE),
+          sapply(c(1988, 1980, 1975), function(a) mean(donantes$cigsale[donantes$year == a])))
+escala <- c(1, 100, 1, 1, 1, 1, 1)
+t1 <- cbind(Real = X[, ca] * escala, Sintética = drop(X[, names(sc$w)] %*% sc$w) * escala,
+            Promedio = unname(prom) * escala)
+etq_t1 <- c("ln (GDP per cápita)", "Percent aged 15-24", "Retail price", "Beer consumption per capita",
+            "Cigarette sales per capita 1988", "Cigarette sales per capita 1980", "Cigarette sales per capita 1975")
+```
+
+<mark>**Tabla 1.** *Predictor medias de ventas de cigarrillo.*</mark>
+
+```{r tabla1}
+kable(data.frame(etq_t1, num(t1[, 1], 2), num(t1[, 2], 2), num(t1[, 3], 2)), row.names = FALSE, align = "lccc",
+      col.names = c("Variable", "California real", "California sintética", "Promedio 38 estados de control")) |>
+  kable_styling(full_width = FALSE)
+```
+
+Nota: Todas las variables, excepto las ventas rezagadas de cigarrillos, se promedian para el período 1980-1988 (el consumo de cerveza se promedia 1984-1988). Fuente: Elaboración propia. En el PDF figuran <mark>92,10</mark> (sintética, 1988) y <mark>138,01</mark> (promedio, 1980).
+
+::: {.disc .error #d8}
+**D8.** Con los ponderadores publicados, la California sintética de 1988 es **`r num(t1[5, 2], 2)`** (`r num(t1[5, 2], 4)`), no 92,10. El promedio simple de 1980 que calcula el *do-file* es **`r num(t1[6, 3], 2)`** (`r num(t1[6, 3], 4)`), no 138,01. Son errores de transcripción.
+:::
+
+```{r tabla2}
+excluidos <- c("Alaska", "Arizona", "District of Columbia", "Florida", "Hawaii", "Maryland",
+               "Massachusetts", "Michigan", "New Jersey", "New York", "Oregon", "Washington")
+lista <- sort(c(setdiff(estados, "California"), excluidos))
+peso <- function(w, e) sapply(e, function(s)
+  if (s %in% excluidos) "\u2013" else if (w[s] == 0) "0" else num(w[s], 3))
+mitad <- ceiling(length(lista) / 2)
+izq <- lista[1:mitad]; der <- lista[-(1:mitad)]
+t2 <- data.frame(izq, peso(sc$w, izq), c(der, rep("", mitad - length(der))),
+                 c(peso(sc$w, der), rep("", mitad - length(der))))
+kable(t2, row.names = FALSE, align = "lclc", col.names = c("Estado", "Ponderador", "Estado", "Ponderador"),
+      caption = "Tabla 2. Ponderadores estatales en la California sintética.") |>
+  kable_styling(full_width = FALSE)
+```
+
+Fuente: Elaboración propia.
+
+```{r anidado}
+# Agregado en la réplica: V elegida para minimizar el MSPE previo, como describe el paper
+anidado <- function(tr) {
+  objetivo <- function(p) { v <- exp(p) / sum(exp(p)); mspe(control(tr, v, FALSE)$brecha, pre) }
+  set.seed(1)
+  inicios <- list(log(control(tr)$v + 1e-6), rep(0, 7), rnorm(7, 0, 3))
+  sol <- lapply(inicios, function(p0) {
+    o <- optim(p0, objetivo, control = list(maxit = 3000, reltol = 1e-12))
+    optim(o$par, objetivo, control = list(maxit = 3000, reltol = 1e-12))
+  })
+  mejor <- sol[[which.min(sapply(sol, `[[`, "value"))]]
+  control(tr, exp(mejor$par) / sum(exp(mejor$par)))
+}
+op <- anidado(ca)
+
+w_paper <- c(Colorado = .164, Connecticut = .069, Montana = .199, Nevada = .234, Utah = .334)
+con_peso <- union(names(w_paper), c(names(sc$w)[sc$w > 0], names(op$w)[op$w > 0]))
+pesos_c <- data.frame(Estado = sort(con_peso))
+pesos_c$pdf <- num(sc$w[pesos_c$Estado], 3)
+pesos_c$opt <- num(op$w[pesos_c$Estado], 3)
+pesos_c$paper <- ifelse(pesos_c$Estado %in% names(w_paper), num(w_paper[pesos_c$Estado], 3), num(0, 3))
+kable(pesos_c, row.names = FALSE, align = "lccc",
+      col.names = c("Estado", "Do-file (PDF)", "Réplica optimizando V", "Paper"),
+      caption = "Agregado en la réplica: ponderadores no nulos.") |>
+  kable_styling(full_width = FALSE)
+```
+
+```{r tabla1-paper}
+p_real <- c(10.08, 17.40, 89.42, 24.28, 90.10, 120.20, 127.10)
+p_sint <- c(9.86, 17.40, 89.41, 24.20, 91.62, 120.43, 126.99)
+p_prom <- c(9.86, 17.29, 87.27, 23.75, 114.20, 136.58, 132.81)
+t1_op <- drop(X[, names(op$w)] %*% op$w) * escala
+kable(data.frame(etq_t1, num(t1[, 2], 2), num(t1_op, 2), num(p_sint, 2), num(t1[, 3], 2), num(p_prom, 2)),
+      row.names = FALSE, align = "lccccc",
+      col.names = c("Variable", "Sintética: do-file", "Sintética: optimizando V", "Sintética: paper",
+                    "Promedio: do-file", "Promedio: paper"),
+      caption = "Agregado en la réplica: comparación de la tabla 1 con el paper.") |>
+  kable_styling(full_width = TRUE, font_size = 12)
+efecto_op <- c(medio = mean(op$brecha[post]), y2000 = unname(op$brecha[length(anios)]))
+```
+
+::: {.disc .error #d9}
+**D9.** El ejercicio pide replicar el paper y las tablas publicadas son distintas: en el paper reciben peso Colorado, Connecticut, **Montana**, Nevada y Utah; en el PDF Montana tiene peso 0 y difieren los demás ponderadores y los valores sintéticos (por ejemplo, cerveza `r num(t1[4, 2], 2)` contra 24,20). La diferencia no se señala. La causa es que el *do-file* usa la matriz $V$ **por defecto** de `synth`, basada en una regresión, mientras que el paper la elige para minimizar el MSPE previo (opciones `nested` / `allopt`). Optimizando $V$, la réplica obtiene ponderadores muy próximos a los del paper (MSPE previo `r num(mspe(op$brecha, pre), 2)` contra `r num(mspe(sc$brecha, pre), 2)`) y un efecto promedio de `r num(efecto_op["medio"], 1)` paquetes (`r num(efecto_op["y2000"], 1)` en 2000).
+:::
+
+::: {.disc .impr #d10}
+**D10.** El título es una traducción literal confusa; debería ser "Medias de los predictores de las ventas de cigarrillos". La variable rotulada como PIB per cápita (rótulo del paper y de la base) es, según el apéndice A, el **ingreso personal** estatal per cápita. La columna "Promedio" es un promedio **simple**; el paper la describe como ponderada por población (p. 499), y varias de sus cifras difieren.
+:::
+
+# Ejercicio 4 (opcional)
+
+::: {.enunciado}
+Replicar la figura 8 del paper. Explicar, brevemente, por qué está ese gráfico en el trabajo.
+:::
+
+```{r ratios}
+razon <- function(G, desde) apply(G, 2, function(g) mean(g[post]^2) / mean(g[anios >= desde & pre]^2))
+r80 <- razon(G, 1980)                     # como en el do-file
+r70 <- razon(G, 1970)                     # como en el paper
+```
+
+La figura 5 muestra la distribución de las proporciones post-intervención/pre-intervención del error de predicción cuadrático medio (MSPE) para California y los 38 estados de control de Estados Unidos. Esta figura está en el trabajo para evaluar la brecha de California en relación con las brechas obtenidas en las pruebas de placebo, siendo la principal ventaja de observar las proporciones post-intervención/pre-intervención del MSPE evitar elegir un punto de corte para excluir las pruebas de placebo mal ajustadas. <mark>Esta figura permite analizar cuán significativo es el efecto del programa.</mark> En este caso, la proporción para California se destaca claramente, <mark>siendo el MSPE post-intervención, aproximadamente, 100 veces el MSPE pre-intervención</mark>.
+
+```{r figura5, fig.cap="Figura 5. Proporción de MSPE post-Proposition 99 y MSPE pre-Proposition 99: California y 38 estados de control."}
+histograma <- function(r, ...) {
+  cortes_h <- seq(min(r), max(r), length.out = 40)     # histogram ratio, bin(39) frequency
+  h <- hist(r, breaks = cortes_h, right = FALSE, include.lowest = TRUE, plot = FALSE)
+  plot(h, col = "black", border = "khaki4", las = 1, ylab = "frequency",
+       xlab = "post/pre-Proposition 99 mean squared prediction error", ...)
+  invisible(h)
+}
+par(mar = c(4, 4.5, 1, 1))
+h80 <- histograma(r80, main = "", ylim = c(0, 10))
+```
+
+Nota: El MSPE, para el período pre-intervención, <mark>se calcula para el período 1980-1988</mark>. Fuente: Elaboración propia.
+
+```{r figura5-stata}
+G_st <- as.data.frame(zap_labels(read_dta("Datos/placebo.dta")))
+G_st <- sapply(seq_along(estados), function(i) G_st[[paste0("gap", i)]]); colnames(G_st) <- estados
+h_st <- hist(razon(G_st, 1980), breaks = h80$breaks, right = FALSE, include.lowest = TRUE, plot = FALSE)
+barras_distintas <- sum(h_st$counts != h80$counts)
+```
+
+*Nota de la réplica:* `r barras_distintas` barras de este histograma difieren de las del PDF porque cuatro placebos no tienen solución única (ver [Verificación](#verificacion)). Con las series guardadas por Stata se obtiene exactamente la figura publicada. California es el valor extremo en ambos casos.
+
+```{r figura5-paper, fig.cap="Agregado en la réplica: la misma razón con el período previo completo (1970-1988)."}
+par(mar = c(4, 4.5, 1, 1))
+histograma(r70, main = "", ylim = c(0, 10))
+text(r70["California"], 1.6, "California", pos = 2, cex = .85)
+```
+
+```{r tabla-ratios}
+r_op <- c(mspe(op$brecha, post) / mspe(op$brecha, anios >= 1980 & pre), mspe(op$brecha, post) / mspe(op$brecha, pre))
+resumen <- data.frame(
+  Periodo = c("1980-1988 (do-file)", "1970-1988 (paper)"),
+  CA = num(c(r80["California"], r70["California"]), 1),
+  segundo = num(c(max(r80[-ca]), max(r70[-ca])), 1),
+  puesto = c(sum(r80 >= r80["California"]), sum(r70 >= r70["California"])),
+  opt = num(r_op, 1))
+kable(resumen, row.names = FALSE, align = "lcccc",
+      col.names = c("Período previo", "California", "Mayor valor entre los demás", "Puesto de California (de 39)",
+                    "California optimizando V"),
+      caption = "Agregado en la réplica: razón MSPE posterior / previo.") |>
+  kable_styling(full_width = FALSE)
+```
+
+::: {.disc .error #d11}
+**D11.** El paper calcula el MSPE previo con **todo el período anterior a la intervención, 1970-1988**, y obtiene para California una razón de alrededor de **130**. El *do-file* usa solo 1980-1988, y el PDF informa "100 veces". Con 1970-1988 la razón es `r num(r70["California"], 0)` con la optimización por defecto y `r num(r_op[2], 0)` optimizando $V$, muy próxima a la del paper. California ocupa el primer lugar en ambos casos.
+:::
+
+::: {.disc .impr #d12}
+**D12.** La respuesta dice que la figura permite evaluar la significatividad pero no la informa: si el tratamiento se asignara al azar entre las 39 unidades, la probabilidad de una razón al menos tan grande como la de California sería `r sum(r80 >= r80["California"])`/39 = **`r num(sum(r80 >= r80["California"]) / 39, 3)`** (0,026 en el paper).
+:::
+
+```{r nombres-dofile}
+nombres_do <- c("Alabama", "Arkansas", "California", "Colorado", "Connecticut", "Delaware", "Georgia", "Hawaii", "Idaho", "Illinois",
+  "Indiana", "Iowa", "Kansas", "Kentucky", "Louisiana", "Maine", "Minnesota", "Mississippi", "Missouri", "Montana",
+  "Nebraska", "Nevada", "New Hampshire", "New Mexico", "North Carolina", "North Dakota", "Ohio", "Oklahoma", "Pennsylvania", "Rhode Island",
+  "South Carolina", "South Dakota", "Tennessee", "Texas", "Vermont", "Virginia", "West Virginia", "Wisconsin", "Wyoming")
+mal <- which(nombres_do != estados)
+c(filas_mal_rotuladas = length(mal), primera = min(mal), ultima = max(mal),
+  sobra = setdiff(nombres_do, estados), falta = setdiff(estados, nombres_do))
+```
+
+::: {.disc .impr #d13}
+**D13.** La matriz de razones del *do-file* nombra sus filas a mano: incluye `r setdiff(nombres_do, estados)` (excluido del grupo de donantes) y omite `r setdiff(estados, nombres_do)`, por lo que las filas `r min(mal)` a `r max(mal)` quedan con el nombre de otro estado. No afecta la figura 5 ni el valor de California, pero sí cualquier lectura de `matrix list A` por estado.
+:::
+
+# Ejercicio 5
+
+::: {.enunciado}
+Leer el trabajo de Leonardo Peñaloza Pacheco (2018) "El impacto del éxodo migratorio de venezolanos sobre los salarios reales en Colombia". Explicar los resultados del Control Sintético (en menos de una carilla).
+:::
+
+Peñaloza Pacheco (2018) analiza, mediante *Diff-in-Diff* y el método de control sintético, el efecto causal del éxodo migratorio de venezolanos hacia Colombia a partir del año 2016 sobre el salario real colombiano. Manifiesta que el método de control sintético podría solucionar los problemas de discrecionalidad que se le pueden atribuir a las estimaciones que seleccionan una unidad de control, tal como se hace en *Diff-in-Diff*. Como se vio anteriormente, el método de control sintético se basa en determinar una combinación lineal óptima de las unidades de control, siendo, en este trabajo, los departamentos que no se vieron fuertemente afectados por el flujo migratorio, de manera tal que, de acuerdo a la ponderación propuesta por el método, se construya una unidad de control sintética que sirva de contrafactual. Y que, a partir de ésta, se puedan realizar las comparaciones entre las unidades de tratamiento (La Guajira y Norte de Santander) y la unidad de control construida.
+
+De las estimaciones realizadas, obtiene que, en el período pre-tratamiento, habría una tendencia (y valores) muy similar entre la unidad de tratamiento (considera a La Guajira y al Norte de Santander como una sola región^[<mark>Dado que el método de control sintético permite únicamente considerar una sola unidad como tratamiento.</mark>]) y la unidad de control sintético. Sin embargo, en el período post-tratamiento^[Post apertura de las fronteras entre Colombia y Venezuela.], observa que el salario horario real de la unidad de tratamiento cae mucho más fuertemente que el salario horario real de la unidad de control sintética (ver gráfico 5 del trabajo). A su vez, al calcular la diferencia entre el salario promedio post-tratamiento y pre-tratamiento para ambas unidades y al computar la diferencia de esas diferencias entre las dos unidades, obtiene que <mark>el efecto causal estimado promedio fue de una caída del salario real horario para la unidad de tratamiento de 7,14% aproximadamente</mark>.
+
+Por último, analiza la brecha entre el valor del logaritmo del salario horario real de la unidad de tratamiento y de la unidad de control sintética. Observa que, en el período pre-tratamiento, la brecha se encontraba en valores muy cercanos a 0, mientras que, en el período post-tratamiento, <mark>la brecha se hace cada vez más negativa en los tres semestres siguientes</mark> bajo análisis (ver gráfico 6 del trabajo).
+
+<mark>[El PDF no informa los ponderadores del control sintético ni las pruebas de robustez.]</mark>
+
+```{r penaloza}
+# Lectura aproximada (± 0,002) de las líneas de los gráficos 5 y 6 de Peñaloza Pacheco (2018)
+trat <- c(7.948, 7.944, 7.914, 7.965, 7.958, 7.847, 7.878, 7.821)
+sint <- c(7.948, 7.944, 7.914, 7.965, 7.958, 7.959, 7.931, 7.879)
+g5 <- trat - sint
+g6 <- c(-0.003, -0.018, 0.002, -0.006, 0.002, -0.107, -0.068, -0.134)
+dd <- function(g) mean(g[6:8]) - mean(g[1:5])
+kable(data.frame(1:8, c(rep("Previo", 5), rep("Posterior", 3)), num(g5, 3), num(g6, 3)),
+      row.names = FALSE, align = "clcc",
+      col.names = c("Semestre", "Período", "Brecha según el gráfico 5", "Brecha según el gráfico 6"),
+      caption = "Agregado en la réplica: brechas leídas de los gráficos de la fuente.") |>
+  kable_styling(full_width = FALSE)
+```
+
+::: {.disc .error #d14}
+**D14.** La brecha **no** se amplía de forma sostenida. En el gráfico 6 pasa de `r num(g6[6], 2)` en el semestre 6 a `r num(g6[7], 2)` en el 7 (se **reduce**) y a `r num(g6[8], 2)` en el 8. En el gráfico 5 la secuencia es `r paste(num(g5[6:8], 2), collapse = "; ")`. La frase está tomada del texto de la fuente (p. 20), que contradice sus propios gráficos.
+:::
+
+::: {.disc .metodo #d15}
+**D15.** Los dos gráficos de la fuente no coinciden entre sí, sobre todo en el semestre 8 (`r num(g5[8], 2)` contra `r num(g6[8], 2)`). La diferencia en diferencias de las líneas del gráfico 5 es `r num(dd(g5), 3)` en logaritmos, equivalente a `r num(100 * (exp(dd(g5)) - 1), 1)`%, compatible con el 7,14% informado; las brechas del gráfico 6 implican `r num(dd(g6), 3)`, es decir `r num(100 * (exp(dd(g6)) - 1), 1)`%. Son lecturas aproximadas de las figuras y la conversión con la función exponencial es una inferencia de la réplica, pero la discrepancia supera el error de lectura y la respuesta no la advierte.
+:::
+
+::: {.disc .impr #d16}
+**D16.** Faltan elementos centrales para evaluar el resultado: los **ponderadores** (tabla 5 de la fuente: Tolima 41,8%; Magdalena 26,8%; Chocó 15,6%; Nariño 7,0%; Caquetá 5,9%; Cauca 2,9%), los **predictores** (ramas de actividad, informalidad, educación, desempleo y salario del primer semestre de 2014, 2015 y 2016), la frecuencia de los datos (junio y diciembre de 2014 a 2017) y la **prueba de placebo** del gráfico 7, en la que ningún departamento alternativo sigue una trayectoria como la de la región tratada. Tampoco se menciona que hay pocos períodos previos.
+:::
+
+::: {.disc .impr #d17}
+**D17.** La nota repite una afirmación de la fuente. Agrupar los dos departamentos es una decisión posible, no una exigencia del método: se puede construir un control sintético para cada unidad tratada por separado. El propio paper de Abadie *et al.* sugiere agregar cuando hay varias regiones expuestas, como simplificación.
+:::
+
+# Referencias
+
+Abadie, A., Diamond, A. y Hainmueller, J. (2010). <mark>Synthetic Control Methods for Comparative Case Studies Estimating</mark> the Effect of California's Tobacco Control Program. *Journal of the American Statistical Association*, 105(490), 493-505. Recuperado de <https://economics.mit.edu/files/11859>
+
+Peñaloza Pacheco, L. (2018). El impacto del éxodo migratorio de venezolanos sobre los salarios reales en Colombia. Presentación en la LIII Reunión Anual de la Asociación Argentina de Economía Política (AAEP). Recuperado de <mark><https://www.google.com/url?sa=t&rct=j&q=&esrc=s&source=web&cd=1&ved=2ahUKEwiukYKOJ_pAhUqGrkGHXy2C7IQFjAAegQIAhAB&url=https%3A%2F%2Faaep.org.ar%2Fanales%2Fworks%2Fworks2018%2Fpenaloza.pdf&usg=AOvVaw2eIrkL4-TdmcTlegf6EcGR></mark>
+
+::: {.disc .impr #d18}
+**D18.** Falta la separación entre título y subtítulo: "Comparative Case Studies: Estimating the Effect...". El enlace de la segunda referencia es una redirección del buscador; la dirección de destino que contiene es `https://aaep.org.ar/anales/works/works2018/penaloza.pdf`. Los enlaces no se verificaron. El enunciado fecha este trabajo en 2019; el documento disponible es de noviembre de 2018.
+:::
+
+# Verificación {#verificacion -}
+
+## Contra el PDF
+
+Cada cifra recalculada se compara con la publicada, redondeada a los mismos decimales. Las dos diferencias de la tabla 1 son las de [D8](#d8).
+
+```{r verif-pdf}
+comparar <- function(nombre, r, publicado, dec) {
+  r <- unname(c(r)); publicado <- c(publicado)
+  data.frame(Tabla = nombre, Cifras = length(publicado),
+             Coinciden = sum(abs(round(r, dec) - publicado) < 10^-dec / 2))
+}
+pdf_t1 <- cbind(c(10.08, 17.35, 89.42, 24.28, 90.10, 120.20, 127.10),
+                c(9.90, 17.54, 89.00, 23.26, 92.10, 120.72, 126.39),
+                c(9.83, 17.25, 87.27, 23.66, 113.82, 138.01, 136.93))
+w_pdf <- setNames(rep(0, 38), names(sc$w))
+w_pdf[c("Colorado", "Connecticut", "Nevada", "Utah")] <- c(.356, .083, .217, .344)
+ver <- rbind(
+  comparar("Tabla 1, California real", t1[, 1], pdf_t1[, 1], 2),
+  comparar("Tabla 1, California sintética", t1[, 2], pdf_t1[, 2], 2),
+  comparar("Tabla 1, promedio de control", t1[, 3], pdf_t1[, 3], 2),
+  comparar("Tabla 2, ponderadores", sc$w, w_pdf, 3))
+kable(ver) |> kable_styling(full_width = FALSE)
+```
+
+## Contra el paper
+
+```{r verif-paper}
+dist <- function(nombre, r) {
+  d <- abs(round(unname(r), 2) - p_sint)
+  data.frame(Columna = nombre, Maxima = num(max(d), 2), Media = num(mean(d), 2))
+}
+kable(rbind(dist("Sintética según el do-file", t1[, 2]), dist("Sintética optimizando V", t1_op)),
+      row.names = FALSE, align = "lcc",
+      col.names = c("Tabla 1 frente a la columna sintética del paper", "Máxima diferencia", "Diferencia media")) |>
+  kable_styling(full_width = FALSE)
+c(max_dif_ponderadores_optimizando_V =
+    max(abs(op$w - ifelse(names(op$w) %in% names(w_paper), w_paper[names(op$w)], 0))),
+  edad_CA_replica = t1[2, 1], edad_CA_paper = p_real[2])
+```
+Aun optimizando $V$ quedan diferencias pequeñas con el paper, que usa otro programa de optimización; además, la proporción de población de 15 a 24 años de California en esta base difiere de la publicada.
+
+## Contra las salidas de Stata
+
+`Datos/placebo.dta` guarda las series sintéticas de Stata para los 39 estados y los archivos `.gph`, las series graficadas.
+
+```{r verif-placebo}
+st <- as.data.frame(zap_labels(read_dta("Datos/placebo.dta")))
+dif_e <- sapply(seq_along(estados), function(i) max(abs(st[[paste0("gap", i)]] - G[, i])))
+exacto <- sapply(todos, `[[`, "perdida") < 1e-8        # ajuste perfecto de los predictores
+c(California = dif_e[ca], mediana = median(dif_e), max_con_solucion_unica = max(dif_e[!exacto]))
+data.frame(Estado = estados[exacto], max_diferencia = round(dif_e[exacto], 3))
+c(razon_CA_1980_Stata = razon(G_st, 1980)[["California"]], razon_CA_1980_R = r80[["California"]])
+# Controles que quedan con cada corte de la figura 4 (MSPE previo)
+rbind(R = quedan, Stata = quedan_st)
+```
+
+Las mayores diferencias corresponden a estados cuyos predictores se reproducen de forma exacta con muchas combinaciones de donantes (pérdida prácticamente nula): los ponderadores no son únicos y cada programa elige una solución distinta. En los otros `r sum(!exacto)` estados, incluido California, la mayor diferencia es de `r format(max(dif_e[!exacto]), scientific = TRUE, digits = 2)`.
+
+```{r verif-gph}
+# Series (sersets) guardadas dentro de un .gph
+leer_gph <- function(archivo) {
+  b <- readBin(archivo, "raw", file.size(archivo))
+  ini <- grepRaw("sersetreadwrite", b, all = TRUE, fixed = TRUE)
+  fin <- grepRaw("<EndSersetData>", b, all = TRUE, fixed = TRUE)
+  lapply(seq_along(ini), function(k) {
+    i <- ini[k]
+    nv <- readBin(b[i + 18:21], "integer", size = 4, endian = "little")
+    n  <- readBin(b[i + 22:25], "integer", size = 4, endian = "little")
+    tipo <- as.integer(b[i + 25 + seq_len(nv)])          # 251 a 255: byte, int, long, float, double
+    tam <- c(1, 2, 4, 4, 8)[tipo - 250]
+    mat <- matrix(b[(fin[k] - 2 - n * sum(tam)):(fin[k] - 3)], nrow = sum(tam))
+    desde <- cumsum(c(0, tam))
+    m <- sapply(seq_len(nv), function(j)
+      readBin(as.vector(mat[desde[j] + seq_len(tam[j]), ]),
+              if (tipo[j] >= 254) "double" else "integer", n, size = tam[j], endian = "little"))
+    m[abs(m) > 1e30] <- NA
+    m[complete.cases(m), , drop = FALSE]
+  })
+}
+# Distancia entre cada serie de R y la columna más parecida del gráfico
+cotejar <- function(nombre, columnas, series) {
+  d <- sapply(series, function(y) min(sapply(columnas, function(z)
+    if (length(z) == length(y)) max(abs(z - y)) else Inf)))
+  data.frame(Grafico = nombre, Series = length(series), Maxima = max(d), Mediana = median(d))
+}
+cols <- function(f) unlist(lapply(leer_gph(f), function(m) lapply(seq_len(ncol(m)), function(j) m[, j])), recursive = FALSE)
+f1 <- leer_gph("Figuras/Figura 1.gph"); m1 <- unique(f1[[2]]); m1 <- m1[order(m1[, 2]), ]
+alturas <- h80$counts[h80$counts > 0]
+gph <- rbind(
+  cotejar("Figura 1: California y resto", c(cols("Figuras/Figura 1.gph"), list(m1[, 1])), list(Y[, ca], resto)),
+  cotejar("Figura 2: California y sintética", cols("Figuras/Figura 2.gph")
+          |> lapply(function(z) head(z, 31)), list(Y[, ca], sc$sint)),
+  cotejar("Figura 3: brecha", cols("Figuras/Figura 3.gph"), list(sc$brecha)),
+  cotejar("Figura 4: brechas de los 39 estados", cols("Figuras/Figura 4.gph"),
+          lapply(seq_along(estados), function(i) G[, i])),
+  cotejar("Figura 5: alturas, estimaciones de R", cols("Figuras/Figura 5.gph"), list(alturas)),
+  cotejar("Figura 5: alturas, series de Stata", cols("Figuras/Figura 5.gph"), list(h_st$counts[h_st$counts > 0])))
+kable(transform(gph, Maxima = format(Maxima, scientific = TRUE, digits = 2),
+                Mediana = format(Mediana, scientific = TRUE, digits = 2)),
+      row.names = FALSE, align = "lcrr",
+      col.names = c("Gráfico", "Series", "Máxima diferencia", "Mediana de las diferencias")) |>
+  kable_styling(full_width = FALSE)
+```
+
+```{r sesion}
+sessionInfo()
+```

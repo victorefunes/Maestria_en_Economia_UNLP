@@ -1,0 +1,661 @@
+---
+title: "Trabajo Práctico N° 3 — Réplica en R"
+subtitle: "Maestría en Economía UNLP - Economía Laboral. Respuestas originales: Juan Menduiña"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+    self_contained: true
+    code_folding: hide
+---
+
+```{css, echo=FALSE}
+mark { background: #ffe27a; padding: 0 2px; }
+.disc { border-left: 6px solid; border-radius: 4px; padding: 10px 14px; margin: 14px 0; font-size: 0.95em; }
+.disc p:last-child { margin-bottom: 0; }
+.error { border-color: #c0392b; background: #fdecea; }
+.impr  { border-color: #d68910; background: #fef5e7; }
+.metodo{ border-color: #2874a6; background: #eaf2f8; }
+.enunciado { font-style: italic; color: #444; }
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 8, fig.height = 5, dpi = 120)
+library(haven); library(knitr); library(kableExtra); library(sandwich)
+library(rdrobust); library(rddensity)
+
+num <- function(x, d = 0) {
+  x <- ifelse(abs(x) < 10^-d / 2, 0, x)            # evita "-0,000"
+  formatC(x, format = "f", digits = d, big.mark = ".", decimal.mark = ",")
+}
+pval <- function(p) ifelse(p < .001, "< 0,001", num(p, 3))
+pin <- function(p) ifelse(p < .001, "p < 0,001", paste("p =", num(p, 3)))
+estrellas <- function(p) ifelse(p < .01, "***", ifelse(p < .05, "**", ifelse(p < .1, "*", "")))
+```
+
+# Cómo leer este documento {-}
+
+El texto de cada ejercicio es el del PDF *Trabajo Práctico N° 3 (R)*. El código replica en R el archivo `Datos/Trabajo Práctico N° 3.do`, y las tablas, las figuras y los números de los recuadros se calculan a partir de `Datos/panes_mmv.dta`. Lo <mark>resaltado</mark> es una frase, un número o un rótulo con alguna discrepancia, explicada en el recuadro correspondiente:
+
+::: {.disc .error}
+**Error**: la afirmación contradice los datos, el *do-file* o el paper, el procedimiento no corresponde, o la inferencia no se sigue de los resultados.
+:::
+
+::: {.disc .impr}
+**Imprecisión**: redacción, rótulo, formato u omisión que puede inducir a error.
+:::
+
+::: {.disc .metodo}
+**Observación metodológica**: la conclusión depende de una decisión discutible o no documentada.
+:::
+
+**Resultado de la réplica.** Las tablas 1 y 2 se reproducen en R, igual que las figuras. En la tabla 3 hay dos cifras que no surgen del *do-file* ([D15](#d15)) y los tres errores estándar omiten la agrupación que declara la nota ([D13](#d13)), por lo que el texto contradice a su propia tabla ([D14](#d14)). La prueba de densidad se aplica a una muestra que no sirve para ese fin ([D18](#d18)), y el efecto sobre el apoyo político en 2008 no se sostiene con estimadores locales ([D9](#d9)).
+
+| N° | Ej. | Tipo | Discrepancia |
+|----|-----|------|--------------|
+| [D1](#d1) | 1 | Imprecisión | La figura 1 no sigue las celdas ni el ajuste de la figura 2 del paper |
+| [D2](#d2) | 1 | Imprecisión | Importancia del gráfico: falta la idea de primera etapa |
+| [D3](#d3) | 2 | Error | La discontinuidad de la figura es de 11 puntos, no de 13 |
+| [D4](#d4) | 2 | Imprecisión | La comparación es con el gobierno anterior, no con la oposición |
+| [D5](#d5) | 2 | Imprecisión | Las figuras 2 y 3 usan otras celdas que el paper |
+| [D6](#d6) | 2 | Metodológica | Alcance de la "persistencia" en 2008 |
+| [D7](#d7) | 3 | Imprecisión | Definición del modelo y redacción |
+| [D8](#d8) | 3 | Metodológica | El código 999999 entra como valor en dos controles |
+| [D9](#d9) | 3 | Metodológica | Sensibilidad a la ventana y al estimador |
+| [D10](#d10) | 4 | Imprecisión | Diferencia entre *Sharp* y *Fuzzy RD* |
+| [D11](#d11) | 4 | Imprecisión | Ecuaciones del modelo en dos etapas |
+| [D12](#d12) | 4 | Error | La comparación realizada no informa sobre endogeneidad |
+| [D13](#d13) | 5 | Error | Tabla 3: errores estándar sin agrupar |
+| [D14](#d14) | 5 | Error | El tamaño del hogar sí es significativo según la tabla publicada |
+| [D15](#d15) | 5 | Error | Tabla 3: dos cifras no surgen del *do-file* |
+| [D16](#d16) | 5 | Imprecisión | La muestra difiere de la del paper |
+| [D17](#d17) | 5 | Metodológica | No rechazar no demuestra que no haya manipulación |
+| [D18](#d18) | 6 | Error | La prueba de densidad usa la muestra de la encuesta |
+| [D19](#d19) | 6 | Imprecisión | No se informa el estadístico y se describe mal la prueba |
+| [D20](#d20) | 6 | Metodológica | Faltan observaciones justo debajo del umbral |
+| [D21](#d21) | Ref. | Imprecisión | Volumen y número de la referencia |
+
+# Datos y funciones
+
+```{r datos}
+base <- as.data.frame(zap_labels(read_dta("Datos/panes_mmv.dta")))
+d <- base[!is.na(base$z), ]                 # hogares con puntaje
+d <- transform(d, Dz = D * z, z2 = z * z, Dz2 = D * z * z)
+c(filas_archivo = nrow(base), con_puntaje = nrow(d),
+  elegibles = sum(d$D == 1), no_elegibles = sum(d$D == 0), con_prD = sum(!is.na(d$prD)))
+```
+
+```{r funciones}
+controles <- c("factor(geo)", "bl_medad", "lnbl_ytoth_pc", "bl_hhsize", "bl_meduc",
+               "factor(sexo)", "factor(edad)", "factor(aniosed07)")
+polin <- list(character(0), c("z", "Dz"), c("z", "Dz", "z2", "Dz2"))
+# Columnas 1-3 sin controles, 4-6 con controles
+espec <- c(polin, lapply(polin, c, controles))
+
+# regress y D x, cluster(z)   (cluster = FALSE: errores estándar clásicos)
+mco <- function(y, exog = character(0), datos = d, cluster = TRUE, v = "D") {
+  r <- lm(reformulate(c(v, exog), y), data = datos)
+  u <- datos[rownames(model.frame(r)), ]
+  V <- if (cluster) vcovCL(r, cluster = u$z, type = "HC1") else vcov(r)
+  gl <- if (cluster) length(unique(u$z)) - 1 else df.residual(r)
+  b <- unname(coef(r)[v]); se <- sqrt(V[v, v])
+  list(b = b, se = se, p = 2 * pt(-abs(b / se), gl), n = nobs(r), m = r)
+}
+
+# ivregress 2sls y x (prD = D), cluster(z)
+mc2e <- function(y, exog = character(0), datos = d) {
+  vars <- all.vars(reformulate(c("prD", "D", "z", exog), y))
+  u <- datos[complete.cases(datos[vars]), ]
+  X <- model.matrix(reformulate(c("prD", exog)), u)
+  Z <- model.matrix(reformulate(c("D", exog)), u)
+  q <- qr(X); X <- X[, sort(q$pivot[seq_len(q$rank)])]      # quita columnas colineales
+  qx <- qr(qr.fitted(qr(Z), X))
+  b <- qr.coef(qx, u[[y]]); e <- drop(u[[y]] - X %*% b)
+  A <- chol2inv(qr.R(qx)); dimnames(A) <- list(colnames(X), colnames(X))
+  S <- rowsum(qr.fitted(qr(Z), X) * e, u$z); G <- nrow(S)
+  V <- A %*% crossprod(S) %*% A * G / (G - 1); dimnames(V) <- dimnames(A)
+  b1 <- unname(b["prD"]); se <- sqrt(V["prD", "prD"])
+  list(b = b1, se = se, p = 2 * pnorm(-abs(b1 / se)), n = nrow(u))
+}
+
+# Tabla con el formato de las tablas 1 y 2 del PDF
+tabla_seis <- function(modelos, etiquetas, titulo) {
+  cuerpo <- do.call(rbind, Map(function(f, e) rbind(
+    c(e,  sapply(f, function(r) paste0(num(r$b, 3), estrellas(r$p))), num(f[[1]]$n)),
+    c("", sapply(f, function(r) paste0("(", num(r$se, 3), ")")), "")), modelos, etiquetas))
+  pie <- rbind(c("Controles puntaje", rep(c("Ninguno", "Lineal", "Cuadrática"), 2), ""),
+               c("Otros controles", rep(c("No", "Sí"), each = 3), ""))
+  kable(rbind(cuerpo, pie), row.names = FALSE, caption = titulo,
+        col.names = c("Variable dependiente", paste("Col.", 1:6), "Observaciones"),
+        align = "lccccccc") |>
+    kable_styling(full_width = TRUE, font_size = 12) |>
+    row_spec(nrow(cuerpo), extra_css = "border-bottom: 1px solid #333;")
+}
+# Gráfico a partir de la salida de rdplot
+graf_rd <- function(r, ylab = "", ...) {
+  B <- r$vars_bins; P <- r$vars_poly
+  plot(B$rdplot_mean_bin, B$rdplot_mean_y, pch = 19, col = "blue", cex = .8, las = 1,
+       xlab = "Puntaje de ingreso predicho estandarizado", ylab = ylab,
+       xlim = c(-.02, .02), ...)
+  for (i in list(P$rdplot_x < 0, P$rdplot_x > 0)) lines(P$rdplot_x[i], P$rdplot_y[i])
+  abline(v = 0)
+}
+```
+
+# Ejercicio 1
+
+::: {.enunciado}
+Reproducir la Figura 2 del paper para mostrar la relación entre participación y elegibilidad. ¿Por qué es importante realizar este análisis gráfico?
+:::
+
+En la figura 1, se informa la proporción de hogares de la muestra que se beneficiaron del programa en cualquier momento desde su inicio en función del puntaje de ingreso predicho inicial, el cual se normaliza para que todas las cifras se centren en cero (umbral de elegibilidad) y de manera tal que los ingresos predichos aumentan cuando nos movemos hacia la derecha en el eje horizontal. <mark>Es importante realizar este análisis gráfico porque permite demostrar que, entre los solicitantes, prácticamente todos los beneficiarios potenciales, es decir, aquellos con un puntaje de ingreso predicho estandarizado por debajo de cero, se beneficiaron del programa, mientras que lo opuesto sucede con los hogares no elegibles.</mark> Se observa que la discontinuidad en la probabilidad de recepción del programa en el umbral es de 99 puntos porcentuales.
+
+```{r figura1, fig.cap="Figura 1. Elegibilidad y participación en el programa PANES."}
+# rdplot prD z, binselect(qs)
+r1 <- rdplot(d$prD, d$z, p = 4, binselect = "qs", masspoints = "off", hide = TRUE)
+par(mar = c(4, 3.5, 1, 1))
+graf_rd(r1)
+legend("topright", c("Promedio por celda", "Ajuste polinómico de orden 4"),
+       pch = c(19, NA), lty = c(NA, 1), col = c("blue", "black"), bty = "n")
+tab_p <- table(prD = d$prD, D = d$D)
+```
+
+Nota: La figura informa la proporción de hogares que alguna vez se inscribieron en PANES en función del puntaje estandarizado (basado en datos administrativos). Fuente: Elaboración propia. En el PDF la leyenda indica <mark>"Polynomial fit of order 4"</mark>.
+
+```{r figura-paper2, fig.cap="Agregado en la réplica: figura 2 con las celdas y el ajuste lineal del paper (30 celdas a la izquierda y 15 a la derecha)."}
+# Celdas guardadas en la base por los autores (z_fig, prd_fig, z_fig_fw, ps_fwave_fig)
+celdas_paper <- function(x, y) {
+  u <- unique(d[!is.na(d[[x]]) & !is.na(d[[y]]), c(x, y)]); names(u) <- c("x", "y"); u[order(u$x), ]
+}
+graf_paper <- function(y, celdas, ylab = "", ...) {
+  plot(celdas$x, celdas$y, pch = 19, las = 1, xlim = c(-.02, .02),
+       xlab = "Puntaje de ingreso predicho estandarizado", ylab = ylab, ...)
+  for (lado in list(d$z < 0, d$z > 0)) {
+    s <- d[lado & !is.na(d[[y]]), ]; m <- lm(reformulate("z", y), s)
+    xs <- c(0, if (s$z[1] < 0) min(s$z) else max(s$z))      # del umbral al extremo
+    lines(xs, predict(m, data.frame(z = xs)))
+  }
+  abline(v = 0)
+}
+par(mar = c(4, 3.5, 1, 1))
+c2 <- celdas_paper("z_fig", "prd_fig")
+graf_paper("prD", c2, ylim = c(-.02, 1.02))
+```
+
+::: {.disc .impr #d1}
+**D1.** El *do-file* ejecuta tres veces `rdplot` y la figura publicada corresponde a la última (`binselect(qs)`): `r r1$J[1]` y `r r1$J[2]` celdas por cuantiles, y un polinomio de orden 4, el valor por defecto. La figura 2 del paper usa 30 celdas a la izquierda y 15 a la derecha, con **ajustes lineales** a cada lado. El polinomio de orden 4 además sale del intervalo posible para una proporción (de `r num(min(r1$vars_poly$rdplot_y), 3)` a `r num(max(r1$vars_poly$rdplot_y), 3)`). La conclusión visual no cambia, pero no es una reproducción de la figura original.
+:::
+
+::: {.disc .impr #d2}
+**D2.** La descripción es correcta, pero no dice para qué sirve en la estrategia de identificación: el gráfico muestra la **primera etapa**, es decir, cuánto salta la probabilidad de tratamiento en el umbral, y por lo tanto si el diseño es *sharp* o *fuzzy*. Aquí es casi *sharp*: solo `r tab_p["1", "0"]` hogares no elegibles participaron y `r tab_p["0", "1"]` elegibles no lo hicieron.
+:::
+
+# Ejercicio 2
+
+::: {.enunciado}
+Reproducir las Figuras 3 y 4 del paper sobre el efecto de ser elegible al PANES en el apoyo político. Utilizar como variables dependientes ps fwave (apoyo político 2007) y ps swave (apoyo político 2008). Sugerencia: utilizar el comando rdplot de Calonico, Cattaneo y Titiunik (2014).
+:::
+
+```{r ej2-valores}
+ap <- lapply(c(f = "ps_fwave", s = "ps_swave"), function(y) {
+  medias <- tapply(d[[y]], d$D, mean, na.rm = TRUE)
+  lin <- mco(y, c("z", "Dz"))
+  list(eleg = medias[["1"]], no = medias[["0"]], dif = medias[["1"]] - medias[["0"]],
+       izq = unname(coef(lin$m)[1] + coef(lin$m)["D"]), der = unname(coef(lin$m)[1]), salto = lin$b)
+})
+```
+
+En primer lugar, cabe mencionar que la variable utilizada por Manacorda *et al.* (2011) para medir el apoyo político al gobierno actual se basa en las respuestas a la siguiente pregunta de las encuestas de seguimiento: *"En relación con el gobierno anterior, ¿cree que el gobierno actual es peor (0), lo mismo (½), mejor (1)?"*.
+
+En la figura 2, se presenta el apoyo político al gobierno en función del puntaje de ingreso predicho estandarizado para el 2007. Se puede observar una discontinuidad en cero, la cual proporciona una estimación de la brecha en el apoyo para el gobierno actual en el grupo elegible del PANES versus el grupo no elegible. Siguiendo a Manacorda *et al.* (2011), entre los hogares elegibles, el apoyo para el gobierno actual era alrededor de 0,90, mientras que, entre los hogares no elegibles, era de alrededor de 0,77. <mark>La discontinuidad estimada implica que la elegibilidad del programa se asoció con un aumento de 13 puntos porcentuales</mark> en el apoyo político al gobierno <mark>sobre la coalición opositora</mark> (ver tabla 1), lo cual proporciona evidencia de que las opiniones políticas de los hogares responden a las transferencias del gobierno.
+
+```{r figura2, fig.cap="Figura 2. Elegibilidad del programa PANES y apoyo político al gobierno (encuesta de seguimiento de 2007)."}
+# rdplot ps_fwave z, p(1)
+r2 <- rdplot(d$ps_fwave, d$z, p = 1, masspoints = "off", hide = TRUE)
+par(mar = c(4, 3.5, 1, 1))
+graf_rd(r2, ylim = c(.6, 1))
+```
+
+Nota: La figura informa el apoyo promedio para el gobierno actual (en comparación con el gobierno anterior) en función del puntaje estandarizado. Fuente: Elaboración propia.
+
+::: {.disc .error #d3}
+**D3.** Se mezclan dos estimaciones. Los 13 puntos son la **diferencia de medias** entre todos los elegibles y no elegibles (`r num(ap$f$eleg, 3)` − `r num(ap$f$no, 3)` = `r num(ap$f$dif, 3)`; columna 1 de la tabla 1). La discontinuidad que muestra la figura, con ajustes lineales evaluados en el umbral, es `r num(ap$f$izq, 3)` − `r num(ap$f$der, 3)` = **`r num(ap$f$salto, 3)`** (columna 2). El texto traduce un párrafo del paper (p. 10), que tiene la misma inconsistencia.
+:::
+
+::: {.disc .impr #d4}
+**D4.** La pregunta compara al gobierno actual con el **gobierno anterior**, no con la coalición opositora. El propio paper lo aclara (p. 15): la pregunta no se refiere a la oposición del momento ni admite que esta haya cambiado de posiciones. La frase "sobre la coalición opositora" proviene de la p. 10 del paper.
+:::
+
+En la figura 3, se presenta la misma información pero para el 2008 (cuando el PANES había terminado). Se observan resultados similares, aunque algo menores, de entre 8 y 12 puntos porcentuales (ver tabla 1). <mark>La implicación principal es que el programa generó impactos persistentes en el apoyo político al gobierno</mark>, lo que sugiere que las transferencias pasadas también influyen significativamente en la toma de decisiones de los votantes.
+
+```{r figura3, fig.cap="Figura 3. Elegibilidad del programa PANES y apoyo político al gobierno (encuesta de seguimiento de 2008)."}
+# rdplot ps_swave z, p(1)   (número de celdas tomado de la figura guardada por Stata)
+r3 <- rdplot(d$ps_swave, d$z, p = 1, nbins = c(37, 35), masspoints = "off", hide = TRUE)
+par(mar = c(4, 3.5, 1, 1))
+graf_rd(r3, ylim = c(.5, .93))
+```
+
+Nota: La figura informa el apoyo promedio para el gobierno actual (en comparación con el gobierno anterior) en función del puntaje estandarizado. Fuente: Elaboración propia.
+
+```{r figuras-paper34, fig.cap="Agregado en la réplica: figuras 3 (2007) y 4 (2008) con 30 y 15 celdas. Las de 2007 son las guardadas en la base; las de 2008 se construyen aquí por cuantiles de cada lado.", fig.width=11, fig.height=4.2}
+cuantiles <- function(y) {
+  do.call(rbind, Map(function(lado, J) {
+    s <- d[lado & !is.na(d[[y]]), ]
+    g <- cut(rank(s$z, ties.method = "first"), J, labels = FALSE)
+    data.frame(x = tapply(s$z, g, mean), y = tapply(s[[y]], g, mean))
+  }, list(d$z < 0, d$z > 0), c(30, 15)))
+}
+par(mfrow = c(1, 2), mar = c(4, 3.5, 2, 1))
+graf_paper("ps_fwave", celdas_paper("z_fig_fw", "ps_fwave_fig"), ylim = c(.6, 1), main = "2007")
+graf_paper("ps_swave", cuantiles("ps_swave"), ylim = c(.6, 1), main = "2008")
+```
+
+::: {.disc .impr #d5}
+**D5.** Las figuras del trabajo usan celdas de igual ancho elegidas por `rdplot`: `r r2$J[1]` y `r r2$J[2]` en 2007, y `r r3$J[1]` y `r r3$J[2]` en 2008. El paper usa 30 celdas a la izquierda y 15 a la derecha, con aproximadamente la misma cantidad de hogares en cada una (p. 8). Las rectas ajustadas son las mismas; la dispersión de los puntos no. (En R, el número de celdas por defecto para 2008 difiere en una por lado del que usó Stata, por lo que se fija explícitamente.)
+:::
+
+::: {.disc .metodo #d6}
+**D6.** La segunda encuesta se relevó en febrero y marzo de 2008, unos **tres meses** después del fin del programa: la "persistencia" se refiere a ese horizonte. Además, el paper la respalda con evidencia que el texto no menciona (tabla 4): no hay efecto de la elegibilidad sobre el ingreso de 2008, los activos del hogar ni la inscripción en el Plan de Equidad, que reemplazó al PANES. La magnitud de 2008, en cambio, es sensible al método de estimación ([D9](#d9)).
+:::
+
+# Ejercicio 3
+
+::: {.enunciado}
+Reproducir las estimaciones de la Tabla 1 del paper utilizando como variables dependientes: i) prD (participó alguna vez en PANES 2007-2008); ii) ps fwave (apoyo político 2007); iii) ps swave (apoyo político 2008). Incluir controles pre-tratamiento. Realizar las estimaciones para polinomio de grado 0, 1 y 2. Comentar, brevemente, los resultados principales.
+:::
+
+El modelo estimado por MCO es el siguiente:
+
+$$y_i = \beta_0 + \beta_1\, 1(N_i < 0) + f_1(N_i) + 1(N_i < 0)\, f_2(N_i) + u_i, \tag{1}$$
+
+<mark>donde $y_i$ es el apoyo político al gobierno medido con las encuestas de seguimiento 2007-2008</mark>, $1(N_i < 0)$ indica si el hogar se encuentra <mark>debajo del *score*</mark> (siendo $N_i = S_i - E$ el puntaje de ingreso predicho estandarizado, $S_i$ el puntaje de ingreso predicho y $E$ el umbral de elegibilidad), $f_1(N_i)$ y $f_2(N_i)$ son polinomios paramétricos (lineales y cuadráticos) en el puntaje estandarizado que capturan, a ambos lados del umbral, el efecto del *score* sobre la variable de interés y $u_i$ es el término de error del modelo. El impacto de la asignación del programa es capturado por $\beta_1$, es decir, el cambio en $y$ en el umbral de elegibilidad.
+
+```{r ej3}
+ys <- c("prD", "ps_fwave", "ps_swave")
+t1 <- lapply(ys, function(y) lapply(espec, function(x) mco(y, x)))
+```
+
+En la tabla 1, se presentan las estimaciones del modelo (1) utilizando como variables dependientes *prD* (alguna vez recibió PANES 2007-2008), *ps_fwave* (apoyo político al gobierno en 2007) y *ps_swave* (apoyo político al gobierno en 2008), bajo seis especificaciones. Por un lado, se puede observar que, en todas las especificaciones, el impacto de la asignación del programa sobre las tres variables dependientes es estadísticamente significativo (al 1 por ciento en la mayoría). Por otro lado, se observa que casi la totalidad de los hogares que fueron asignados al programa <mark>fueron receptados</mark>. Por último, el efecto sobre el apoyo político al gobierno es de menor magnitud cuando se trata del 2008 en comparación al 2007. En particular, en 2007, ser asignado al programa aumentó entre 10 y 13 puntos porcentuales el apoyo político al gobierno, mientras que, en 2008, giró en torno a 8 y 12 puntos porcentuales.
+
+```{r tabla1}
+etq1 <- c("Alguna vez recibió PANES (2007-2008)", "Apoyo político 2007", "Apoyo político 2008")
+tabla_seis(t1, etq1, "Tabla 1. Elegibilidad, participación y apoyo político (estimación por MCO).")
+```
+
+Los datos en paréntesis corresponden a los errores estándar agrupados por puntaje del ingreso predicho estandarizado. Significatividad: \* al 10%, \*\* al 5%, \*\*\* al 1%.
+
+::: {.disc .impr #d7}
+**D7.** La ecuación (1) se usa para tres variables, incluida la participación (*prD*), no solo para el apoyo político. $1(N_i<0)$ indica que el puntaje está debajo del **umbral**. Falta la normalización $f_1(0) = f_2(0) = 0$, que permite leer $\beta_1$ como el salto en el umbral. "Fueron receptados" debe leerse como "participaron del programa".
+:::
+
+```{r ej3-faltantes}
+# Variantes con indicadores de dato faltante para las dos variables continuas codificadas 999999
+d_f <- d
+for (v in c("lnbl_ytoth_pc", "bl_meduc")) {
+  d_f[[paste0("falta_", v)]] <- as.numeric(d_f[[v]] %in% 999999)
+  d_f[[v]][d_f[[v]] %in% 999999] <- 0
+}
+espec_f <- lapply(espec[4:6], c, c("falta_lnbl_ytoth_pc", "falta_bl_meduc"))
+t1_f <- lapply(ys, function(y) lapply(espec_f, function(x) mco(y, x, d_f)))
+faltan <- sapply(ys, function(y) { s <- d[!is.na(d[[y]]), ]
+  c(sum(s$lnbl_ytoth_pc == 999999), sum(s$bl_meduc == 999999)) })
+comp_f <- do.call(rbind, lapply(1:3, function(i) data.frame(
+  etq1[i], paste("Col.", 4:6), num(sapply(t1[[i]][4:6], `[[`, "b"), 4),
+  num(sapply(t1_f[[i]], `[[`, "b"), 4))))
+dif_f <- max(abs(unlist(lapply(1:3, function(i)
+  sapply(t1[[i]][4:6], `[[`, "b") - sapply(t1_f[[i]], `[[`, "b")))))
+kable(comp_f, row.names = FALSE, align = "llcc",
+      col.names = c("Variable", "Columna", "Como en el do-file", "Con indicadores de faltante"),
+      caption = "Agregado en la réplica: efecto de tratar correctamente los datos faltantes.") |>
+  kable_styling(full_width = FALSE)
+```
+
+::: {.disc .metodo #d8}
+**D8.** La base codifica los datos faltantes como 999999. El *do-file* introduce `lnbl_ytoth_pc` y `bl_meduc` como variables continuas sin recodificar: en la muestra de 2007, `r faltan[1, 2]` hogares tienen un "logaritmo del ingreso" de 999999 y `r faltan[2, 2]` un promedio de 999999 años de educación. La base trae indicadores de faltante que no se usan, aunque la nota de la tabla 1 del paper dice incluirlos. Corregirlo cambia los coeficientes en a lo sumo `r num(dif_f, 4)`: las conclusiones se mantienen. (En `sexo`, `edad` y `aniosed07`, que entran como categóricas, el código funciona como una categoría de faltante.)
+:::
+
+```{r ej3-sensibilidad}
+ventanas <- c(.02, .01, .005)
+sens <- do.call(rbind, lapply(2:3, function(i) {
+  a <- do.call(rbind, lapply(ventanas, function(h) {
+    r <- mco(ys[i], c("z", "Dz"), d[abs(d$z) <= h, ])
+    data.frame(v = etq1[i], m = paste("MCO lineal, puntaje a ±", num(h, 3), "del umbral"), b = r$b,
+               li = r$b - 1.96 * r$se, ls = r$b + 1.96 * r$se, p = r$p, n = r$n)
+  }))
+  b <- do.call(rbind, lapply(1:2, function(g) {
+    r <- rdrobust(d[[ys[i]]], d$z, p = g)
+    # rdrobust estima derecha menos izquierda: se cambia el signo
+    data.frame(v = etq1[i], m = paste0("rdrobust, orden ", g, " (ancho ", num(r$bws[1, 1], 4), ")"),
+               b = -r$coef[1], li = -r$ci[3, 2], ls = -r$ci[3, 1], p = r$pv[3], n = sum(r$N_h))
+  }))
+  rbind(a, b)
+}))
+kable(data.frame(sens$v, sens$m, num(sens$b, 3),
+                 paste0("[", num(sens$li, 3), "; ", num(sens$ls, 3), "]"), pval(sens$p), num(sens$n)),
+      row.names = FALSE, align = "llcccc",
+      col.names = c("Variable", "Estimador", "Efecto", "IC 95%", "p", "Obs."),
+      caption = "Agregado en la réplica: efecto de la elegibilidad según ventana y estimador. En rdrobust, el intervalo y el valor p son robustos con corrección de sesgo.") |>
+  kable_styling(full_width = TRUE, font_size = 12)
+loc07 <- sens[sens$v == etq1[2] & grepl("orden 1", sens$m), ]
+loc08 <- sens[sens$v == etq1[3] & grepl("orden 1", sens$m), ]
+```
+
+::: {.disc .metodo #d9}
+**D9.** Las seis especificaciones usan toda la ventana de ±0,02 y polinomios globales a cada lado; no se examinan anchos de banda menores. Con una regresión local lineal y ancho de banda óptimo (Calonico, Cattaneo y Titiunik, 2014), el efecto de 2007 es `r num(loc07$b, 3)` (`r pin(loc07$p)`, robusto) y el de 2008 es **`r num(loc08$b, 3)`** (`r pin(loc08$p)`), con intervalo [`r num(loc08$li, 3)`; `r num(loc08$ls, 3)`]. Los estimadores locales usan menos observaciones y son bastante más imprecisos, así que esto no prueba que no haya efecto; sí muestra que la significatividad, y en 2008 también el signo, **dependen de la especificación**. En 2008, la figura 3 deja ver el motivo: las dos celdas más cercanas al umbral se comportan de forma contraria al resto (ver además [D20](#d20)).
+:::
+
+# Ejercicio 4
+
+::: {.enunciado}
+Estimar Fuzzy RD utilizando el comando ivregress y mencionar, brevemente, en qué se diferencia esta estimación con Sharp RD.
+:::
+
+El modelo estimado por MC2E es el siguiente:
+
+$$y_i = \beta_0 + \beta_1\, prD_i + f_1(N_i) + 1(N_i < 0)\, f_2(N_i) + u_i, \tag{2}$$
+
+$$prD_i = \delta_0 + \delta_1\, 1(N_i < 0) + f(N_i) + e_i, \tag{3}$$
+
+donde *prD* indica la participación en el PANES (variable supuestamente endógena) y $D = 1(N_i<0)$ indica elegibilidad al programa (instrumento). Se estima $\beta_1$ en la ecuación (2) a través de <mark>instrumentar *prD* como se indica en la ecuación (3)</mark>. Es decir, si el cumplimiento de la regla de asignación no es perfecto, la probabilidad de participar en el programa (*prD*) no es igual a ser elegible ($D$), entonces, hay que instrumentar la probabilidad de participar con el indicador de elegibilidad. Por lo tanto, de lo dicho, se deduce que la estimación *Fuzzy RD* se diferencia de la estimación *Sharp RD* en que <mark>no hay una regla de asignación determinística, sino que más bien hay un cambio en la probabilidad de ser asignado al tratamiento en el umbral</mark>.
+
+::: {.disc .impr #d10}
+**D10.** La **asignación** (elegibilidad) sigue siendo determinística: $D = 1(N_i<0)$. Lo que deja de serlo es la **recepción** del tratamiento. En el diseño *sharp* la probabilidad de recibirlo salta de 0 a 1 en el umbral; en el *fuzzy* salta en menos de 1, y el efecto es el cociente entre el salto del resultado y el salto de esa probabilidad, interpretable para quienes cumplen la regla. Aquí el salto es `r num(t1[[1]][[2]]$b, 3)`.
+:::
+
+::: {.disc .impr #d11}
+**D11.** Las ecuaciones no coinciden con lo estimado. En el *do-file*, los polinomios a ambos lados (`z`, `Dz`, `z2`, `Dz2`) y los controles aparecen en **las dos etapas**; la ecuación (3) omite la interacción $1(N_i<0)f_2(N_i)$, y ninguna de las dos incluye los controles de las columnas 4 a 6.
+:::
+
+```{r ej4}
+t2 <- lapply(ys[2:3], function(y) lapply(espec, function(x) mc2e(y, x)))
+```
+
+En la tabla 2, se presentan las estimaciones del modelo (2) utilizando como variables dependientes *ps_fwave* (apoyo político al gobierno en 2007) y *ps_swave* (apoyo político al gobierno en 2008) e instrumentando *prD* mediante la ecuación (3), bajo las mismas seis especificaciones presentadas en la estimación por MCO. <mark>Comparando estas estimaciones por MC2E con los resultados obtenidos en las estimaciones por MCO, se puede observar que son casi idénticas, lo cual indica que no existe "sesgo por endogeneidad".</mark>
+
+```{r tabla2}
+tabla_seis(t2, etq1[2:3], "Tabla 2. Elegibilidad, participación y apoyo político (estimación por MC2E).")
+```
+
+Los datos en paréntesis corresponden a los errores estándar agrupados por puntaje del ingreso predicho estandarizado. Significatividad: \* al 10%, \*\* al 5%, \*\*\* al 1%.
+
+```{r ej4-endogeneidad}
+ols_prd <- lapply(ys[2:3], function(y) lapply(espec, function(x) mco(y, x, v = "prD")))
+tabla_seis(ols_prd, etq1[2:3], "Agregado en la réplica: MCO del apoyo político sobre la participación (prD).")
+dif_end <- max(abs(unlist(Map(function(a, b) sapply(a, `[[`, "b") - sapply(b, `[[`, "b"), t2, ols_prd))))
+cociente <- t1[[2]][[1]]$b / t1[[1]][[1]]$b
+```
+
+::: {.disc .error #d12}
+**D12.** La tabla 1 regresa el apoyo sobre la **elegibilidad** $D$ (efecto de la intención de tratar) y la tabla 2 sobre la **participación** instrumentada. Son parecidas porque la primera etapa es casi 1: en la columna 1, MC2E es simplemente el cociente `r num(t1[[2]][[1]]$b, 4)` / `r num(t1[[1]][[1]]$b, 4)` = `r num(cociente, 4)`. Esa similitud no dice nada sobre la endogeneidad. La comparación pertinente es entre MC2E y **MCO sobre *prD***: en la réplica las diferencias son de a lo sumo `r num(dif_end, 3)`, así que la conclusión resulta compatible con los datos, pero no por el argumento dado (y con tan pocos casos de incumplimiento hay muy poco margen para detectar selección).
+:::
+
+# Ejercicio 5
+
+::: {.enunciado}
+Reproducir la Tabla 2 del paper (relación entre características de línea de base y elegiblidad). Replicarlo sólo para tres variables dependientes y comentar la importancia de este análisis en el contexto de RD.
+:::
+
+En el contexto de *RD*, la importancia de analizar la relación entre las características de línea de base y la elegibilidad deviene en validar la estrategia de identificación. Es decir, <mark>si se encuentra que no existe una relación estadísticamente significativa entre estas características y la elegibilidad, se puede concluir que las características observables no varían con el umbral y no existe manipulación sistemática del puntaje de elegibilidad.</mark>
+
+```{r ej5}
+lin <- c("z", "Dz")
+q <- d[which(d$edad != 999999), ]                       # drop if (edad==999999)
+m_do <- list(q[q$lnbl_ytoth_pc != 999999, ],
+             q[which(q$bl_meduc != 999999 & q$edad > 16), ], q)
+p <- d[!is.na(d$prD), ]                                 # muestra del paper
+m_paper <- list(p[p$lnbl_ytoth_pc != 999999, ], p[p$bl_meduc != 999999, ], p)
+base_y <- c("lnbl_ytoth_pc", "bl_meduc", "bl_hhsize")
+etq3 <- c("Logaritmo del ingreso per cápita",
+          "Promedio de años de educación del hogar (mayores de 16 años)", "Tamaño del hogar")
+t3_sin <- Map(function(y, s) mco(y, lin, s, cluster = FALSE), base_y, m_do)   # do-file
+t3_do  <- Map(function(y, s) mco(y, lin, s), base_y, m_do)                    # agrupados
+t3_pap <- Map(function(y, s) mco(y, lin, s), base_y, m_paper)                 # paper
+hh <- t3_sin[[3]]
+p_pdf <- 2 * pnorm(-abs(-.351 / .146))
+```
+
+En la tabla 3, se presentan estimaciones por MCO de tres variables dependientes (logaritmo del ingreso per cápita, promedio de años de educación del hogar y tamaño del hogar) en la variable que indica la elegibilidad al programa ($D$), realizadas bajo la especificación (2). Se puede observar que <mark>ninguna de estas variables es estadísticamente significativa</mark>, lo cual permite concluir que no existe manipulación sistemática del puntaje de elegibilidad.
+
+```{r tabla3}
+t3 <- do.call(rbind, Map(function(r, e) rbind(
+  c(e,  paste0(num(r$b, 3), estrellas(r$p)), num(r$n)),
+  c("", paste0("(", num(r$se, 3), ")"), "")), t3_sin, etq3))
+kable(t3, row.names = FALSE, align = "lcc",
+      col.names = c("Variable dependiente", "Coeficiente (error estándar)", "Observaciones"),
+      caption = "Tabla 3. Elegibilidad del programa y características de línea de base en 2005, según el do-file (errores estándar clásicos; las estrellas se agregan en la réplica).") |>
+  kable_styling(full_width = FALSE)
+```
+Nota del PDF: La tabla informa los resultados de regresiones de varias características de pretratamiento (2005) en el indicador de elegibilidad del programa. <mark>La especificación es la misma que la de la columna 2 en la tabla 1.</mark> En el PDF, el coeficiente del ingreso figura como <mark>-0,062</mark> y el error estándar de la educación como <mark>0,134</mark>.
+
+```{r tabla3-correcta}
+res <- function(r) paste0(num(r$b, 3), " (", num(r$se, 3), "), p = ", num(r$p, 3))
+kable(data.frame(etq3, sapply(t3_do, res), num(sapply(t3_do, `[[`, "n")),
+                 sapply(t3_pap, res), num(sapply(t3_pap, `[[`, "n"))),
+      row.names = FALSE, align = "lcccc",
+      col.names = c("Variable", "Muestra del do-file, EE agrupados", "Obs.",
+                    "Muestra del paper, EE agrupados", "Obs."),
+      caption = "Agregado en la réplica: la misma regresión con errores estándar agrupados por puntaje.") |>
+  kable_styling(full_width = TRUE, font_size = 12)
+```
+
+::: {.disc .error #d13}
+**D13.** Las tres regresiones del *do-file* **no usan `cluster(z)`**, a diferencia de la columna 2 de la tabla 1 a la que remite la nota. Con errores agrupados, los de la réplica son `r paste(num(sapply(t3_do, "[[", "se"), 3), collapse = "; ")`, prácticamente los de la tabla 2 del paper (0,059; 0,198; 0,242).
+:::
+
+::: {.disc .error #d14}
+**D14.** Con las cifras publicadas, el tamaño del hogar tiene $t = -0,351 / 0,146 = `r num(-.351 / .146, 2)`$ (`r pin(p_pdf)`): **es significativo al 5%**, aunque la tabla no lleva estrellas y el texto afirma que ninguna variable lo es. La afirmación solo es correcta con los errores estándar agrupados (`r pin(t3_pap[[3]]$p)`), que no son los informados.
+:::
+
+::: {.disc .error #d15}
+**D15.** Dos cifras no surgen del comando del *do-file*. El error estándar de la educación es `r num(t3_sin[[2]]$se, 4)`, es decir `r num(t3_sin[[2]]$se, 3)` y no 0,134. El coeficiente del ingreso es `r num(t3_sin[[1]]$b, 6)`, que redondea a `r num(t3_sin[[1]]$b, 3)` y no a -0,062 (ese es el valor del paper, estimado con otra muestra). Las observaciones sí coinciden.
+:::
+
+::: {.disc .impr #d16}
+**D16.** La muestra difiere de la del paper porque el *do-file* elimina a quienes no informan edad y, para la educación, restringe a respondentes mayores de 16 años (la variable ya es el promedio del hogar entre mayores de esa edad). Resultan `r paste(num(sapply(t3_sin, "[[", "n")), collapse = "; ")` observaciones en lugar de `r paste(num(sapply(t3_pap, "[[", "n")), collapse = "; ")`, y el coeficiente de educación es `r num(t3_sin[[2]]$b, 3)` en lugar de `r num(t3_pap[[2]]$b, 3)`.
+:::
+
+::: {.disc .metodo #d17}
+**D17.** No rechazar la igualdad **no demuestra** que las características no cambien en el umbral ni descarta manipulación. Para el tamaño del hogar, el intervalo de confianza agrupado al 95% es [`r num(t3_pap[[3]]$b - 1.96 * t3_pap[[3]]$se, 2)`; `r num(t3_pap[[3]]$b + 1.96 * t3_pap[[3]]$se, 2)`] personas, compatible con diferencias apreciables. Además, solo se revisan tres de las variables del paper, que se refiere también al argumento temporal: la regla de asignación se definió después de relevada la línea de base y no se divulgó.
+:::
+
+# Ejercicio 6
+
+::: {.enunciado}
+¿Cómo se validaría el supuesto de no manipulación de la variable de asignación al tratamiento? Realizar un test que se considere apropiado y comentar los resultados.
+:::
+
+El supuesto de no manipulación de la variable de asignación al tratamiento se puede validar realizando un test de densidad, como el *McCrary Density Test* (2008), el cual permite testear si existe <mark>una diferencia estadísticamente significativa en la discontinuidad del *score*</mark> en el punto de corte. En este caso, <mark>la estimación nos arroja que esta discontinuidad no es estadísticamente significativa</mark> (ver figura 4), lo cual brinda evidencia acerca de la validez del supuesto de no manipulación de la variable de asignación al tratamiento.
+
+```{r mccrary}
+# Traducción a R de DCdensity.ado (McCrary, 2008), con los valores por defecto
+dcdensity <- function(x, corte = 0) {
+  n <- length(x); b <- 2 * sd(x) / sqrt(n)
+  medio <- function(v) floor((v - corte) / b) * b + b / 2 + corte
+  l <- medio(min(x)); r <- medio(max(x)); j <- floor((max(x) - min(x)) / b) + 2
+  hist <- tabulate(round((medio(x) - l) / b + 1), j) / n / b
+  mp <- medio(l + (seq_len(j) - 1) * b)
+  # Ancho de banda: regla basada en un polinomio de grado 4 a cada lado
+  lado <- function(k, rango) {
+    u <- mp[k] / max(abs(mp)); m <- lm(hist[k] ~ u + I(u^2) + I(u^3) + I(u^4))
+    a <- coef(m) / max(abs(mp))^(0:4)
+    f2 <- 2 * a[3] + 6 * a[4] * mp[k] + 12 * a[5] * mp[k]^2
+    3.348 * (summary(m)$sigma^2 * rango / sum(f2^2))^(1/5)
+  }
+  h <- (lado(mp < corte, corte - l) + lado(mp > corte, r - corte)) / 2
+  z0 <- ceiling(h / b)
+  y <- c(rep(0, z0), hist, rep(0, z0)); g <- c(l - (z0:1) * b, mp, r + (1:z0) * b)
+  # Regresión local lineal con núcleo triangular, separada a cada lado
+  local_lin <- function(en, derecha) {
+    dist <- g - en; w <- pmax(0, 1 - abs(dist / h)) * (if (derecha) g >= corte else g < corte)
+    unname(lm.wfit(cbind(1, dist), y, w)$coefficients[1])
+  }
+  fi <- local_lin(corte, FALSE); fd <- local_lin(corte, TRUE)
+  theta <- log(fd) - log(fi); se <- sqrt(24 / 5 / (n * h) * (1 / fd + 1 / fi))
+  suave <- sapply(mp, function(a) local_lin(a, a >= corte))
+  se_suave <- mapply(function(a, f) {
+    if (a > corte) {
+      m <- max(-1, (corte - a) / h)
+      v <- (2 - 3*m^11 - 24*m^10 - 83*m^9 - 72*m^8 + 42*m^7 + 18*m^6 - 18*m^5 + 18*m^4 - 3*m^3 + 18*m^2 - 15*m) /
+           (1 + m^6 + 6*m^5 - 3*m^4 - 4*m^3 + 9*m^2 - 6*m)^2
+    } else {
+      m <- min((corte - a) / h, 1)
+      v <- (2 + 3*m^11 - 24*m^10 + 83*m^9 - 72*m^8 - 42*m^7 + 18*m^6 + 18*m^5 + 18*m^4 - 3*m^3 + 18*m^2 + 15*m) /
+           (1 + m^6 - 6*m^5 - 3*m^4 + 4*m^3 + 9*m^2 + 6*m)^2
+    }
+    sqrt(12 * f * v / (5 * n * h))
+  }, mp, suave)
+  list(theta = theta, se = se, p = 2 * pnorm(-abs(theta / se)), b = b, h = h,
+       izq = fi, der = fd, hist = data.frame(x = g, y = y),
+       suave = data.frame(x = mp, f = suave, li = suave - 1.96 * se_suave, ls = suave + 1.96 * se_suave))
+}
+mc <- dcdensity(d$z)
+mc_enc <- dcdensity(d$z[!is.na(d$prD)])
+c(theta = mc$theta, error_estandar = mc$se, p = mc$p, celda = mc$b, ancho = mc$h)
+```
+
+```{r figura4, fig.cap="Figura 4. McCrary Density Test (2008)."}
+par(mar = c(3, 3.5, 1, 1))
+plot(mc$hist$x, mc$hist$y, col = "gray50", las = 1, xlab = "", ylab = "")
+for (k in list(mc$suave$x < 0, mc$suave$x > 0)) {
+  lines(mc$suave$x[k], mc$suave$f[k], lwd = 2)
+  lines(mc$suave$x[k], mc$suave$li[k]); lines(mc$suave$x[k], mc$suave$ls[k])
+}
+abline(v = 0)
+```
+
+Fuente: Elaboración propia.
+
+```{r rddensity}
+rd <- rddensity(d$z)
+summary(rd)
+anchos <- c(.001, .002, .005, .02)
+cerca <- data.frame(h = anchos,
+  debajo = sapply(anchos, function(h) sum(d$z < 0 & d$z >= -h)),
+  encima = sapply(anchos, function(h) sum(d$z > 0 & d$z <= h)))
+kable(transform(cerca, h = num(h, 3)), row.names = FALSE, align = "ccc",
+      col.names = c("Distancia al umbral", "Debajo (elegibles)", "Encima"),
+      caption = "Agregado en la réplica: número de hogares a cada lado del umbral.") |>
+  kable_styling(full_width = FALSE)
+```
+
+::: {.disc .error #d18}
+**D18.** La prueba se aplica a los `r num(nrow(d))` hogares con puntaje del archivo, la **muestra de las encuestas** de seguimiento (`r num(sum(d$D == 1))` elegibles y `r num(sum(d$D == 0))` no elegibles). El paper explica que esa muestra se diseñó repartida de forma desigual entre elegibles y no elegibles (proporción 2:1, p. 8). La densidad de una muestra cuya composición se fijó según la elegibilidad no informa si el puntaje fue manipulado. El paper hace la prueba sobre la **población de postulantes** cercana al umbral (20.463 hogares) y obtiene una diferencia logarítmica de 0,041 (error estándar 0,027). Esos datos no están en el archivo, por lo que la réplica no puede reemplazar la prueba.
+:::
+
+::: {.disc .impr #d19}
+**D19.** La prueba compara la **densidad** del puntaje a ambos lados del corte, no "la discontinuidad del *score*". No se informa ningún número: la diferencia logarítmica es `r num(mc$theta, 3)` con error estándar `r num(mc$se, 3)` (`r pin(mc$p)`). Ese error es varias veces el del paper, de modo que la potencia es baja: no rechazar es una evidencia débil. La prueba alternativa de `rddensity` (Cattaneo, Jansson y Ma), incluida en la carpeta como `.ado` pero no usada, tampoco rechaza (`r pin(rd$test$p_jk)`).
+:::
+
+::: {.disc .metodo #d20}
+**D20.** La muestra tiene un **déficit de hogares justo debajo del umbral**: a menos de 0,001 hay `r cerca$debajo[1]` por debajo y `r cerca$encima[1]` por encima, mientras que a menos de 0,005 la relación se invierte (`r cerca$debajo[3]` contra `r cerca$encima[3]`). Es lo contrario de la acumulación que produciría una manipulación para volverse elegible, pero se ve en la figura 4 y no se comenta. Los pocos casos junto al corte contribuyen a que las estimaciones locales sean imprecisas ([D9](#d9)).
+:::
+
+# Referencias
+
+Manacorda, M., Miguel, E. y Vigorito, A. (2011). Government Transfers and Political Support. *American Economic Journal: Applied Economics*, <mark>*(3)3*</mark>, 1-28. Recuperado de <https://www.aeaweb.org/articles/pdf/doi/10.1257/app.3.3.1>
+
+::: {.disc .impr #d21}
+**D21.** Se trata del volumen 3, número 3: la forma correcta es *3*(3).
+:::
+
+Obra citada además en los recuadros: Calonico, S., Cattaneo, M. D. y Titiunik, R. (2014). Robust Nonparametric Confidence Intervals for Regression-Discontinuity Designs. *Econometrica*, 82(6), 2295-2326.
+
+# Verificación {#verificacion -}
+
+## Contra el PDF
+
+Cada cifra recalculada se compara con la publicada, redondeada a los mismos decimales.
+
+```{r verif-pdf}
+comparar <- function(nombre, r, publicado, dec = 3) {
+  ok <- abs(round(r, dec) - publicado) < 10^-dec / 2
+  data.frame(Tabla = nombre, Cifras = length(publicado), Coinciden = sum(ok))
+}
+bse <- function(f) c(sapply(f, `[[`, "b"), sapply(f, `[[`, "se"))
+pdf1 <- list(c(.993, .987, .995, .993, .988, .998, .002, .005, .005, .003, .005, .005),
+             c(.129, .110, .130, .126, .103, .125, .013, .026, .040, .014, .027, .043),
+             c(.118, .100, .093, .119, .096, .081, .015, .030, .043, .016, .031, .045))
+pdf2 <- list(c(.130, .111, .131, .127, .105, .125, .013, .026, .040, .013, .026, .041),
+             c(.119, .101, .094, .120, .098, .082, .015, .030, .043, .015, .031, .044))
+ver <- rbind(
+  comparar("Tabla 1 (coeficientes y EE)", unlist(lapply(t1, bse)), unlist(pdf1)),
+  comparar("Tabla 2 (coeficientes y EE)", unlist(lapply(t2, bse)), unlist(pdf2)),
+  comparar("Tabla 3 (coeficientes y EE)", bse(t3_sin),
+           c(-.062, .142, -.351, .055, .134, .146)),
+  comparar("Observaciones (tablas 1 a 3)",
+           c(sapply(t1, function(f) f[[1]]$n), sapply(t2, function(f) f[[1]]$n),
+             sapply(t3_sin, `[[`, "n")),
+           c(2232, 2089, 1948, 2089, 1948, 2149, 2152, 2231), 0))
+kable(ver) |> kable_styling(full_width = FALSE)
+```
+
+## Contra el paper
+
+```{r verif-paper}
+# En la tabla 1 del paper, los errores estándar de la fila de 2008 aparecen desplazados
+paper1 <- pdf1
+paper1[[3]][7:12] <- c(.030, .043, .016, .031, .045, .045)
+otras <- c(bl_medad = "bl_medad", female = "female", aniosed = "aniosed", edadind = "edadind")
+t_ot <- lapply(otras, function(y) mco(y, lin, p))
+vp <- rbind(
+  comparar("Tabla 1, filas 1 y 2", unlist(lapply(t1[1:2], bse)), unlist(paper1[1:2])),
+  comparar("Tabla 1, fila 3 (como está impresa)", bse(t1[[3]]), paper1[[3]]),
+  comparar("Tabla 2, variables del trabajo", bse(t3_pap), c(-.062, .135, -.350, .059, .198, .242)),
+  comparar("Tabla 2, otras cuatro variables", bse(t_ot),
+           c(-1.195, -.025, .228, -.929, 2.159, .057, .307, 1.512)),
+  comparar("Tabla 2, observaciones", sapply(c(t3_pap, t_ot), `[[`, "n"),
+           c(2150, 2162, 2232, 2232, 2231, 2206, 2231), 0))
+kable(vp) |> kable_styling(full_width = FALSE)
+```
+
+En la fila 3 de la tabla 1 del paper los errores estándar impresos, (0,030) (0,043) (0,016) (0,031) (0,045) (0,045), no corresponden a sus columnas; los calculados, (`r paste(num(sapply(t1[[3]], "[[", "se"), 3), collapse = ") (")`), son los que informa el PDF del trabajo.
+
+## Contra las salidas de Stata
+
+```{r verif-gph}
+# Series (sersets) guardadas dentro de un .gph
+leer_gph <- function(archivo) {
+  b <- readBin(archivo, "raw", file.size(archivo))
+  ini <- grepRaw("sersetreadwrite", b, all = TRUE, fixed = TRUE)
+  fin <- grepRaw("<EndSersetData>", b, all = TRUE, fixed = TRUE)
+  lapply(seq_along(ini), function(k) {
+    i <- ini[k]
+    nv <- readBin(b[i + 18:21], "integer", size = 4, endian = "little")
+    n  <- readBin(b[i + 22:25], "integer", size = 4, endian = "little")
+    tipo <- as.integer(b[i + 25 + seq_len(nv)])          # 251 a 255: byte, int, long, float, double
+    tam <- c(1, 2, 4, 4, 8)[tipo - 250]
+    mat <- matrix(b[(fin[k] - 2 - n * sum(tam)):(fin[k] - 3)], nrow = sum(tam))
+    desde <- cumsum(c(0, tam))
+    m <- sapply(seq_len(nv), function(j)
+      readBin(as.vector(mat[desde[j] + seq_len(tam[j]), ]),
+              if (tipo[j] >= 254) "double" else "integer", n, size = tam[j], endian = "little"))
+    m[abs(m) > 1e30] <- NA                                # faltantes de Stata
+    m[complete.cases(m), , drop = FALSE]
+  })
+}
+dif <- function(a, b) if (length(a) == length(b)) max(abs(a - b)) else NA
+gph <- list()
+G <- leer_gph("Figuras/Figura 1.gph")[[1]]
+gph[["Figura 1.gph: promedios por celda"]] <- c(nrow(G), dif(G[, 1], r1$vars_bins$rdplot_mean_y))
+G <- leer_gph("Figuras/Figura 3.gph")[[1]]
+gph[["Figura 3.gph: promedios por celda (2008)"]] <- c(nrow(G), dif(G[, 1], r3$vars_bins$rdplot_mean_y))
+G <- leer_gph("Figuras/Figura 4.gph")
+gph[["Figura 4.gph: histograma"]] <- c(nrow(G[[1]]), dif(G[[1]][, 1], mc$hist$y))
+for (k in 2:3) {
+  i <- sapply(G[[k]][, 2], function(v) which.min(abs(mc$suave$x - v)))
+  gph[[paste("Figura 4.gph: densidad y banda,", c("izquierda", "derecha")[k - 1])]] <-
+    c(nrow(G[[k]]), max(abs(G[[k]][, c(1, 3, 4)] - as.matrix(mc$suave[i, c("f", "ls", "li")]))))
+}
+kable(data.frame(names(gph), sapply(gph, `[`, 1),
+                 format(sapply(gph, `[`, 2), scientific = TRUE, digits = 2)),
+      row.names = FALSE, align = "lcr", col.names = c("Serie", "Puntos", "Máxima diferencia")) |>
+  kable_styling(full_width = FALSE)
+```
+
+En la figura 1 la pequeña diferencia se debe a que alguna observación cae en la celda contigua (la versión de `rdplot` usada en Stata no es la de R). El archivo `Figuras/Figura 2.gph` no contiene la figura de 2007: guarda un gráfico de control sintético (California, consumo de cigarrillos) que no pertenece a este trabajo, por lo que esa figura solo se comparó visualmente con el PDF. `DCdensity.ado` se tradujo a R; la figura 4 permite verificar esa traducción.
+
+```{r sesion}
+sessionInfo()
+```

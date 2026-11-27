@@ -1,0 +1,731 @@
+---
+title: "Trabajo Práctico N° 2 — Réplica en R"
+subtitle: "Maestría en Economía UNLP - Economía Laboral. Respuestas originales: Juan Menduiña"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+    self_contained: true
+    code_folding: hide
+params:
+  base_original: "D:/Box/Maestria/Aplicaciones en STATA - 2019 UNLP/IV/NEW7080.dta"
+---
+
+```{css, echo=FALSE}
+mark { background: #ffe27a; padding: 0 2px; }
+.disc { border-left: 6px solid; border-radius: 4px; padding: 10px 14px; margin: 14px 0; font-size: 0.95em; }
+.disc p:last-child { margin-bottom: 0; }
+.error { border-color: #c0392b; background: #fdecea; }
+.impr  { border-color: #d68910; background: #fef5e7; }
+.metodo{ border-color: #2874a6; background: #eaf2f8; }
+.enunciado { font-style: italic; color: #444; }
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 8, fig.height = 5, dpi = 120)
+library(haven); library(knitr); library(kableExtra); library(sandwich)
+
+num <- function(x, d = 0) {
+  x <- ifelse(abs(x) < 10^-d / 2, 0, x)            # evita "-0,000"
+  formatC(x, format = "f", digits = d, big.mark = ".", decimal.mark = ",")
+}
+pval <- function(p) ifelse(p < .001, "< 0,001", num(p, 3))
+pin <- function(p) ifelse(p < .001, "p < 0,001", paste("p =", num(p, 3)))
+estrellas <- function(p) ifelse(p < .01, "***", ifelse(p < .05, "**", ifelse(p < .1, "*", "")))
+```
+
+# Cómo leer este documento {-}
+
+El texto de cada ejercicio es el del PDF *Trabajo Práctico N° 2 (R)*. El código replica en R el archivo `Datos/Trabajo Práctico N° 2.do`, y las tablas, las figuras y los números de los recuadros se calculan a partir de los datos. Lo <mark>resaltado</mark> es una frase, un número o un rótulo con alguna discrepancia, explicada en el recuadro correspondiente:
+
+::: {.disc .error}
+**Error**: la afirmación contradice los datos, el *do-file* o el paper, o la inferencia no se sigue de los resultados.
+:::
+
+::: {.disc .impr}
+**Imprecisión**: redacción, rótulo, formato u omisión que puede inducir a error.
+:::
+
+::: {.disc .metodo}
+**Observación metodológica**: la conclusión depende de una decisión discutible o no documentada.
+:::
+
+**Datos.** El *do-file* usa `Datos/AK.dta`, un archivo que no está en la carpeta (figura en `.gitignore`). Si no existe, este documento reconstruye sus variables a partir de `NEW7080.dta`, la base original de Angrist y Krueger, cuya ruta se indica en el parámetro `base_original`. La reconstrucción se contrasta con las series guardadas en las figuras de Stata, con las tablas del PDF y con las del paper (ver [Verificación](#verificacion)).
+
+**Resultado de la réplica.** Las cifras de las tablas 1 a 3 se reproducen, **salvo el coeficiente MCO de la tabla 3** ([D18](#d18)). Las figuras 1 y 2 se reproducen. Los principales problemas son de descripción e interpretación: los errores estándar no son robustos ([D1](#d1)), dos patrones por trimestre no se cumplen "año por año" ([D5](#d5), [D6](#d6)), el signo del sesgo de MCO no está respaldado ([D13](#d13), [D19](#d19)) y la lectura de la tabla I del paper tiene errores de unidades y de significatividad ([D21](#d21), [D22](#d22)).
+
+| N° | Ej. | Tipo | Discrepancia |
+|----|-----|------|--------------|
+| [D1](#d1) | 1 | Error | Los errores estándar de las tablas 1 a 3 no son robustos |
+| [D2](#d2) | 1 | Metodológica | Lectura causal de MCO y aproximación porcentual |
+| [D3](#d3) | 1 | Imprecisión | Qué indica la variable `smsa` |
+| [D4](#d4) | 2 | Imprecisión | Rango de cohortes y eje de las figuras |
+| [D5](#d5) | 2 | Error | Los trimestres 1 y 2 no son "año por año" los menos educados |
+| [D6](#d6) | 2 | Error | Los trimestres 1 y 2 no son "año por año" los de menor salario |
+| [D7](#d7) | 2 | Metodológica | La caída del salario por cohorte refleja la edad |
+| [D8](#d8) | 2 | Imprecisión | La restricción de exclusión no se "demuestra" |
+| [D9](#d9) | 2 | Imprecisión | El argumento sobre los estudios psicológicos |
+| [D10](#d10) | 2 | Imprecisión | Formulación de la exogeneidad y remisión a "tablas 1 y 2" |
+| [D11](#d11) | 3 | Imprecisión | Los instrumentos son interacciones trimestre × año |
+| [D12](#d12) | 3 | Metodológica | Instrumentos débiles |
+| [D13](#d13) | 3 | Error | El signo del sesgo de MCO no se puede establecer |
+| [D14](#d14) | 3 | Metodológica | El $R^2$ en MC2E |
+| [D15](#d15) | 3 | Imprecisión | Nota al pie sobre el "sesgo por endogeneidad" |
+| [D16](#d16) | 4 | Imprecisión | Falta la condición de relevancia; notación |
+| [D17](#d17) | 4 | Imprecisión | No se presentan los valores intermedios pedidos |
+| [D18](#d18) | 4 | Error | MCO bivariado: 0,0701 en lugar de 0,0709 |
+| [D19](#d19) | 4 | Error | La diferencia entre Wald y MCO no es significativa |
+| [D20](#d20) | 5 | Imprecisión | Validez externa incompleta |
+| [D21](#d21) | 5 | Error | Los efectos están en años, no en porcentaje |
+| [D22](#d22) | 5 | Error | No todos los coeficientes son significativos |
+| [D23](#d23) | 5 | Imprecisión | Resultados para educación posterior a la secundaria |
+| [D24](#d24) | 6 | Imprecisión | Ejercicio sin respuesta |
+
+# Datos y funciones
+
+```{r datos}
+if (file.exists("Datos/AK.dta")) {
+  base <- as.data.frame(zap_labels(read_dta("Datos/AK.dta")))
+  base <- base[base$CENSUS == 80, ]
+  origen_datos <- "Datos/AK.dta"
+} else {
+  stopifnot(file.exists(params$base_original))
+  # Nombres de las variables de NEW7080 (v1, v2, ...)
+  nombres <- c(v2 = "edadq", v4 = "educ", v5 = "ENOCENT", v6 = "ESOCENT", v9 = "lw_sem",
+               v10 = "casado", v11 = "MIDATL", v12 = "MT", v13 = "NEWENG", v16 = "CENSUS",
+               v18 = "qob", v19 = "raza", v20 = "smsa", v21 = "SOATL", v24 = "WNOCENT",
+               v25 = "WSOCENT", v27 = "yob")
+  base <- as.data.frame(zap_labels(read_dta(params$base_original,
+                                            col_select = all_of(names(nombres)))))
+  names(base) <- nombres[names(base)]
+  base <- base[base$CENSUS == 80, ]
+  base$cohort <- ifelse(base$yob %in% 30:39, 30.39, 40.49)
+  base$edadq  <- base$edadq - 1900                   # edad medida en trimestres
+  base$edadq2 <- base$edadq^2
+  # El orden de region1-region8 no afecta ningún resultado informado
+  regiones_orig <- c("NEWENG", "MIDATL", "ENOCENT", "WNOCENT", "SOATL", "ESOCENT", "WSOCENT", "MT")
+  names(base)[match(regiones_orig, names(base))] <- paste0("region", 1:8)
+  for (k in 0:9) base[[paste0("yr2", k)]] <- as.numeric(base$yob %% 10 == k)
+  for (q in 1:4) base[[paste0("qob", q)]] <- as.numeric(base$qob == q)
+  for (q in 1:3) for (k in 0:9)
+    base[[paste0("qob", q, "2", k)]] <- base[[paste0("qob", q)]] * base[[paste0("yr2", k)]]
+  origen_datos <- "NEW7080.dta (variables reconstruidas)"
+}
+
+# generate muestra=1 if (cohort>20.30 & cohort<30.40)
+m <- base[base$cohort > 20.30 & base$cohort < 30.40, ]
+c(origen = origen_datos, censo_1980 = nrow(base), muestra = nrow(m),
+  nacimiento = paste(range(m$yob), collapse = "-"))
+```
+
+```{r funciones}
+anios    <- paste0("yr2", 0:8)
+edad     <- c("edadq", "edadq2")
+otros    <- c("raza", "casado", paste0("region", 1:8), "smsa")
+espec    <- list("(i)" = anios, "(ii)" = c(anios, edad), "(iii)" = c(anios, edad, otros))
+instrum  <- c(paste0("qob12", 0:9), paste0("qob22", 0:9), paste0("qob32", 0:9))
+
+# regress lw_sem educ x   (errores estándar clásicos, como en el do-file)
+mco <- function(exog, datos = m) {
+  r <- lm(reformulate(c("educ", exog), "lw_sem"), data = datos)
+  list(b = unname(coef(r)["educ"]), se = sqrt(vcov(r)["educ", "educ"]),
+       se_rob = sqrt(vcovHC(r, type = "HC1")["educ", "educ"]),
+       r2 = summary(r)$r.squared, n = nobs(r), m = r)
+}
+
+# ivregress 2sls lw_sem (educ = inst) exog   (varianza asintótica, e'e/N)
+mc2e <- function(exog, inst, datos = m) {
+  y <- datos$lw_sem
+  X <- cbind(1, as.matrix(datos[c("educ", exog)]))
+  qz <- qr(cbind(1, as.matrix(datos[c(exog, inst)])))
+  qx <- qr(qr.fitted(qz, X))
+  b <- qr.coef(qx, y); e <- drop(y - X %*% b); N <- length(y)
+  A <- chol2inv(qr.R(qx))
+  V <- A * sum(e^2) / N
+  Xh <- qr.fitted(qz, X)
+  Vrob <- A %*% crossprod(Xh * e) %*% A
+  # Primera etapa: F de los instrumentos excluidos
+  qw <- qr(cbind(1, as.matrix(datos[exog])))
+  rss_r <- sum(qr.resid(qw, datos$educ)^2); rss_c <- sum(qr.resid(qz, datos$educ)^2)
+  gl <- qz$rank - qw$rank
+  Fp <- ((rss_r - rss_c) / gl) / (rss_c / (N - qz$rank))
+  # Sobreidentificación: N * R2 de los residuos sobre todos los instrumentos
+  chi <- N * (1 - sum(qr.resid(qz, e)^2) / sum((e - mean(e))^2))
+  list(b = unname(b[2]), se = sqrt(V[2, 2]), se_rob = sqrt(Vrob[2, 2]),
+       r2 = 1 - sum(e^2) / sum((y - mean(y))^2), n = N, F = Fp, gl = gl,
+       chi = chi, gl_chi = qz$rank - ncol(X), coef = b)
+}
+pz <- function(b, se) 2 * pnorm(-abs(b / se))
+
+celda_b  <- function(r) paste0(num(r$b, 4), estrellas(pz(r$b, r$se)))
+celda_se <- function(r) paste0("(", num(r$se, 4), ")")
+# Tabla con el formato de las tablas 1 y 2 del PDF
+tabla_espec <- function(modelos, titulo) {
+  si <- function(...) c(...)
+  cuerpo <- rbind(
+    c("Años de educación", sapply(modelos, celda_b)),
+    c("", sapply(modelos, celda_se)),
+    c("Años de nacimiento", si("Sí", "Sí", "Sí")),
+    c("Edad y Edad²", si("No", "Sí", "Sí")),
+    c("Raza", si("No", "No", "Sí")),
+    c("Estado civil", si("No", "No", "Sí")),
+    c("Regiones", si("No", "No", "Sí")),
+    c("smsa", si("No", "No", "Sí")),
+    c("Observaciones", sapply(modelos, function(r) num(r$n))),
+    c("R²", sapply(modelos, function(r) num(r$r2, 4))))
+  kable(cuerpo, row.names = FALSE, caption = titulo, align = "lccc",
+        col.names = c("Variables", paste("Esp.", c("(i)", "(ii)", "(iii)")))) |>
+    kable_styling(full_width = FALSE) |>
+    row_spec(8, extra_css = "border-bottom: 1px solid #333;")
+}
+nota_tabla <- "Datos entre paréntesis: errores estándar clásicos, como en el *do-file* ([D1](#d1)). Significatividad: \\* 10%, \\*\\* 5%, \\*\\*\\* 1%."
+```
+
+# Ejercicio 1
+
+::: {.enunciado}
+Estimar mediante el método de mínimos cuadrados ordinarios cuál es el retorno de la educación. Utilizar las siguientes especificaciones: i) años de nacimiento como variables de control adicional; ii) especificación i) más edad y edad en su expresión cuadrática (edadq); iii) especificación ii) más controles por raza (raza), estado civil (casado), regiones (1 a 8) y <mark>si la persona trabaja en el centro (smsa)</mark>. Interpretar.
+:::
+
+```{r ej1}
+ols <- lapply(espec, mco)
+```
+
+En la tabla 1, se presenta la estimación por MCO de un modelo en donde la variable dependiente es el logaritmo del salario semanal y la variable explicativa de interés es años de educación, bajo tres especificaciones. Se puede observar que, en todas las especificaciones propuestas, la variable años de educación es estadísticamente significativa y, en particular, <mark>un año más de educación aumenta, en promedio, 7,11%</mark> (especificaciones (i) y (ii)) y 6,32% (especificación (iii)) el salario semanal (*céteris páribus*). Adicionalmente, se observa que la capacidad explicativa del modelo ($R^2$) es mayor en la especificación (iii).
+
+```{r tabla1}
+tabla_espec(ols, "Tabla 1. Estimaciones por mínimos cuadrados ordinarios (MCO).")
+```
+
+`r nota_tabla` En el PDF la nota dice <mark>"desvíos estándar robustos"</mark>.
+
+```{r tabla-robustos}
+iv <- lapply(espec, mc2e, inst = instrum)
+w2 <- mc2e(character(0), "qob1"); o2 <- mco(character(0))
+rob <- do.call(rbind, Map(function(lab, r)
+  data.frame(Estimación = lab, b = num(r$b, 4), clasico = num(r$se, 4), robusto = num(r$se_rob, 4)),
+  c(paste("Tabla 1", names(ols)), paste("Tabla 2", names(iv)), "Tabla 3 MC2E", "Tabla 3 MCO"),
+  c(ols, iv, list(w2, o2))))
+kable(rob, row.names = FALSE, align = "lccc",
+      col.names = c("Estimación", "Coeficiente", "EE clásico", "EE robusto"),
+      caption = "Agregado en la réplica: errores estándar clásicos y robustos.") |>
+  kable_styling(full_width = FALSE)
+```
+
+::: {.disc .error #d1}
+**D1.** Ningún comando del *do-file* usa la opción `robust`: `regress` e `ivregress` informan errores estándar **clásicos**, y esas son las cifras publicadas. Con errores robustos, los de la tabla 1 serían `r num(ols[[1]]$se_rob, 4)` en lugar de `r num(ols[[1]]$se, 4)`, y también cambian al cuarto decimal los de MC2E. Las conclusiones de significatividad no se modifican. La nota se repite en las tablas 2 y 3. Además, el término adecuado es "errores estándar".
+:::
+
+::: {.disc .metodo #d2}
+**D2.** El coeficiente MCO es una **asociación condicional**: la redacción causal ("aumenta") supone que la educación es exógena, que es justamente lo que el resto del trabajo pone en duda con variables instrumentales. Además, en un modelo semilogarítmico $100\beta$ es una aproximación; el cambio porcentual exacto es $100(e^{\beta}-1)$, es decir `r num(100 * (exp(ols[[1]]$b) - 1), 2)`% en (i) y `r num(100 * (exp(ols[[3]]$b) - 1), 2)`% en (iii).
+:::
+
+```{r ej1-smsa}
+b_smsa <- coef(ols[[3]]$m)["smsa"]
+w_smsa <- tapply(m$lw_sem, m$smsa, mean)
+c(proporcion_smsa_1 = mean(m$smsa), log_salario_smsa_0 = w_smsa[["0"]],
+  log_salario_smsa_1 = w_smsa[["1"]], coeficiente_iii = unname(b_smsa))
+```
+
+::: {.disc .impr #d3}
+**D3.** El enunciado describe `smsa` como "si la persona trabaja en el centro", y el apéndice del paper dice que en el censo de 1980 vale 1 si la persona **vive en un área metropolitana** (SMSA). En los datos, sin embargo, `smsa` = 1 corresponde a solo `r num(100 * mean(m$smsa), 1)`% de la muestra, con salarios **menores**, y su coeficiente en (iii) es `r num(b_smsa, 4)`, mientras que la tabla V del paper imprime el mismo valor con signo positivo (0,1763). Todo indica que en esta base `smsa` = 1 identifica a quienes están **fuera** de un área metropolitana. El PDF no informa ese coeficiente, por lo que ninguna cifra publicada cambia.
+:::
+
+# Ejercicio 2
+
+::: {.enunciado}
+Mostrar, gráficamente, cuál es el promedio de años de educación por año y trimestre de nacimiento. Además, mostrar, gráficamente, cuál es la relación entre el logaritmo del salario semanal promedio y el año y trimestre de nacimiento para aquellas personas nacidas entre 1930 y 1950. Mencionar los supuestos que realizan Angrist y Krueger (1991) para afirmar que hay una relación causal entre la educación y los ingresos salariales utilizando al trimestre de nacimiento como variable instrumental para los años de educación.
+:::
+
+```{r ej2-medias}
+# table yob if (yob>=30 & yob<=50 & CENSUS==80), contents(mean educ mean lw_sem) by(qob) replace
+s <- base[base$yob >= 30 & base$yob <= 50, ]
+g <- aggregate(cbind(table1 = educ, table2 = lw_sem) ~ qob + yob, data = s, FUN = mean)
+g <- g[order(g$yob, g$qob), ]
+g$trim <- 30 + 0.25 * seq_len(nrow(g))          # generate trim=30+0.25*_n
+
+# Posición de cada trimestre dentro de su año (1 = valor más bajo)
+posicion <- function(v) {
+  W <- t(sapply(split(g[[v]], g$yob), identity)); colnames(W) <- paste0("T", 1:4)
+  R <- t(apply(W, 1, rank))
+  data.frame(anio = as.numeric(rownames(W)), W, q1_min = R[, 1] == 1,
+             q12 = R[, 1] <= 2 & R[, 2] <= 2, q4_min = R[, 4] == 1)
+}
+pe <- posicion("table1"); pw <- posicion("table2")
+d30 <- pe$anio < 40
+```
+
+En la figura 1, se presenta el promedio de años de educación por año y trimestre de nacimiento para las personas nacidas <mark>entre 1930 y 1940 y entre 1940 y 1950</mark>, mientras que, en la figura 2, se presenta la relación entre el logaritmo del salario semanal promedio y el año y trimestre de nacimiento para las personas nacidas <mark>entre 1930 y 1950</mark>. Por un lado, en la figura 1, en primer lugar, se puede observar que la tendencia a largo plazo es positiva, es decir, los años de educación promedio aumentan a lo largo del período y, en segundo lugar, se observa que, <mark>año por año, las personas nacidas en el primer y segundo trimestre del año son las que, en promedio, tienen una menor cantidad de años de educación</mark>. Por otro lado, en la figura 2, en primer lugar, se puede observar que la <mark>tendencia a largo plazo es negativa, es decir, el logaritmo del salario semanal disminuye a lo largo del período</mark> (acentuadamente, entre 1940 y 1950) y, en segundo lugar, se observa que, <mark>año por año, las personas nacidas en el primer y segundo trimestre del año son las que, en promedio, tienen un menor salario semanal</mark>. <mark>Esto último, considerando la relación positiva entre el logaritmo del salario semanal y los años de educación, es consistente</mark> con el hecho de que las personas nacidas en estos trimestres son las que, en promedio, se encuentran menos educadas.
+
+::: {.disc .impr #d4}
+**D4.** La base contiene cohortes de `r min(s$yob) + 1900` a `r max(s$yob) + 1900`: los rangos correctos son 1930-1939, 1940-1949 y 1930-1949 (el filtro `yob<=50` no agrega ninguna cohorte). Además, `trim = 30 + 0.25*_n` ubica el primer trimestre de 1930 en 30,25 y el cuarto en 31,00; en las figuras, **el cuarto trimestre de cada año queda sobre la marca del año siguiente**.
+:::
+
+::: {.disc .error #d5}
+**D5.** El patrón vale **en promedio** (1930-1939: `r paste(num(colMeans(pe[d30, 2:5]), 3), collapse = " < ")` años para los trimestres 1 a 4), pero no año por año: los trimestres 1 y 2 son simultáneamente los dos más bajos en solo `r sum(pe$q12)` de `r nrow(pe)` cohortes, y el primer trimestre es el mínimo en `r sum(pe$q1_min)`.
+:::
+
+::: {.disc .error #d6}
+**D6.** Para el salario la afirmación falla en `r sum(!pw$q12)` de `r nrow(pw)` cohortes. Los trimestres 1 y 2 son los dos más bajos en `r sum(pw$q12[d30])` de 10 cohortes de los años treinta y en `r sum(pw$q12[!d30])` de 10 de los cuarenta. Además, entre las cohortes de `r 1900 + min(pw$anio[!d30 & pw$q4_min])` y `r 1900 + max(pw$anio[pw$q4_min])` el **cuarto** trimestre es el de menor salario en `r sum(pw$q4_min & pw$anio >= min(pw$anio[!d30 & pw$q4_min]))` de `r max(pw$anio[pw$q4_min]) - min(pw$anio[!d30 & pw$q4_min]) + 1`.
+:::
+
+```{r ej2-posiciones}
+kable(rbind(
+  data.frame(Variable = "Educación", pe), data.frame(Variable = "Log salario", pw)) |>
+    transform(anio = anio + 1900, T1 = num(T1, 3), T2 = num(T2, 3), T3 = num(T3, 3), T4 = num(T4, 3),
+              q1_min = ifelse(q1_min, "Sí", "No"), q12 = ifelse(q12, "Sí", "No"),
+              q4_min = ifelse(q4_min, "Sí", "No")),
+  row.names = FALSE, align = "llccccccc",
+  col.names = c("Variable", "Cohorte", "T1", "T2", "T3", "T4", "T1 es el mínimo",
+                "T1 y T2 son los dos mínimos", "T4 es el mínimo"),
+  caption = "Agregado en la réplica: medias por cohorte y trimestre.") |>
+  kable_styling(full_width = TRUE, font_size = 12) |>
+  scroll_box(height = "320px")
+```
+
+```{r ej2-tendencias}
+medias_anio <- aggregate(cbind(educ, lw_sem) ~ yob, data = s, FUN = mean)
+pendiente <- function(v, rango) unname(coef(lm(medias_anio[[v]] ~ medias_anio$yob,
+                                               subset = medias_anio$yob %in% rango))[2])
+sal <- setNames(medias_anio$lw_sem, medias_anio$yob)
+```
+
+::: {.disc .metodo #d7}
+**D7.** La figura 2 compara cohortes observadas en un mismo censo: los nacidos más tarde son **más jóvenes**, así que la pendiente refleja sobre todo el perfil edad-ingresos y no una tendencia de largo plazo del salario. El perfil es casi plano en 1930-1939 (pendiente de `r num(pendiente("lw_sem", 30:39), 4)` por cohorte) y descendente en 1940-1949 (`r num(pendiente("lw_sem", 40:49), 4)`), como señala el paper (p. 994-995). Por la misma razón, entre cohortes la educación **sube** mientras el salario **baja** (de `r num(sal["30"], 3)` en 1930 a `r num(sal["49"], 3)` en 1949): la consistencia entre ambas figuras solo puede evaluarse en las diferencias por trimestre dentro de cada año, y ahí tampoco es general ([D6](#d6)).
+:::
+
+Finalmente, en cuanto a los supuestos realizados por Angrist y Krueger (1991), para afirmar que hay una relación causal entre la educación y los ingresos salariales utilizando al trimestre de nacimiento como variable instrumental para los años de educación, en primer lugar, se debe recordar que hay dos supuestos claves en el uso de variables instrumentales, a saber:
+
+- por un lado, se debe tener una variable instrumental que esté parcialmente correlacionada con la variable de interés (para el caso, los años de educación); y
+- por otro lado, dicha variable <mark>no debe tener correlación aparente con la variable explicada del modelo</mark> (para el caso, el logaritmo del salario semanal) más allá de la que se manifiesta a través de la variable explicativa de interés. Es decir, no debe estar directamente correlacionada, esto se conoce como "restricción de exclusión".
+
+En orden con esto y dada la instrumentación del estudio, <mark>los autores demuestran, en lugar de suponer, que en la muestra con la que se trabaja el que ellos llaman patrón estacional no es evidente en las tasas de graduación universitaria ni en la tasa de finalización de estudios superiores. Lo cual está apuntado a satisfacer la restricción de exclusión</mark>. Es decir, el trimestre de nacimiento, dado que no influye en las *performance* educativas, más allá del tiempo que permanecen los adolescentes en el secundario, ni en otros de los aspectos personales, sólo es determinante para explicar la variabilidad en el salario en la medida en que explica los años de educación secundaria obligatoria para este caso. <mark>Completan el cumplimiento de la restricción de exclusión argumentando que, si los estudios psicológicos que encuentran que los nacidos en el principio del año suelen tener mejores habilidades fueran robustos, esto implicaría que el estimador de correlación entre años de educación e ingresos salariales estaría siendo sesgado a la baja y no dándole significatividad cuando no la tiene</mark>. Un supuesto sí explícito que hacen los autores es que la tasa de individuos que desean abandonar el colegio antes de alcanzar la edad que se los permite legalmente es constante a través de los cuatro trimestres de nacimiento. Además, como ya fue manifestado, la correlación entre el trimestre de nacimiento y los años de educación es, claramente, evidente en la figura 1 y en los resultados de las estimaciones <mark>(ver tablas 1 y 2)</mark>.
+
+```{r ej2-exclusion}
+# Pruebas del paper sobre la restricción de exclusión, recalculadas para 1930-1939
+f_trim <- function(rhs, datos) {
+  r0 <- lm(reformulate(rhs, "lw_sem"), datos)
+  r1 <- lm(reformulate(c(rhs, "qob1", "qob2", "qob3"), "lw_sem"), datos)
+  a <- anova(r0, r1); c(F = a$F[2], p = a$`Pr(>F)`[2])
+}
+excl_mco  <- f_trim(c("educ", anios, otros), m)
+excl_univ   <- f_trim(anios, m[m$educ >= 16, ])
+excl_univ_c <- f_trim(c(anios, otros), m[m$educ >= 16, ])
+excl_posg   <- f_trim(anios, m[m$educ > 16, ])
+kable(data.frame(
+  Prueba = c("Trimestres en la ecuación de salarios MCO (con educación y controles)",
+             "Ídem, graduados universitarios (16 años o más), con efectos de año",
+             "Ídem, 16 años o más, con efectos de año y controles",
+             "Ídem, más de 16 años, con efectos de año"),
+  F = num(c(excl_mco["F"], excl_univ["F"], excl_univ_c["F"], excl_posg["F"]), 2),
+  p = pval(c(excl_mco["p"], excl_univ["p"], excl_univ_c["p"], excl_posg["p"]))),
+  row.names = FALSE, align = "lcc", col.names = c("Prueba conjunta", "F", "p")) |>
+  kable_styling(full_width = FALSE)
+```
+
+::: {.disc .impr #d8}
+**D8.** La restricción de exclusión **no se puede demostrar**; el paper ofrece evidencia que la hace verosímil. La ausencia del patrón en graduados universitarios y de posgrado se presenta (p. 980) como apoyo a que la relación entre trimestre y escolaridad **se debe a las leyes** de asistencia obligatoria, y aun así la tabla I encuentra diferencias significativas en la graduación universitaria. La evidencia dirigida a la exclusión está en la sección III y no se menciona: el trimestre no se asocia con el nivel socioeconómico de los padres (Lam y Miron, 1987), no es significativo en la ecuación de salarios MCO (el paper informa p = 0,13 para 1980; réplica: `r pin(excl_mco["p"])`) y, según los autores, no afecta el salario de los graduados universitarios. En la réplica para 1930-1939 esta última prueba **depende de la definición y de los controles**: con 16 años o más de educación `r pin(excl_univ["p"])` (rechaza al 5%); agregando controles, `r pin(excl_univ_c["p"])`; con más de 16 años, `r pin(excl_posg["p"])`. El paper no detalla la especificación usada.
+:::
+
+::: {.disc .impr #d9}
+**D9.** El argumento del paper (p. 1007-1008) no "completa" el cumplimiento de la restricción: es una **posible violación** que se analiza. Si quienes nacen a principios de año, por entrar a la escuela con más edad, tuvieran mayor habilidad no observada, y como además tienen menos educación, el estimador **de variables instrumentales** (no un "estimador de correlación") quedaría sesgado hacia abajo. Por lo tanto, ese mecanismo no podría generar artificialmente un retorno positivo. La frase "no dándole significatividad cuando no la tiene" no tiene sentido tal como está escrita. Los autores aclaran, además, que esa evidencia psicológica no les resulta convincente.
+:::
+
+::: {.disc .impr #d10}
+**D10.** La exogeneidad se define respecto del **término de error** $u$ de la ecuación de salarios (habilidad, entorno familiar y demás determinantes omitidos), no respecto de la variable explicada. Y las tablas 1 y 2 de este trabajo no muestran la relación entre instrumento y educación (son la ecuación de salarios por MCO y por MC2E); no se informa ninguna primera etapa. Si la remisión es al paper, corresponde a su tabla I; su tabla II trata sobre matrícula y leyes de abandono escolar.
+:::
+
+```{r figura1, fig.cap="Figura 1. Años de educación promedio por año y trimestre de nacimiento (1930-1939 y 1940-1949).", fig.width=11, fig.height=4.5}
+graf <- function(datos, y, ylab) {
+  plot(datos$trim, datos[[y]], type = "o", pch = 19, col = "#1f4e79", xlab = "Año-Trimestre",
+       ylab = ylab, las = 1, xlim = range(datos$trim) + c(0, .3))
+  text(datos$trim, datos[[y]], datos$qob, pos = 4, offset = .25, cex = .75, col = "#1f4e79")
+}
+par(mfrow = c(1, 2), mar = c(4, 4.5, 1, 1), mgp = c(3, .7, 0))
+graf(g[g$yob >= 30 & g$yob < 40, ], "table1", "Años de educación promedio")
+graf(g[g$yob >= 40 & g$yob <= 50, ], "table1", "Años de educación promedio")
+```
+
+Fuente: Elaboración propia.
+
+```{r figura2, fig.cap="Figura 2. Logaritmo del salario semanal promedio por año y trimestre de nacimiento (1930-1949).", fig.width=9, fig.height=5.5}
+par(mar = c(4, 4.5, 1, 1), mgp = c(3, .7, 0))
+graf(g, "table2", "Logaritmo del salario semanal promedio")
+```
+
+Fuente: Elaboración propia.
+
+# Ejercicio 3
+
+::: {.enunciado}
+Estimar el retorno de la educación utilizando las mismas especificaciones que en el ejercicio (1). En este caso, utilizar una estimación por 2SLS, instrumentando la variable educación por los distintos trimestres y años de nacimiento. Comparar las estimaciones con los resultados obtenidos en el ejercicio (1).
+:::
+
+```{r ej3-comparacion}
+hausman <- Map(function(i, o) {
+  dif <- i$b - o$b; se <- sqrt(i$se^2 - o$se^2); c(dif = dif, se = se, p = pz(dif, se))
+}, iv, ols)
+```
+
+En la tabla 2, se presenta la estimación por MC2E del modelo estimado anteriormente, <mark>instrumentando la variable educación por los distintos trimestres y años de nacimiento</mark>, bajo las mismas tres especificaciones presentadas en la estimación por MCO. Se puede observar que, en todas las especificaciones propuestas, la variable años de educación es estadísticamente significativa y, en particular, un año más de educación aumenta, en promedio, 8,91%, 7,6% y 6% (especificaciones (i), (ii) y (iii), respectivamente) el salario semanal (*céteris páribus*). Comparando estas estimaciones por MC2E con los resultados obtenidos en las estimaciones por MCO, se observa que el retorno a la educación es mayor bajo las especificaciones (i) y (ii), mientras que es menor bajo la especificación (iii)^[<mark>El "sesgo por endogeneidad" del método de variables instrumentales generalizado</mark> (conocido como método de mínimos cuadrados en dos etapas) se puede ver como un "sesgo por variable omitida", en donde la variable que se omite son los residuos de *educ* en los instrumentos ($Z$), aquella parte que explica *educ* conjuntamente con los instrumentos y que está correlacionada con el término de error del modelo ($u$).]. <mark>Es decir, existe un sesgo negativo para las dos primeras especificaciones y un sesgo positivo para la última especificación</mark>. <mark>Adicionalmente, al igual que en la estimación por MCO, la capacidad explicativa del modelo ($R^2$) es mayor en la especificación (iii)</mark>.
+
+```{r tabla2}
+tabla_espec(iv, "Tabla 2. Estimaciones por mínimos cuadrados en dos etapas (MC2E).")
+```
+
+`r nota_tabla`
+
+::: {.disc .impr #d11}
+**D11.** Como indica el *do-file*, los instrumentos excluidos son las **interacciones trimestre × año de nacimiento** (3 trimestres × 10 cohortes = 30 variables); los años de nacimiento entran además como controles, por lo que no pueden ser instrumentos. Al agregar edad y edad al cuadrado, que se construyen con año y trimestre, solo `r iv[[2]]$gl` de esas interacciones aportan variación independiente en (ii) y (iii).
+:::
+
+```{r ej3-diagnostico}
+kable(data.frame(
+  e = paste("Esp.", names(iv)), F = num(sapply(iv, `[[`, "F"), 2), gl = sapply(iv, `[[`, "gl"),
+  dif = num(sapply(hausman, `[[`, "dif"), 4), se = num(sapply(hausman, `[[`, "se"), 4),
+  p = pval(sapply(hausman, `[[`, "p"))), row.names = FALSE, align = "lccccc",
+  col.names = c("Especificación", "F de primera etapa", "Instrumentos", "MC2E − MCO",
+                "EE de la diferencia", "p"),
+  caption = "Agregado en la réplica: fuerza de los instrumentos y comparación con MCO (prueba tipo Hausman para el coeficiente de educación).") |>
+  kable_styling(full_width = FALSE)
+```
+
+::: {.disc .metodo #d12}
+**D12.** Los instrumentos son **débiles**: el estadístico F de la primera etapa es `r paste(num(sapply(iv, "[[", "F"), 1), collapse = "; ")`, muy por debajo de la referencia usual de 10 (Staiger y Stock, 1997). Con muchos instrumentos débiles, MC2E está sesgado hacia MCO y la inferencia convencional es poco confiable, aun con `r num(nrow(m))` observaciones; es la crítica de Bound, Jaeger y Baker (1995) a este paper. El trabajo no lo menciona.
+:::
+
+::: {.disc .error #d13}
+**D13.** Ninguna diferencia entre MC2E y MCO es estadísticamente significativa (`r paste0(names(hausman), ": ", sapply(hausman, function(h) pin(h["p"])), collapse = "; ")`). Con estos errores estándar no se puede afirmar que MCO tenga un sesgo negativo en (i) y (ii) ni positivo en (iii). El paper concluye lo contrario de lo que sugiere el texto: ambas estimaciones son muy similares y la diferencia no es significativa (p. 998).
+:::
+
+::: {.disc .metodo #d14}
+**D14.** En MC2E el $R^2$ no mide capacidad explicativa en el sentido habitual: se calcula con residuos que usan la educación observada, no descompone la varianza (puede ser negativo) y no sirve para comparar especificaciones ni contra MCO.
+:::
+
+::: {.disc .impr #d15}
+**D15.** La nota confunde dos cosas. La representación de "variable omitida" (enfoque de función de control) explica el sesgo de **MCO**: si se agrega a la regresión de salarios el residuo $\hat v$ de la primera etapa, el coeficiente de *educ* es el de MC2E, de modo que lo que MCO omite es $\hat v$, la parte de *educ* **no** explicada por los instrumentos ni por los controles. No es un sesgo del método de variables instrumentales.
+:::
+
+# Ejercicio 4
+
+::: {.enunciado}
+Comprobar si el estimador por variables instrumentales del logaritmo del salario semanal en la educación (iv: qob1) coincide con el estimador de Wald de los retornos de la educación. Para ello, obtener el estimador de Wald aplicando su fórmula, presentar la fórmula y los valores intermedios obtenidos para realizar el cálculo. Adicionalmente, obtener, por el método de mínimos cuadrados, cuál es el estimador de los retornos de la educación en un modelo bivariado.
+:::
+
+Considerar el siguiente modelo de regresión simple:
+
+$$y_i = \beta_0 + \beta_1 x_i + u_i,$$
+
+donde $E(u_i \mid x_i) \neq 0$. <mark>Las suposiciones de este modelo son (a) el término de error tiene un valor esperado de cero y (b) la correlación entre la variable instrumental y el término de error es cero.</mark> Estas condiciones de la población imponen las siguientes condiciones de momento muestrales:
+
+$$E(u) = 0 \;\Longrightarrow\; \sum_{i=1}^{n} (y_i - \beta_0 - \beta_1 x_i) = 0, \tag{1}$$
+
+$$E(zu) = 0 \;\Longrightarrow\; \sum_{i=1}^{n} z_i (y_i - \beta_0 - \beta_1 x_i) = 0. \tag{2}$$
+
+De (1), se obtiene $\hat\beta_0 = \bar y - \hat\beta_1 \bar x$. Reemplazando esta expresión en (2), se obtiene el estimador de Wald:
+
+$$\begin{aligned}
+\sum z_i \left(y_i - \bar y + \hat\beta_1 \bar x - \hat\beta_1 x_i\right) &= 0 \\
+\sum z_i \left[(y_i - \bar y) - \hat\beta_1 (x_i - \bar x)\right] &= 0 \\
+\sum z_i (y_i - \bar y) - \hat\beta_1 \sum z_i (x_i - \bar x) &= 0 \\
+\hat\beta_1 &= \Big[\sum z_i (x_i - \bar x)\Big]^{-1} \sum z_i (y_i - \bar y).
+\end{aligned}$$
+
+La variable $z_i = \{0, 1\}$ es una variable *dummy*, por lo que:
+
+$$\begin{aligned}
+\sum z_i (y_i - \bar y) &= N_1 (\bar y_1 - \bar y) \\
+&= N_1 \left(\frac{N_0 \bar y_1 + N_1 \bar y_1}{N} - \frac{N_0 \bar y_0 + N_1 \bar y_1}{N}\right) \\
+&= N_1 \left(\frac{N_0 \bar y_1 - N_0 \bar y_0}{N}\right) = \frac{N_1 N_0}{N} (\bar y_1 - \bar y_0).
+\end{aligned}$$
+
+Por lo tanto, el estimador de Wald se puede escribir como:
+
+$$\hat\beta_{Wald} = \frac{\frac{N_1 N_0}{N} (\bar y_1 - \bar y_0)}{\frac{N_1 N_0}{N} (\bar x_1 - \bar x_0)} = \frac{\bar y_1 - \bar y_0}{\bar x_1 - \bar x_0}.$$
+
+::: {.disc .impr #d16}
+**D16.** Falta la condición de **relevancia**, $Cov(z, x) \neq 0$ (aquí, $\bar x_1 \neq \bar x_0$), sin la cual el denominador es cero y el estimador no existe. Además, las condiciones (1) y (2) son muestrales y deberían escribirse con $\hat\beta_0$ y $\hat\beta_1$. El álgebra restante es correcta.
+:::
+
+<mark>En la tabla 3, se presentan estimaciones de un modelo bivariado.</mark>
+
+```{r ej4-wald}
+g1 <- m$qob1 == 1; N1 <- sum(g1); N0 <- sum(!g1)
+y1 <- mean(m$lw_sem[g1]); y0 <- mean(m$lw_sem[!g1])
+x1 <- mean(m$educ[g1]);   x0 <- mean(m$educ[!g1])
+wald <- (y1 - y0) / (x1 - x0)
+
+# ttest ... , by(z): error estándar de la diferencia con varianza común
+se_dif <- function(v) {
+  a <- m[[v]][g1]; b <- m[[v]][!g1]
+  sqrt(((N1 - 1) * var(a) + (N0 - 1) * var(b)) / (N1 + N0 - 2) * (1 / N1 + 1 / N0))
+}
+# sureg (lw_sem z) (educ z) + nlcom: método delta
+Z <- cbind(1, as.numeric(g1))
+E <- qr.resid(qr(Z), cbind(m$lw_sem, m$educ))
+Vs <- kronecker(crossprod(E) / nrow(m), solve(crossprod(Z)))[c(2, 4), c(2, 4)]
+grad <- c(1 / (x1 - x0), -(y1 - y0) / (x1 - x0)^2)
+se_wald <- sqrt(drop(t(grad) %*% Vs %*% grad))
+```
+
+```{r ej4-intermedios}
+kable(data.frame(
+  c("Observaciones", "Log del salario semanal", "Años de educación"),
+  c(num(N1), num(y1, 4), num(x1, 4)),
+  c(num(N0), num(y0, 4), num(x0, 4)),
+  c("", num(y1 - y0, 5), num(x1 - x0, 4)),
+  c("", paste0("(", num(se_dif("lw_sem"), 5), ")"), paste0("(", num(se_dif("educ"), 4), ")"))),
+  row.names = FALSE, align = "lcccc",
+  col.names = c("", "1er trimestre (z = 1)", "2do a 4to (z = 0)", "Diferencia", "Error estándar"),
+  caption = "Agregado en la réplica: valores intermedios del estimador de Wald.") |>
+  kable_styling(full_width = FALSE)
+```
+
+$$\hat\beta_{Wald} = \frac{`r num(y1, 6)` - `r num(y0, 6)`}{`r num(x1, 6)` - `r num(x0, 6)`} = \frac{`r num(y1 - y0, 6)`}{`r num(x1 - x0, 6)`} = `r num(wald, 4)`.$$
+
+::: {.disc .impr #d17}
+**D17.** El enunciado pide presentar **los valores intermedios** del cálculo y el PDF solo informa la fórmula y el resultado, aunque el *do-file* los obtiene (`mean`, `ttest`). La tabla y la expresión anteriores completan esa parte.
+:::
+
+Se puede observar que el estimador de Wald coincide con el estimador MC2E, por lo que ambos implican que un año más de educación aumenta, en promedio, 10,2% el salario semanal. <mark>Adicionalmente, el estimador MCO es menor a estos, por lo que, al igual que en el caso multivariado, existe un sesgo negativo.</mark>
+
+```{r tabla3}
+t3 <- cbind(
+  c("Años de educación", "", "Observaciones", "R²"),
+  Wald = c(paste0(num(wald, 4), estrellas(pz(wald, se_wald))), paste0("(", num(se_wald, 4), ")"),
+           num(nrow(m)), "---"),
+  MC2E = c(celda_b(w2), celda_se(w2), num(w2$n), num(w2$r2, 4)),
+  MCO  = c(celda_b(o2), celda_se(o2), num(o2$n), num(o2$r2, 4)))
+kable(t3, row.names = FALSE, caption = "Tabla 3. Estimaciones del modelo bivariado.",
+      col.names = c("Variable", "Wald", "MC2E", "MCO"), align = "lccc") |>
+  kable_styling(full_width = FALSE) |>
+  column_spec(4, extra_css = "white-space: nowrap;") |>
+  row_spec(2, extra_css = "border-bottom: 1px solid #333;")
+dif2 <- w2$b - o2$b; se_dif2 <- sqrt(w2$se^2 - o2$se^2); p_dif2 <- pz(dif2, se_dif2)
+```
+
+`r nota_tabla`
+
+::: {.disc .error #d18}
+**D18.** El coeficiente MCO es **`r num(o2$b, 4)`** (`r num(o2$b, 6)`), no <mark>0,0701</mark> como figura en la tabla 3 del PDF. La tabla III del paper también informa 0,0709. Es un error de transcripción: el error estándar y el $R^2$ coinciden.
+:::
+
+::: {.disc .error #d19}
+**D19.** La diferencia entre Wald y MCO es `r num(dif2, 4)` con un error estándar aproximado de `r num(se_dif2, 4)` (`r pin(p_dif2)`). No es significativa, como advierte el propio paper (p. 997), así que no permite afirmar que MCO esté sesgado hacia abajo. El 10,2% es además una aproximación: $100(e^{\hat\beta}-1) =$ `r num(100 * (exp(wald) - 1), 1)`%.
+:::
+
+# Ejercicio 5
+
+::: {.enunciado}
+Explicar las limitaciones, en términos de validez externa, de los retornos a la educación estimados por los autores. Comentar, además, acerca de la magnitud de la relación entre los años de educación y el instrumento.
+:::
+
+El método de variables instrumentales usa sólo una parte de la variabilidad de la variable de interés, aquella correlacionada con el instrumento y no así la correlacionada con el término de error del modelo ($u$). En consecuencia, la principal dificultad para interpretar los resultados de las estimaciones por variables instrumentales es que no todas las observaciones son afectadas por el instrumento. Por lo tanto, en Angrist y Krueger (1991), <mark>los retornos a la educación estimados por los autores sólo son válidos para el subgrupo de individuos cuyo nivel educativo (variable de interés) fue afectado por el trimestre de nacimiento (instrumento).</mark>
+
+::: {.disc .impr #d20}
+**D20.** La idea es correcta (es un efecto local promedio, LATE), pero la respuesta queda incompleta. Esa interpretación requiere además **monotonicidad** (Imbens y Angrist, 1994): que nacer a principios de año no lleve a nadie a estudiar más. El subgrupo afectado son quienes abandonarían la escuela apenas se los permite la ley, es decir, personas con **baja escolaridad deseada**. Y la muestra son hombres nacidos en Estados Unidos entre 1930 y 1939 y observados en 1980: la extrapolación a mujeres, otras cohortes, otros países, otros niveles educativos o períodos con leyes distintas no está garantizada.
+:::
+
+Por otra parte, en cuanto a la magnitud de la relación entre los años de educación y el instrumento (ver tabla 1 de Angrist y Krueger (1991)), se puede mencionar que, en la muestra de la década del '30, el coeficiente estimado por los autores va de una <mark>disminución del 1,5%</mark> de los años de educación promedio (*céteris páribus*) para los individuos nacidos en el tercer trimestre hasta una <mark>disminución del 12,4%</mark> para los individuos nacidos en el primero, ambos respecto a los nacidos en el cuarto trimestre. Los valores correspondientes para la muestra de la década del '40 van de una <mark>disminución del 1,7%</mark> para los nacidos en el tercer trimestre hasta una <mark>disminución del 8,5%</mark> para los nacidos en el primero.
+
+<mark>Todos los coeficientes tienen significatividad estadística</mark> y económicamente no parecen despreciables, hasta pudieran tener algo para decir sobre la legislación de la escolaridad en Estados Unidos. Además, debe considerarse que <mark>esos efectos pierden magnitud y dejan de ser significativos para individuos que completaron la secundaria y accedieron a educación superior, lo cual nos enseña que el trimestre de nacimiento se relaciona con los años de educación sólo a través de la legislación de escolaridad</mark>.
+
+```{r ej5-tabla1}
+# Tabla I del paper: desvíos respecto de la media móvil MA(+2,-2) de las cohortes vecinas
+variables <- list(
+  "Años de educación"                   = base$educ,
+  "Secundaria completa"                 = as.numeric(base$educ >= 12),
+  "Años de educación (con secundaria)"  = ifelse(base$educ >= 12, base$educ, NA),
+  "Universidad completa"                = as.numeric(base$educ >= 16),
+  "Maestría completa"                   = as.numeric(base$educ >= 18),
+  "Doctorado completo"                  = as.numeric(base$educ >= 20))
+celdas <- paste(base$yob, base$qob)
+tI <- do.call(rbind, lapply(names(variables), function(v) {
+  x <- variables[[v]]
+  medias <- tapply(x, celdas, mean, na.rm = TRUE)
+  medias <- medias[order(names(medias))]
+  n <- length(medias); ma <- setNames(rep(NA_real_, n), names(medias))
+  for (i in 3:(n - 2)) ma[i] <- mean(medias[i + c(-2, -1, 1, 2)])
+  desvio <- x - ma[celdas]
+  do.call(rbind, lapply(list("1930-1939" = 30:39, "1940-1949" = 40:49), function(rango) {
+    ok <- base$yob %in% rango & !is.na(desvio)
+    r <- lm(desvio[ok] ~ factor(base$qob[ok], levels = c(4, 1, 2, 3)))
+    cf <- summary(r)$coefficients[2:4, ]; Fs <- summary(r)$fstatistic
+    data.frame(variable = v, cohorte = paste(range(rango) + 1900, collapse = "-"),
+               n = nobs(r), media = mean(x[ok]),
+               b1 = cf[1, 1], b2 = cf[2, 1], b3 = cf[3, 1],
+               se1 = cf[1, 2], se2 = cf[2, 2], se3 = cf[3, 2],
+               p1 = cf[1, 4], p2 = cf[2, 4], p3 = cf[3, 4], F = Fs[[1]],
+               pF = pf(Fs[1], Fs[2], Fs[3], lower.tail = FALSE)[[1]])
+  }))
+}))
+con_se <- function(b, se) paste0(num(b, 3), " (", num(se, 3), ")")
+kable(data.frame(tI$variable, tI$cohorte, num(tI$media, 2), con_se(tI$b1, tI$se1),
+                 con_se(tI$b2, tI$se2), con_se(tI$b3, tI$se3), num(tI$F, 1), pval(tI$pF)),
+      row.names = FALSE, align = "llcccccc",
+      col.names = c("Variable", "Cohorte", "Media", "Trim. I", "Trim. II", "Trim. III", "F", "p"),
+      caption = "Réplica de la tabla I de Angrist y Krueger (1991): efecto del trimestre de nacimiento respecto del cuarto (errores estándar entre paréntesis).") |>
+  kable_styling(full_width = TRUE, font_size = 12)
+e3 <- tI[1, ]; e4 <- tI[2, ]
+fila <- function(v, coh) tI[tI$variable == v & tI$cohorte == coh, ]
+```
+
+::: {.disc .error #d21}
+**D21.** Los coeficientes de la tabla I están en **años de educación**, no en porcentaje: en 1930-1939, nacer en el primer trimestre se asocia con `r num(-e3$b1, 3)` años menos (alrededor de `r num(-100 * e3$b1 / e3$media, 1)`% de la media de `r num(e3$media, 2)` años) y en el tercero con `r num(-e3$b3, 3)` años menos (`r num(-100 * e3$b3 / e3$media, 2)`%). Lo mismo vale para 1940-1949: el paper informa −0,085 y −0,017 años. La magnitud es pequeña, de alrededor de un décimo de año como máximo, y de ahí la debilidad de los instrumentos ([D12](#d12)).
+:::
+
+::: {.disc .error #d22}
+**D22.** El coeficiente del **tercer trimestre no es significativo** en ninguna de las dos cohortes: `r con_se(e3$b3, e3$se3)`, `r pin(e3$p3)`, en 1930-1939; y `r con_se(e4$b3, e4$se3)`, `r pin(e4$p3)`, en 1940-1949 (el paper informa −0,015 (0,016) y −0,017 (0,011)). Lo que sí es altamente significativo es la prueba F conjunta de los tres trimestres.
+:::
+
+```{r ej5-post}
+sec <- fila("Años de educación (con secundaria)", "1930-1939")
+uni <- fila("Universidad completa", "1930-1939")
+mas <- fila("Maestría completa", "1930-1939")
+```
+
+::: {.disc .impr #d23}
+**D23.** El patrón se atenúa mucho, pero no desaparece por completo. Entre quienes completaron la secundaria (1930-1939), el primer trimestre no difiere del cuarto (`r con_se(sec$b1, sec$se1)`), pero el segundo sí (`r con_se(sec$b2, sec$se2)`) y la prueba conjunta rechaza (`r pin(sec$pF)`). En graduación universitaria el primer trimestre es significativo (`r con_se(uni$b1, uni$se1)`; prueba conjunta `r pin(uni$pF)`). Para maestría en esa cohorte no se rechaza (`r pin(mas$pF)`), aunque sí en 1940-1949. El paper describe la evidencia como un **apoyo** a que la relación opera por las leyes de escolaridad (p. 989), no como una prueba de que sea la única vía.
+:::
+
+# Ejercicio 6 (opcional)
+
+::: {.enunciado}
+¿Se le ocurre algún instrumento alternativo para estimar los retornos a la educación (en Argentina)? Si el instrumento propuesto no es válido, remarcar problemas y limitaciones.
+:::
+
+::: {.disc .impr #d24}
+**D24.** El PDF reproduce el enunciado, con el título resaltado, y **no incluye respuesta**. El *do-file* tampoco tiene código para este ejercicio. La réplica no agrega una.
+:::
+
+# Referencias
+
+Angrist, J. D. y Krueger, A. B. (1991). Does Compulsory School Attendance Affect Schooling and Earnings? *The Quarterly Journal of Economics*, 106(4), 979-1014. Recuperado de <https://www.jstor.org/stable/2937954>
+
+Obras citadas solo en los recuadros de la réplica:
+
+- Bound, J., Jaeger, D. A. y Baker, R. M. (1995). Problems with Instrumental Variables Estimation When the Correlation Between the Instruments and the Endogenous Explanatory Variable is Weak. *Journal of the American Statistical Association*, 90(430), 443-450.
+- Imbens, G. W. y Angrist, J. D. (1994). Identification and Estimation of Local Average Treatment Effects. *Econometrica*, 62(2), 467-475.
+- Lam, D. y Miron, J. A. (1987). *The Seasonality of Births in Human Populations*. Population Studies Center Research Report N° 87-114, University of Michigan (citado según la bibliografía de Angrist y Krueger).
+- Staiger, D. y Stock, J. H. (1997). Instrumental Variables Regression with Weak Instruments. *Econometrica*, 65(3), 557-586.
+
+El enunciado del trabajo práctico fecha una vez el paper en 1999; la fecha correcta es 1991, que es la que usan las respuestas.
+
+# Verificación {#verificacion -}
+
+## Contra el PDF
+
+Cada cifra recalculada se compara con la publicada, redondeada a los mismos decimales. La única que no coincide es la de [D18](#d18).
+
+```{r verif-pdf}
+comparar <- function(nombre, r, publicado, dec) {
+  ok <- abs(round(r, dec) - publicado) < 10^-dec / 2
+  data.frame(Tabla = nombre, Cifras = length(publicado), Coinciden = sum(ok))
+}
+resumen <- function(lista) sapply(lista, function(r) c(r$b, r$se, r$r2))
+ver <- rbind(
+  comparar("Tabla 1 (coeficiente, EE, R²)", resumen(ols),
+           cbind(c(.0711, .0003, .1177), c(.0711, .0003, .1178), c(.0632, .0003, .1650)), 4),
+  comparar("Tabla 2 (coeficiente, EE, R²)", resumen(iv),
+           cbind(c(.0891, .0161, .1102), c(.0760, .0290, .1172), c(.0600, .0290, .1648)), 4),
+  comparar("Tabla 3 (coeficientes, EE, R²)", c(wald, se_wald, w2$b, w2$se, w2$r2, o2$b, o2$se, o2$r2),
+           c(.1020, .0239, .1020, .0239, .0946, .0701, .0003, .1173), 4),
+  comparar("Observaciones (tablas 1 a 3)", c(sapply(c(ols, iv), `[[`, "n"), nrow(m), w2$n, o2$n),
+           rep(329509, 9), 0))
+kable(ver) |> kable_styling(full_width = FALSE)
+```
+
+## Contra el paper
+
+La tabla V incluye una especificación intermedia, con controles y sin edad, que el trabajo práctico no estima; se agrega aquí.
+
+```{r verif-paper}
+espec_v <- list(espec[["(i)"]], espec[["(ii)"]], c(anios, otros), espec[["(iii)"]])
+mco_v <- list(ols[[1]], ols[[2]], mco(c(anios, otros)), ols[[3]])
+iv_v  <- list(iv[[1]], iv[[2]], mc2e(c(anios, otros), instrum), iv[[3]])
+tv <- data.frame(
+  Columna = paste0("Col. ", 1:8, ": ", rep(c("MCO", "MC2E"), 4)),
+  Replica = unlist(Map(function(o, i) c(con_se_o = paste0(num(o$b, 4), " (", num(o$se, 4), ")"),
+                                        paste0(num(i$b, 4), " (", num(i$se, 4), ")")), mco_v, iv_v)),
+  Paper = c("0,0711 (0,0003)", "0,0891 (0,0161)", "0,0711 (0,0003)", "0,0760 (0,0290)",
+            "0,0632 (0,0003)", "0,0806 (0,0164)", "0,0632 (0,0003)", "0,0600 (0,0299)"),
+  chi_r = unlist(lapply(iv_v, function(i) c("", paste0(num(i$chi, 1), " [", i$gl_chi, "]")))),
+  chi_p = c("", "25,4 [29]", "", "23,1 [27]", "", "22,5 [29]", "", "19,6 [27]"))
+kable(tv, row.names = FALSE, align = "lcccc",
+      col.names = c("Tabla V", "Réplica: educación (EE)", "Paper: educación (EE)",
+                    "Réplica: χ² [gl]", "Paper: χ² [gl]")) |>
+  kable_styling(full_width = FALSE)
+```
+
+En la columna (8) el paper imprime un error estándar de 0,0299; con estos datos es `r num(iv[[3]]$se, 4)`, el valor que informa el PDF.
+
+```{r verif-paper-3-1}
+# Tabla III, panel B
+t3p <- c(5.8916, 5.9027, -.01110, .00274, 12.6881, 12.7969, -.1088, .0132, .1020, .0239, .0709, .0003)
+t3r <- c(y1, y0, y1 - y0, se_dif("lw_sem"), x1, x0, x1 - x0, se_dif("educ"), wald, se_wald, o2$b, o2$se)
+dec3 <- c(4, 4, 5, 5, 4, 4, 4, 4, 4, 4, 4, 4)
+# Tabla I: coeficientes de los trimestres I a III
+tIp <- rbind(c(-.124, -.086, -.015), c(-.085, -.035, -.017), c(-.019, -.020, -.004),
+             c(-.015, -.012, -.002), c(-.004, .051, .012), c(.005, .043, -.003),
+             c(-.005, .003, .002), c(-.003, .004, .000), c(-.001, .002, -.001),
+             c(.000, .004, .001), c(.002, .003, .000), c(-.002, .001, -.001))
+difI <- abs(as.matrix(tI[, c("b1", "b2", "b3")]) - tIp)
+ok_I <- abs(round(as.matrix(tI[, c("b1", "b2", "b3")]), 3) - tIp) < 5e-4
+vp <- data.frame(
+  Tabla = c("Tabla III, panel B", "Tabla I, 1930-1939", "Tabla I, 1940-1949"),
+  Cifras = c(length(t3p), 18, 18),
+  Coinciden = c(sum(abs(round(t3r, dec3) - t3p) < 10^-dec3 / 2),
+                sum(ok_I[tI$cohorte == "1930-1939", ]), sum(ok_I[tI$cohorte == "1940-1949", ])))
+kable(vp) |> kable_styling(full_width = FALSE)
+c(max_diferencia_tabla_I = max(difI), n_1930s = tI$n[1], n_1940s = tI$n[2])
+```
+
+La tabla I se reproduce con los mismos tamaños de muestra que informa el paper (312.718 y 457.181) y diferencias de a lo sumo `r num(max(difI), 3)` en los coeficientes. La nota de la tabla III del paper indica 327.509 observaciones para 1930-1939, frente a las `r num(nrow(m))` de los datos y de la tabla V.
+
+## Contra las figuras de Stata
+
+Los archivos `.gph` guardan las series graficadas. Sus rótulos de eje difieren de los del PDF (corresponden a una versión anterior del comando), pero los datos son comparables.
+
+```{r verif-gph}
+# Series (sersets) guardadas dentro de un .gph
+leer_gph <- function(archivo) {
+  b <- readBin(archivo, "raw", file.size(archivo))
+  ini <- grepRaw("sersetreadwrite", b, all = TRUE, fixed = TRUE)
+  fin <- grepRaw("<EndSersetData>", b, all = TRUE, fixed = TRUE)
+  lapply(seq_along(ini), function(k) {
+    i <- ini[k]
+    nv <- readBin(b[i + 18:21], "integer", size = 4, endian = "little")
+    n  <- readBin(b[i + 22:25], "integer", size = 4, endian = "little")
+    tipo <- as.integer(b[i + 25 + seq_len(nv)])          # 251 a 255: byte, int, long, float, double
+    tam <- c(1, 2, 4, 4, 8)[tipo - 250]
+    mat <- matrix(b[(fin[k] - 2 - n * sum(tam)):(fin[k] - 3)], nrow = sum(tam))
+    desde <- cumsum(c(0, tam))
+    lapply(seq_len(nv), function(j)
+      readBin(as.vector(mat[desde[j] + seq_len(tam[j]), ]),
+              if (tipo[j] >= 254) "double" else "integer", n, size = tam[j], endian = "little"))
+  })
+}
+# Distancia entre cada serie de R y la serie más parecida del gráfico
+cotejar <- function(archivo, series) {
+  if (!file.exists(archivo)) return(NULL)
+  s <- unlist(leer_gph(archivo), recursive = FALSE)
+  data.frame(Archivo = basename(archivo), Serie = names(series),
+    Puntos = lengths(series),
+    Dif = sapply(series, function(y)
+      min(sapply(s, function(z) if (length(z) == length(y)) max(abs(z - y)) else Inf))))
+}
+a <- g[g$yob < 40, ]; b <- g[g$yob >= 40, ]
+gph <- rbind(
+  cotejar("Figuras/Figura 1 (a).gph", list("Educación media" = a$table1, "trim" = a$trim, "Trimestre" = a$qob)),
+  cotejar("Figuras/Figura 1 (b).gph", list("Educación media" = b$table1, "trim" = b$trim, "Trimestre" = b$qob)),
+  cotejar("Figuras/Figura 2.gph", list("Log salario medio" = g$table2, "trim" = g$trim, "Trimestre" = g$qob)))
+kable(transform(gph, Dif = format(Dif, scientific = TRUE, digits = 2)), row.names = FALSE,
+      col.names = c("Archivo", "Serie", "Puntos", "Máxima diferencia"), align = "llcr") |>
+  kable_styling(full_width = FALSE)
+```
+
+```{r sesion}
+sessionInfo()
+```

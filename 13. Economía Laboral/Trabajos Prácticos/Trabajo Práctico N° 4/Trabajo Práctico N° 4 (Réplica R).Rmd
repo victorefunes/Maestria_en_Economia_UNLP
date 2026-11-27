@@ -1,0 +1,604 @@
+---
+title: "Trabajo Práctico N° 4 — Réplica en R"
+subtitle: "Maestría en Economía UNLP - Economía Laboral. Respuestas originales: Juan Menduiña"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+    self_contained: true
+    code_folding: hide
+---
+
+```{css, echo=FALSE}
+mark { background: #ffe27a; padding: 0 2px; }
+.disc { border-left: 6px solid; border-radius: 4px; padding: 10px 14px; margin: 14px 0; font-size: 0.95em; }
+.disc p:last-child { margin-bottom: 0; }
+.error { border-color: #c0392b; background: #fdecea; }
+.impr  { border-color: #d68910; background: #fef5e7; }
+.metodo{ border-color: #2874a6; background: #eaf2f8; }
+.enunciado { font-style: italic; color: #444; }
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 8, fig.height = 5.5, dpi = 120)
+library(haven); library(knitr); library(kableExtra); library(sandwich)
+
+num <- function(x, d = 0) {
+  x <- ifelse(abs(x) < 10^-d / 2, 0, x)            # evita "-0,000"
+  formatC(x, format = "f", digits = d, big.mark = ".", decimal.mark = ",")
+}
+pval <- function(p) ifelse(p < .001, "< 0,001", num(p, 3))
+pin <- function(p) ifelse(p < .001, "p < 0,001", paste("p =", num(p, 3)))
+estrellas <- function(p) ifelse(p < .01, "***", ifelse(p < .05, "**", ifelse(p < .1, "*", "")))
+```
+
+# Cómo leer este documento {-}
+
+El texto de cada ejercicio es el del PDF *Trabajo Práctico N° 4 (R)*. El código replica en R los archivos `Datos/Trabajo Práctico N° 4.do` y `Datos/prepara_base.do`, y las tablas, las figuras y los números de los recuadros se calculan a partir de `Datos/panel-arg.dta`. Lo <mark>resaltado</mark> es una frase, un número o un rótulo con alguna discrepancia, explicada en el recuadro correspondiente:
+
+::: {.disc .error}
+**Error**: la afirmación contradice los datos o el *do-file*, o el cálculo es incorrecto.
+:::
+
+::: {.disc .impr}
+**Imprecisión**: redacción, rótulo, formato u omisión que puede inducir a error.
+:::
+
+::: {.disc .metodo}
+**Observación metodológica**: la conclusión depende de una decisión discutible o no documentada.
+:::
+
+**Datos.** `Datos/panel-arg.dta` es el panel ya construido (formato largo, personas con las cuatro entrevistas). Los *scripts* de `Datos/Bases` unen y apilan las bases de la EPH, pero no generan varias variables que usa el trabajo (`relacion_laboral`, `djubila`, `empresa`, `qipcf`, `pea`), de modo que la réplica parte de ese archivo.
+
+**Resultado de la réplica.** Las matrices de las tablas 1 a 4 y las figuras 1 y 2 se reproducen en R; en la tabla 5 difieren dos coeficientes en el cuarto decimal ([D19](#d19)). Los problemas principales son una variación mal calculada ([D1](#d1)), dos afirmaciones sobre las figuras que no se cumplen en todas las cohortes ([D12](#d12), [D13](#d13)) y, sobre todo, el **efecto de la edad**: la fórmula está mal derivada y la conclusión de que es siempre negativo es falsa ([D17](#d17), [D18](#d18)).
+
+| N° | Ej. | Tipo | Discrepancia |
+|----|-----|------|--------------|
+| [D1](#d1) | 1 | Error | Los inactivos aumentan 1,34 puntos, no 1,24 |
+| [D2](#d2) | 1 | Metodológica | Qué miden las variaciones de punta a punta |
+| [D3](#d3) | 1 | Metodológica | La informalidad se mide solo en quienes son asalariados en ambos extremos |
+| [D4](#d4) | 1 | Imprecisión | Tabla 2: categorías sin rótulo y población no aclarada |
+| [D5](#d5) | 1 | Imprecisión | "Cuentapropista" incluye a los empleadores |
+| [D6](#d6) | 1 | Imprecisión | Los totales difieren entre tablas y hay un redondeo |
+| [D7](#d7) | 1 | Imprecisión | Errores de tipeo y de formato |
+| [D8](#d8) | 1 | Metodológica | No se informan las observaciones muestrales |
+| [D9](#d9) | 1 | Metodológica | Panel balanceado: desgaste y control de edad |
+| [D10](#d10) | 2 | Imprecisión | El enunciado transcrito pide distinguir por sexo |
+| [D11](#d11) | 2 | Imprecisión | La transición a ocupado supera el 50% en cinco de siete cohortes |
+| [D12](#d12) | 2 | Error | Permanecer desocupado no es siempre el destino menos frecuente |
+| [D13](#d13) | 2 | Error | El asalariado informal no predomina en todas las cohortes restantes |
+| [D14](#d14) | 2 | Imprecisión | La apertura de los ocupados no es exhaustiva |
+| [D15](#d15) | 2 | Metodológica | Muestras pequeñas sin medidas de precisión |
+| [D16](#d16) | 3 | Imprecisión | La regresión incluye solo asalariados |
+| [D17](#d17) | 3 | Error | Efecto marginal de la edad: falta el factor 2 |
+| [D18](#d18) | 3 | Error | El efecto cambia de signo cerca de los 44 años; la relación es convexa |
+| [D19](#d19) | 3 | Imprecisión | Dos coeficientes difieren en el cuarto decimal |
+| [D20](#d20) | 3 | Metodológica | Errores estándar sin agrupar por persona |
+| [D21](#d21) | 3 | Metodológica | Estimación sin ponderadores |
+| [D22](#d22) | 3 | Metodológica | Lectura causal con regresores endógenos |
+| [D23](#d23) | 3 | Imprecisión | Efectos por año sin interpretar y detalles de la tabla |
+
+# Datos y funciones
+
+```{r datos}
+base <- as.data.frame(zap_labels(read_dta("Datos/panel-arg.dta")))
+
+# prepara_base.do
+base$informal <- 1 - base$djubila
+base$cond_act <- NA
+base$cond_act[which(base$ocupado == 1)]    <- 1
+base$cond_act[which(base$desocupado == 1)] <- 2
+base$cond_act[which(base$pea == 0)]        <- 3
+rl <- base$relacion_laboral
+base$rel_ocup <- NA
+base$rel_ocup[which(rl %in% c(1, 3))]                <- 1
+base$rel_ocup[which(rl == 2 & base$informal == 0)]   <- 2
+base$rel_ocup[which(rl == 2 & base$informal == 1)]   <- 3
+base$rel_ocup[which(rl == 5)]                        <- 4
+base$rel_ocup[which(base$cond_act == 3)]             <- 5
+
+# reshape wide, i(idp_h idp_i) j(idp_t)
+vars <- c("pondera", "edad", "qipcf", "informal", "cond_act", "rel_ocup", "relacion_laboral", "hombre")
+ancho <- reshape(base[c("idp_h", "idp_i", "idp_p", "idp_t", vars)], idvar = c("idp_h", "idp_i"),
+                 timevar = "idp_t", v.names = vars, direction = "wide", sep = "_")
+c(observaciones = nrow(base), personas = nrow(ancho), cohortes = length(unique(ancho$idp_p)))
+```
+
+```{r funciones}
+etq <- list(cond_act = c("Ocupado", "Desocupado", "Inactivo"),
+            informal = c("0", "1"),
+            rel_ocup = c("Cuentapropista", "Asal. Formal", "Asal. Informal", "Desocupado", "Inactivo"),
+            qipcf    = as.character(1:5))
+
+# Cohorte p: personas de 25 a 54 años al ingresar (período p); extremo final en p + 5
+cohorte <- function(p, edades = TRUE) {
+  s <- ancho[ancho$idp_p == p, ]
+  if (edades) s <- s[which(s[[paste0("edad_", p)]] >= 25 & s[[paste0("edad_", p)]] <= 54), ]
+  s
+}
+# tabulate v_t v_{t+5} [w = pondera_{t+5}]
+transicion <- function(v, p, s = cohorte(p)) {
+  cod <- if (v == "informal") 0:1 else seq_along(etq[[v]])
+  a <- factor(s[[paste0(v, "_", p)]], cod, etq[[v]])
+  b <- factor(s[[paste0(v, "_", p + 5)]], cod, etq[[v]])
+  ok <- !is.na(a) & !is.na(b)
+  w <- s[[paste0("pondera_", p + 5)]]
+  list(W = unclass(xtabs(w[ok] ~ a[ok] + b[ok])), n = unclass(table(a[ok], b[ok])))
+}
+# Frecuencias con totales, y porcentajes como en el PDF
+completa <- function(W) {
+  m <- rbind(cbind(W, Total = rowSums(W)), Total = c(colSums(W), sum(W)))
+  k <- nrow(W)
+  pct <- 100 * m / m[, ncol(m)]                           # porcentajes por fila
+  pct[1:k, ncol(m)] <- 100 * m[1:k, ncol(m)] / sum(W)     # columna total: peso de cada fila
+  list(frec = m, pct = pct)
+}
+tabla_mt <- function(x, titulo, nombre) {
+  cuerpo <- do.call(rbind, lapply(seq_len(nrow(x$frec)), function(i) rbind(
+    c(rownames(x$frec)[i], num(x$frec[i, ])),
+    c("", paste0("(", num(x$pct[i, ], 2), ")")))))
+  kable(cuerpo, row.names = FALSE, caption = titulo, align = paste0("l", strrep("r", ncol(x$frec))),
+        col.names = c(paste(nombre, "(período 4 ↓ / período 9 →)"), colnames(x$frec))) |>
+    kable_styling(full_width = TRUE, font_size = 12) |>
+    row_spec(nrow(cuerpo) - 2, extra_css = "border-bottom: 1px solid #333;")
+}
+nota_mt <- "Los datos en paréntesis del cuadrante principal corresponden a los porcentajes de cada bloque respecto del total de la categoría en el período 4 y los del total corresponden a los porcentajes de la categoría respecto del total de la muestra. Fuente: Elaboración propia en base a EPHC-INDEC."
+```
+
+# Ejercicio 1
+
+::: {.enunciado}
+Utilizar el panel #4 (trimestre 4 de 2008 al trimestre 1 de 2010) y obtener las matrices de transición punta a punta para la condición de actividad, informalidad, relación ocupacional y quintiles del ipcf. Restringir la muestra a individuos que tengan entre 25 y 54 años de edad al momento de ingreso al panel. Presentar tablas con formato apropiado e interpretar los resultados.
+:::
+
+```{r ej1}
+mt <- lapply(setNames(nm = names(etq)), transicion, p = 4)
+tt <- lapply(mt, function(x) completa(x$W))
+cambio <- lapply(tt, function(x) {
+  k <- nrow(x$frec) - 1; x$pct[k + 1, 1:k] - x$pct[1:k, k + 1]
+})
+```
+
+En las tablas 1 a 4, se presentan las matrices de transición punta a punta para la condición de actividad, la informalidad, la relación ocupacional y los quintiles del ipcf, respectivamente, utilizando el panel #4 (cuarto trimestre de 2008 - primer trimestre de 2010) y restringiendo la muestra a individuos que tengan entre 25 y 54 años de edad al momento de ingresar al panel.
+
+En primer lugar, de punta a punta, por un lado, se puede observar que <mark>aumenta 1,24 puntos porcentuales los inactivos</mark>, en detrimento de los ocupados y de los desocupados, <mark>que disminuyen 0,46 y 0,88 puntos porcentuales</mark>, respectivamente; y, por otro lado, se ve una importante transición de los desocupados, siendo sólo el 19,67% los que se mantienen en esta condición en ambos períodos (ver tabla 1). En segundo lugar, de punta a punta, <mark>se observa una disminución de la informalidad de 1,75 puntos porcentuales</mark> (ver tabla 2). En tercer lugar, de punta a punta, por un lado, se puede observar que aumentan 1,94 y 1,28 puntos porcentuales los cuentapropistas y los inactivos, en detrimento de los asalariados formales, de los asalariados informales y de los desocupados, que disminuyen 0,33, 1,93 y 0,97 puntos porcentuales, respectivamente; y, por otro lado, se ve una importante transición de los desocupados <mark>(en línea con los visto en la tabla 1)</mark> y de los asalariados informales (ver tabla 3). Y, por último, se observa una mayor transición de los quintiles centrales (2, 3 y 4) en comparación a los quintiles extremos (1 y 5) (ver tabla 4).
+
+```{r tabla1}
+tabla_mt(tt$cond_act, "Tabla 1. Matriz de transición punta a punta para la condición de actividad.", "Condición de actividad")
+```
+
+`r nota_mt`
+
+::: {.disc .error #d1}
+**D1.** Los inactivos pasan de `r num(tt$cond_act$pct["Inactivo", "Total"], 2)`% a `r num(tt$cond_act$pct["Total", "Inactivo"], 2)`%, un aumento de **`r num(cambio$cond_act["Inactivo"], 2)` puntos**, no 1,24. Con las caídas informadas (`r num(-cambio$cond_act["Ocupado"], 2)` y `r num(-cambio$cond_act["Desocupado"], 2)`), las tres variaciones solo suman cero con ese valor.
+:::
+
+```{r ej1-tasas}
+f <- tt$cond_act$frec
+desempleo <- 100 * c(f["Desocupado", "Total"] / sum(f[c("Ocupado", "Desocupado"), "Total"]),
+                     f["Total", "Desocupado"] / sum(f["Total", c("Ocupado", "Desocupado")]))
+```
+
+::: {.disc .metodo #d2}
+**D2.** Las variaciones son cambios en la **participación de cada estado en la población de 25 a 54 años** del panel, no en las tasas habituales: la tasa de desempleo (sobre activos) pasa de `r num(desempleo[1], 2)`% a `r num(desempleo[2], 2)`%. Además, se comparan un cuarto trimestre con un primer trimestre, separados por cinco trimestres, por lo que la diferencia mezcla estacionalidad, ciclo y envejecimiento de las mismas personas. No equivale al cambio del mercado laboral entre dos fechas comparables.
+:::
+
+```{r tabla2}
+tabla_mt(tt$informal, "Tabla 2. Matriz de transición punta a punta para la informalidad.", "Informalidad")
+```
+
+`r nota_mt`
+
+```{r ej1-informalidad}
+s4 <- cohorte(4)
+tasa_inf <- function(t, ambos) {
+  ok <- if (ambos) !is.na(s4$informal_4) & !is.na(s4$informal_9)
+        else !is.na(s4[[paste0("informal_", t)]])
+  c(tasa = 100 * weighted.mean(s4[[paste0("informal_", t)]][which(ok)], s4$pondera_9[which(ok)]),
+    n = sum(ok))
+}
+inf <- rbind("Asalariados en ambos extremos (tabla 2)" = c(tasa_inf(4, TRUE), tasa_inf(9, TRUE)),
+             "Todos los asalariados de cada momento" = c(tasa_inf(4, FALSE), tasa_inf(9, FALSE)))
+kable(data.frame(rownames(inf), num(inf[, 1], 2), num(inf[, 2]), num(inf[, 3], 2), num(inf[, 4])),
+      row.names = FALSE, align = "lcccc",
+      col.names = c("Muestra del panel 4", "Informalidad t4 (%)", "Obs.", "Informalidad t9 (%)", "Obs."),
+      caption = "Agregado en la réplica: la tasa de informalidad depende de la muestra.") |>
+  kable_styling(full_width = FALSE)
+```
+
+::: {.disc .metodo #d3}
+**D3.** La tabla 2 solo incluye a quienes son **asalariados con dato de aporte jubilatorio en los dos extremos** (`r num(sum(mt$informal$n))` personas). Esa condición selecciona empleos más estables: la informalidad inicial es `r num(inf[1, 1], 2)`%, contra `r num(inf[2, 1], 2)`% entre todos los asalariados del panel en ese momento. La caída de `r num(-cambio$informal["1"], 2)` puntos vale para ese subgrupo (con todos los asalariados de cada momento es de `r num(inf[2, 1] - inf[2, 3], 2)`), y el texto no lo aclara.
+:::
+
+::: {.disc .impr #d4}
+**D4.** En la tabla 2 las categorías figuran como <mark>0 y 1</mark> sin indicar que 0 es formal y 1 informal (sin derecho a jubilación). Tampoco se dice que la variable solo está definida para asalariados.
+:::
+
+```{r tabla3}
+tabla_mt(tt$rel_ocup, "Tabla 3. Matriz de transición punta a punta para la relación ocupacional.", "Relación ocupacional")
+```
+
+`r nota_mt` En el PDF, el peso de los inactivos en el período 4 figura como <mark>19,36</mark>.
+
+```{r ej1-categorias}
+empleadores <- sapply(c(4, 9), function(t) {
+  k <- which(s4[[paste0("rel_ocup_", t)]] == 1)
+  100 * sum(s4$pondera_9[k][s4[[paste0("relacion_laboral_", t)]][k] == 1]) / sum(s4$pondera_9[k])
+})
+excluidos <- sum(mt$cond_act$n) - sum(mt$rel_ocup$n)
+```
+
+::: {.disc .impr #d5}
+**D5.** La categoría "Cuentapropista" agrupa `relacion_laboral` 1 (**empleador**) y 3 (cuentapropia). En el panel 4 los empleadores son `r num(empleadores[1], 1)`% de ese grupo al inicio y `r num(empleadores[2], 1)`% al final. El rótulo debería ser "empleadores y cuentapropistas".
+:::
+
+::: {.disc .impr #d6}
+**D6.** La tabla 3 suma `r num(tt$rel_ocup$frec["Total", "Total"])` personas expandidas y la tabla 1, `r num(tt$cond_act$frec["Total", "Total"])`. La diferencia (`r num(excluidos)` casos muestrales) corresponde a trabajadores sin salario y a ocupados sin información, que `prepara_base.do` deja sin categoría; no se explica. Por la misma razón los desocupados pesan `r num(tt$rel_ocup$pct["Desocupado", "Total"], 2)`% en la tabla 3 y `r num(tt$cond_act$pct["Desocupado", "Total"], 2)`% en la tabla 1. Además, el peso inicial de los inactivos en la tabla 3 es `r num(tt$rel_ocup$pct["Inactivo", "Total"], 4)`, que redondea a `r num(tt$rel_ocup$pct["Inactivo", "Total"], 2)` y no a 19,36.
+:::
+
+```{r tabla4}
+tabla_mt(tt$qipcf, "Tabla 4. Matriz de transición punta a punta para los quintiles del ipcf.", "Quintil del IPCF")
+```
+
+`r nota_mt` En el PDF las dos primeras frecuencias figuran como <mark>117,584 y 43,570</mark>.
+
+::: {.disc .impr #d7}
+**D7.** En la tabla 4 esas dos cifras usan coma como separador de miles, que en el resto del documento es el separador decimal. En el texto, "con los visto" debe ser "con lo visto" y "aumenta 1,24 puntos porcentuales los inactivos", "aumentan".
+:::
+
+```{r ej1-observaciones}
+obs <- do.call(rbind, Map(function(v, nom) data.frame(
+  Matriz = nom, Observaciones = sum(mt[[v]]$n), minima = min(mt[[v]]$n),
+  desocupados = if ("Desocupado" %in% rownames(mt[[v]]$n)) sum(mt[[v]]$n["Desocupado", ]) else NA),
+  names(etq), c("Condición de actividad", "Informalidad", "Relación ocupacional", "Quintiles")))
+kable(transform(obs, Observaciones = num(Observaciones), desocupados = ifelse(is.na(desocupados), "", num(desocupados))),
+      row.names = FALSE, align = "lccc",
+      col.names = c("Matriz", "Observaciones muestrales", "Celda más chica", "Desocupados al inicio"),
+      caption = "Agregado en la réplica: tamaño muestral detrás de cada matriz.") |>
+  kable_styling(full_width = FALSE)
+```
+
+::: {.disc .metodo #d8}
+**D8.** Las tablas muestran solo frecuencias **expandidas**, que sugieren una precisión que la muestra no tiene: las `r num(tt$cond_act$frec["Desocupado", "Desocupado"])` personas que permanecen desocupadas son `r mt$cond_act$n["Desocupado", "Desocupado"]` observaciones. La clase pide calcular el número de observaciones y los porcentajes.
+:::
+
+```{r ej1-edad}
+ev <- apply(ancho[paste0("edad_", 1:12)], 1, function(e) diff(range(e, na.rm = TRUE)))
+raros <- ev > 2
+dif_edad <- max(sapply(names(etq), function(v) {
+  a <- completa(transicion(v, 4)$W)$pct
+  b <- completa(transicion(v, 4, cohorte(4)[!raros[rownames(cohorte(4))], ])$W)$pct
+  max(abs(a - b))
+}))
+```
+
+::: {.disc .metodo #d9}
+**D9.** El panel conserva solo a quienes tienen las **cuatro entrevistas** y no corrige el desgaste: si quienes se mudan o no responden tienen transiciones distintas, las matrices están sesgadas. El ponderador del período final, indicado por la cátedra, no corrige por sí mismo esa selección. En cuanto a la consistencia, `prepara_panel` controla el sexo; en la base hay además `r num(sum(raros))` personas cuya edad avanza 3 años en cinco trimestres, algo imposible. Excluirlas cambia los porcentajes del panel 4 en a lo sumo `r num(dif_edad, 2)` puntos.
+:::
+
+# Ejercicio 2
+
+::: {.enunciado}
+Utilizar todos los paneles/cohortes, restringir la muestra a individuos de 25 a 54 años de edad al momento de ingresar al panel y obtener:
+
+**(a)** Pr(ocupado o desocupado o inactivo en t+1 | desocupado en t). Es decir, <mark>para las mujeres y varones</mark> en desempleo en t, cuál es su situación ocupacional en t+1.
+:::
+
+```{r ej2}
+coh <- 1:7
+filas <- function(v, estado) {
+  x <- lapply(coh, function(p) transicion(v, p))
+  list(pct = t(sapply(x, function(z) 100 * z$W[estado, ] / sum(z$W[estado, ]))),
+       n = t(sapply(x, function(z) z$n[estado, ])),
+       frec = t(sapply(x, function(z) z$W[estado, ])))
+}
+fa <- filas("cond_act", "Desocupado"); A <- fa$pct
+fb <- filas("rel_ocup", "Desocupado"); B <- fb$pct
+colores <- c("#1a476f", "#90353b", "#55752f", "#e37e00", "#6e8e84")
+barras <- function(M, col) {
+  par(mar = c(3, 4, 1, 11))
+  h <- t(M)
+  x <- barplot(h, col = col, border = NA, names.arg = coh, ylab = "Porcentaje", las = 1, ylim = c(0, 101))
+  y <- apply(h, 2, cumsum) - h / 2
+  text(rep(x, each = nrow(h)), y, num(h, 0), cex = .8, col = "white")
+  # Leyenda a la derecha, en el mismo orden que las barras apiladas
+  legend(x = max(x) + .8, y = 100, legend = rev(colnames(M)), fill = rev(col[seq_len(ncol(M))]),
+         border = NA, bty = "n", cex = .9, xpd = NA)
+}
+```
+
+En la figura 1, se presenta la transición de desocupados por condición de actividad, utilizando todos los paneles. Se puede observar que, de punta a punta, para todas las cohortes, existió una alta transición de desocupados a ocupados <mark>(superando, en casi todos los casos, el 50%)</mark>. Además, hubo un importante movimiento de desocupados a inactivos, <mark>siendo el menor porcentaje los que se mantuvieron como desocupados</mark>.
+
+```{r figura1, fig.cap="Figura 1. Transición de desocupados por condición de actividad (Argentina, 1er. trimestre 2008 - 4to. trimestre 2010)."}
+barras(A, colores[1:3])
+```
+
+Las condiciones de actividad son: "ocupado", "desocupado" e "inactivo". Fuente: Elaboración propia en base a EPHC-INDEC.
+
+```{r tabla-a}
+kable(data.frame(coh, matrix(num(A, 2), 7), num(rowSums(fa$n))), row.names = FALSE, align = "ccccc",
+      col.names = c("Cohorte", colnames(A), "Obs."),
+      caption = "Agregado en la réplica: porcentajes de la figura 1 y observaciones muestrales.") |>
+  kable_styling(full_width = FALSE)
+por_sexo <- do.call(rbind, lapply(coh, function(p) do.call(rbind, lapply(0:1, function(h) {
+  s <- cohorte(p); s <- s[which(s[[paste0("hombre_", p)]] == h), ]
+  z <- transicion("cond_act", p, s)
+  data.frame(Cohorte = p, Sexo = c("Mujeres", "Varones")[h + 1],
+             t(num(100 * z$W["Desocupado", ] / sum(z$W["Desocupado", ]), 1)),
+             n = sum(z$n["Desocupado", ]))
+}))))
+kable(por_sexo, row.names = FALSE, align = "clcccc",
+      col.names = c("Cohorte", "Sexo", colnames(A), "Obs."),
+      caption = "Agregado en la réplica: inciso (a) por sexo (porcentajes).") |>
+  kable_styling(full_width = FALSE)
+```
+
+::: {.disc .impr #d10}
+**D10.** El enunciado transcrito en el PDF pide la situación "para las mujeres y varones", pero ni el *do-file* ni la respuesta distinguen por sexo. El enunciado original (archivo *(P)*) dice "para las personas". La última tabla muestra la apertura; cada celda se basa en muy pocas observaciones.
+:::
+
+::: {.disc .impr #d11}
+**D11.** La transición a ocupado supera el 50% en `r sum(A[, "Ocupado"] > 50)` de `r nrow(A)` cohortes; en las cohortes `r paste(which(A[, "Ocupado"] <= 50), collapse = " y ")` es `r paste0(num(A[A[, "Ocupado"] <= 50, "Ocupado"], 1), "%", collapse = " y ")`.
+:::
+
+::: {.disc .error #d12}
+**D12.** No se cumple en la cohorte 3: permanecen desocupados `r num(A[3, "Desocupado"], 2)`% y pasan a la inactividad `r num(A[3, "Inactivo"], 2)`%. En la cohorte 1 las dos proporciones son prácticamente iguales (`r num(A[1, "Desocupado"], 2)`% y `r num(A[1, "Inactivo"], 2)`%).
+:::
+
+::: {.enunciado}
+**(b)** Repetir (a), pero, en este caso, desagregar la categoría ocupados en cuentapropistas, asalariados formales e informales.
+:::
+
+En la figura 2, se presenta la transición de desocupados por relación ocupacional, utilizando, al igual que en el caso anterior, todos los paneles. Adicionalmente a lo ya mencionado, <mark>se puede observar que la transición de desocupados se ubica, sobre todo, en asalariados informales (excepto en la primer cohorte, que se ubica en asalariados formales)</mark>. En cuanto a las otras dos categorías (cuentapropista y asalariado formal), los resultados comparativos varían bastante dependiendo de la cohorte que se observe: en un extremo, se tiene la cohorte 1, donde el 24% y el 10% de los desocupados en *t* pasan a ser asalariados formales y cuentapropistas en *t+1*, respectivamente; y, en el otro extremo, se tiene la cohorte 3, donde el 5% y el 16% de los desocupados en *t* pasan a ser asalariados formales y cuentapropistas en *t+1*, respectivamente.
+
+```{r figura2, fig.cap="Figura 2. Transición de desocupados por relación ocupacional (Argentina, 1er. trimestre 2008 - 4to. trimestre 2010).", fig.height=6}
+barras(B, colores)
+```
+
+Las relaciones ocupacionales son: "cuentapropista", "asalariado formal", "asalariado informal", "desocupado" e "inactivo". Fuente: Elaboración propia en base a EPHC-INDEC.
+
+```{r tabla-b}
+mayor <- colnames(B)[1:3][apply(B[, 1:3], 1, which.max)]
+kable(data.frame(coh, matrix(num(B, 2), 7), mayor, num(rowSums(fb$n))), row.names = FALSE, align = "cccccclc",
+      col.names = c("Cohorte", colnames(B), "Ocupación más frecuente", "Obs."),
+      caption = "Agregado en la réplica: porcentajes de la figura 2.") |>
+  kable_styling(full_width = TRUE, font_size = 12)
+```
+
+::: {.disc .error #d13}
+**D13.** Entre las tres categorías de ocupados, la informal es la más frecuente en las cohortes `r paste(which(mayor == "Asal. Informal"), collapse = ", ")`. Además de la primera, hay otras excepciones: en la cohorte 6 predomina el asalariado formal (`r num(B[6, "Asal. Formal"], 2)`% contra `r num(B[6, "Asal. Informal"], 2)`%) y en la 7 el cuentapropismo (`r num(B[7, "Cuentapropista"], 2)`% contra `r num(B[7, "Asal. Informal"], 2)`%). En la figura las diferencias quedan ocultas por el redondeo a enteros. Si se consideran las cinco categorías, la inactividad o el desempleo superan a la informalidad en varias cohortes. También, "la primer cohorte" debe ser "la primera cohorte".
+:::
+
+```{r ej2-cobertura}
+dif_oc <- A[, "Ocupado"] - rowSums(B[, 1:3])
+fuera <- rowSums(fa$n) - rowSums(fb$n)
+```
+
+::: {.disc .impr #d14}
+**D14.** La suma de las tres categorías de (b) no es exactamente la categoría "ocupado" de (a): quienes en *t+1* trabajan sin salario o no tienen dato de aporte quedan fuera (`r sum(fuera)` observaciones en total), y los porcentajes de la figura 2 se calculan sobre una base algo menor. Por eso, por ejemplo, la permanencia en el desempleo de la cohorte 3 es `r num(B[3, "Desocupado"], 1)`% en la figura 2 y `r num(A[3, "Desocupado"], 1)`% en la figura 1. "Cuentapropista" incluye empleadores ([D5](#d5)).
+:::
+
+```{r ej2-precision}
+chi_a <- chisq.test(fa$n); chi_b <- chisq.test(fb$n)
+n_coh <- rowSums(fa$n)
+margen <- 100 * 1.96 * sqrt(.25 / range(n_coh))
+```
+
+::: {.disc .metodo #d15}
+**D15.** Cada cohorte tiene entre `r min(n_coh)` y `r max(n_coh)` desocupados. Aun sin considerar el diseño muestral, el margen de error al 95% de una proporción cercana al 50% es de unos ±`r num(margen[2], 0)` a ±`r num(margen[1], 0)` puntos, y muchas comparaciones del texto involucran diferencias menores. La prueba de que las siete cohortes comparten la misma distribución de destinos (sin ponderar) da `r pin(chi_a$p.value)` en (a) y `r pin(chi_b$p.value)` en (b): hay indicios de diferencias entre cohortes en conjunto, pero no se pueden ordenar categorías separadas por pocos puntos. No se informan observaciones ni intervalos.
+:::
+
+# Ejercicio 3
+
+::: {.enunciado}
+Estimar un modelo lineal de probabilidad (MLP) para los individuos entre 25 y 54 años de edad utilizando como variable dependiente informal y como regresores usar hombre, edad, edad2, categorías para empresa y qipcf. Incorporar efectos fijos por año. Presentar coeficiente y error estándar en una tabla con formato apropiado e interpretar los resultados.
+:::
+
+```{r ej3}
+m <- base[which(base$edad >= 25 & base$edad <= 54), ]
+m$edad2 <- m$edad^2
+form <- informal ~ hombre + edad + edad2 + factor(empresa) + factor(qipcf) + factor(ano)
+r <- lm(form, data = m)
+u <- m[rownames(model.frame(r)), ]
+persona <- paste(u$idp_h, u$idp_i)
+ee <- function(V) sqrt(diag(V))
+b <- coef(r); se_rob <- ee(vcovHC(r, type = "HC1"))           # regress ..., robust
+se_per <- ee(vcovCL(r, cluster = persona, type = "HC1"))
+rp <- lm(form, data = m, weights = pondera)
+se_p <- ee(vcovCL(rp, cluster = persona, type = "HC1"))
+giro <- function(x) unname(-x["edad"] / (2 * x["edad2"]))
+efecto <- function(e) 100 * unname(b["edad"] + 2 * b["edad2"] * e)
+```
+
+En la tabla 5, se estima un modelo lineal de probabilidad (MLP) para <mark>los individuos entre 25 y 54 años</mark>, utilizando *informal* como variable dependiente y *hombre*, *edad*, *edad2*, categorías para empresa y *qipcf* como regresores e incorporando efectos fijos por año. Se puede observar, *céteris páribus*, que:
+
+- Ser hombre disminuye la probabilidad de ser informal en 6,35 puntos porcentuales.
+- <mark>Un año más de edad disminuye la probabilidad de ser informal en (-3,61 + 0,04 \* edad) puntos porcentuales</mark>^[<mark>El comportamiento cóncavo de la edad varía el signo del efecto de edad sobre la probabilidad de ser informal cuando ésta es igual a 87,25 años, por lo que, en este caso (que como máximo la edad es igual a 54 años), el efecto es siempre negativo.</mark>].
+- Trabajar en una empresa chica aumenta la probabilidad de ser informal en 43,20 puntos porcentuales, mientras que trabajar en una empresa pública la disminuye en 3,52 puntos porcentuales, ambos respecto a trabajar en una empresa grande.
+- Pertenecer al quintil 2, 3, 4 y 5 del *ipcf* disminuye la probabilidad de ser informal en <mark>19,92</mark>, 30,01, 37,87 y <mark>41,82</mark> puntos porcentuales respecto al quintil 1 del *ipcf*.
+
+```{r tabla5}
+orden <- c("hombre", "edad", "edad2", "factor(empresa)2", "factor(empresa)3",
+           paste0("factor(qipcf)", 2:5), "factor(ano)2009", "factor(ano)2010", "(Intercept)")
+rot <- c("hombre", "edad", "edad2", "empresa: chica", "empresa: pública", paste("qipcf:", 2:5),
+         "año: 2009", "año: 2010", "constante")
+p_rob <- 2 * pt(-abs(b / se_rob), r$df.residual)
+t5 <- do.call(rbind, Map(function(v, e) rbind(
+  c(e, paste0(num(b[v], 4), estrellas(p_rob[v]))), c("", paste0("(", num(se_rob[v], 4), ")"))), orden, rot))
+t5 <- rbind(t5, c("Observaciones", num(nobs(r))), c("R²", num(summary(r)$r.squared, 4)))
+kable(t5, row.names = FALSE, align = "lc", col.names = c("Variables", "Informal"),
+      caption = "Tabla 5. Estimación modelo lineal de probabilidad (MLP).") |>
+  kable_styling(full_width = FALSE) |>
+  row_spec(nrow(t5) - 2, extra_css = "border-bottom: 1px solid #333;")
+```
+
+Los datos en paréntesis corresponden a los errores estándar robustos. Nivel de significatividad: \* al 10%, \*\* al 5%, \*\*\* al 1%. Fuente: Elaboración propia en base a EPHC-INDEC.
+
+```{r ej3-muestra}
+c(personas_25_54_obs = nrow(m), en_la_regresion = nobs(r),
+  asalariados_en_regresion = sum(u$relacion_laboral == 2), personas = length(unique(persona)))
+```
+
+::: {.disc .impr #d16}
+**D16.** `informal` solo está definida para asalariados con respuesta sobre jubilación, así que la regresión **no** corresponde a los individuos de 25 a 54 años sino a los asalariados de esa edad: `r num(nobs(r))` de `r num(nrow(m))` observaciones. Los coeficientes describen la informalidad dentro del empleo asalariado.
+:::
+
+```{r ej3-edad}
+edades <- c(25, 35, 44, 45, 54)
+kable(data.frame(edades, num(efecto(edades), 2), num(-3.61 + .04 * edades, 2)), row.names = FALSE, align = "ccc",
+      col.names = c("Edad", "Efecto marginal correcto (puntos)", "Fórmula del PDF"),
+      caption = "Agregado en la réplica: efecto de un año más de edad sobre la probabilidad de ser informal.") |>
+  kable_styling(full_width = FALSE)
+```
+
+```{r figura-edad, fig.cap="Agregado en la réplica: componente de edad de la probabilidad predicha (diferencia respecto de los 25 años).", fig.height=4}
+e <- 25:54
+par(mar = c(4, 4.5, 1, 1))
+plot(e, 100 * (b["edad"] * (e - 25) + b["edad2"] * (e^2 - 625)), type = "l", lwd = 2, las = 1,
+     xlab = "Edad", ylab = "Puntos porcentuales respecto de los 25 años")
+abline(v = giro(b), lty = 2)
+```
+
+::: {.disc .error #d17}
+**D17.** El efecto marginal de un polinomio cuadrático es $\beta_{edad} + 2\,\beta_{edad2}\,edad$. En puntos porcentuales: **`r num(100 * b["edad"], 2)` + `r num(200 * b["edad2"], 4)` × edad**, no −3,61 + 0,04 × edad: falta el factor 2. El efecto es un cambio con signo, de modo que decir que la probabilidad "disminuye en" una expresión negativa además invierte el sentido.
+:::
+
+::: {.disc .error #d18}
+**D18.** El signo cambia a los **`r num(giro(b), 1)` años**, dentro de la muestra, no a los 87,25 (que resulta de omitir el 2). El efecto es negativo hasta esa edad y **positivo** después: `r num(efecto(54), 2)` puntos a los 54 años. Además, con $\beta_{edad2} > 0$ la relación es **convexa** (forma de U), no cóncava.
+:::
+
+::: {.disc .impr #d19}
+**D19.** El *do-file* sobre `panel-arg.dta` da `r num(b["factor(qipcf)2"], 6)` para el quintil 2 y `r num(b["factor(qipcf)5"], 6)` para el quintil 5, que redondean a `r num(b["factor(qipcf)2"], 4)` y `r num(b["factor(qipcf)5"], 4)`; el PDF informa −0,1992 y −0,4182. El resto de la tabla coincide.
+:::
+
+```{r ej3-robustez}
+col <- function(co, se) paste0(num(co[orden], 4), " (", num(se[orden], 4), ")")
+kable(data.frame(rot, col(b, se_rob), col(b, se_per), col(coef(rp), se_p)), row.names = FALSE, align = "lccc",
+      col.names = c("Variable", "Tabla 5", "EE agrupados por persona", "Ponderada, EE agrupados"),
+      caption = "Agregado en la réplica: inferencia agrupada y estimación ponderada.") |>
+  kable_styling(full_width = TRUE, font_size = 12)
+razon <- range(se_per[orden] / se_rob[orden])
+ajust <- fitted(r)
+```
+
+::: {.disc .metodo #d20}
+**D20.** La base es un panel apilado: `r num(nobs(r))` observaciones de `r num(length(unique(persona)))` personas, con observaciones repetidas correlacionadas. Los errores robustos suponen independencia. Agrupando por persona cambian por un factor de `r num(razon[1], 2)` a `r num(razon[2], 2)` (en casi todos los casos aumentan). Las conclusiones de significatividad al 1% se mantienen.
+:::
+
+::: {.disc .metodo #d21}
+**D21.** La regresión no usa `pondera`, a diferencia de las matrices. Ponderando, por ejemplo, el coeficiente de empresa pública pasa de `r num(b["factor(empresa)3"], 4)` a `r num(coef(rp)["factor(empresa)3"], 4)`, el de hombre de `r num(b["hombre"], 4)` a `r num(coef(rp)["hombre"], 4)` y el punto de giro de la edad de `r num(giro(b), 1)` a `r num(giro(coef(rp)), 1)` años. Los signos principales no cambian.
+:::
+
+::: {.disc .metodo #d22}
+**D22.** Los coeficientes son **asociaciones**. El quintil del ingreso per cápita familiar depende del propio salario, que a su vez se relaciona con la informalidad (causalidad inversa), y el tamaño de la empresa se elige junto con el tipo de empleo. La redacción "disminuye la probabilidad" o "aumenta" atribuye un efecto causal que la regresión no identifica. Además, como en todo modelo lineal de probabilidad, hay valores predichos fuera de [0, 1] (`r num(100 * mean(ajust < 0 | ajust > 1), 1)`% de las observaciones).
+:::
+
+::: {.disc .impr #d23}
+**D23.** Los efectos fijos por año se estiman pero **no se interpretan**: respecto de 2008, la probabilidad de informalidad es `r num(-100 * b["factor(ano)2009"], 2)` puntos menor en 2009 y `r num(-100 * b["factor(ano)2010"], 2)` en 2010, a igualdad de los demás regresores. En la tabla del PDF los niveles de significatividad figuran sin el signo % y los rótulos *Observations* y *R-Squared* quedan en inglés.
+:::
+
+# Verificación {#verificacion -}
+
+## Contra el PDF
+
+Cada cifra recalculada se compara con la publicada, redondeada a los mismos decimales.
+
+```{r verif-pdf}
+comparar <- function(nombre, r, publicado, dec = 0) {
+  r <- unname(c(r)); publicado <- c(publicado)
+  data.frame(Tabla = nombre, Cifras = length(publicado),
+             Coinciden = sum(abs(round(r, dec) - publicado) < 10^-dec / 2))
+}
+M <- function(...) rbind(...)
+F1 <- M(c(881350,26912,61244,969506), c(29782,12047,19411,61240), c(52508,11063,182518,246089), c(963640,50022,263173,1276835))
+P1 <- M(c(90.91,2.78,6.32,75.93), c(48.63,19.67,31.70,4.80), c(21.34,4.50,74.17,19.27), c(75.47,3.92,20.61,100))
+F2 <- M(c(460520,23725,484245), c(34808,113690,148498), c(495328,137415,632743))
+P2 <- M(c(95.10,4.90,76.53), c(23.44,76.56,23.47), c(78.28,21.72,100))
+F3 <- M(c(151509,9097,23274,8172,23162,215214), c(15823,460520,23725,7750,13163,520981),
+        c(44800,34808,113690,9848,24081,227227), c(8219,6819,14744,12047,19411,61240),
+        c(19628,5607,27273,11063,182518,246089), c(239979,516851,202706,48880,262335,1270751))
+P3 <- M(c(70.40,4.23,10.81,3.80,10.76,16.94), c(3.04,88.39,4.55,1.49,2.53,41.00),
+        c(19.72,15.32,50.03,4.33,10.60,17.88), c(13.42,11.13,24.08,19.67,31.70,4.82),
+        c(7.98,2.28,11.08,4.50,74.17,19.36), c(18.88,40.67,15.95,3.85,20.64,100))
+F4 <- M(c(117584,43570,25160,8783,5101,200198), c(65479,82858,60299,34312,6931,249879),
+        c(16507,67230,88027,57559,33953,263276), c(11812,22206,53126,129832,77977,294953),
+        c(4722,5753,19672,68864,172541,271552), c(216104,221617,246284,299350,296503,1279858))
+P4 <- M(c(58.73,21.76,12.57,4.39,2.55,15.64), c(26.20,33.16,24.13,13.73,2.77,19.52),
+        c(6.27,25.54,33.44,21.86,12.90,20.57), c(4.00,7.53,18.01,44.02,26.44,23.05),
+        c(1.74,2.12,7.24,25.36,63.54,21.22), c(16.88,17.32,19.24,23.39,23.17,100))
+fig1 <- M(c(51,25,25), c(62,15,23), c(47,27,25), c(49,20,32), c(56,16,28), c(54,22,24), c(55,18,28))
+fig2 <- M(c(10,24,17,25,25), c(21,15,27,15,23), c(16,5,26,28,25), c(13,11,24,20,32),
+          c(10,22,24,16,28), c(16,19,19,22,24), c(19,16,19,18,28))
+b5 <- c(-.0635,-.0361,.0004,.4320,-.0352,-.1992,-.3001,-.3787,-.4182,-.0190,-.0276,1.2893)
+s5 <- c(.0035,.0021,.0000,.0054,.0037,.0071,.0069,.0067,.0066,.0041,.0047,.0407)
+ver <- rbind(
+  comparar("Tabla 1, frecuencias", tt$cond_act$frec, F1), comparar("Tabla 1, porcentajes", tt$cond_act$pct, P1, 2),
+  comparar("Tabla 2, frecuencias", tt$informal$frec, F2), comparar("Tabla 2, porcentajes", tt$informal$pct, P2, 2),
+  comparar("Tabla 3, frecuencias", tt$rel_ocup$frec, F3), comparar("Tabla 3, porcentajes", tt$rel_ocup$pct, P3, 2),
+  comparar("Tabla 4, frecuencias", tt$qipcf$frec, F4),    comparar("Tabla 4, porcentajes", tt$qipcf$pct, P4, 2),
+  comparar("Figura 1, rótulos", A, fig1), comparar("Figura 2, rótulos", B, fig2),
+  comparar("Tabla 5, coeficientes", b[orden], b5, 4), comparar("Tabla 5, errores estándar", se_rob[orden], s5, 4),
+  comparar("Tabla 5, observaciones", nobs(r), 47317), comparar("Tabla 5, R²", summary(r)$r.squared, .3742, 4))
+kable(ver) |> kable_styling(full_width = FALSE)
+```
+
+## Contra las figuras de Stata
+
+Los archivos `.gph` guardan las frecuencias expandidas con las que Stata calcula los porcentajes de las barras.
+
+```{r verif-gph}
+# Series (sersets) guardadas dentro de un .gph
+leer_gph <- function(archivo) {
+  b <- readBin(archivo, "raw", file.size(archivo))
+  ini <- grepRaw("sersetreadwrite", b, all = TRUE, fixed = TRUE)
+  fin <- grepRaw("<EndSersetData>", b, all = TRUE, fixed = TRUE)
+  lapply(seq_along(ini), function(k) {
+    i <- ini[k]
+    nv <- readBin(b[i + 18:21], "integer", size = 4, endian = "little")
+    n  <- readBin(b[i + 22:25], "integer", size = 4, endian = "little")
+    tipo <- as.integer(b[i + 25 + seq_len(nv)])      # hasta 244: texto; 251 a 255: numéricos
+    tam <- ifelse(tipo <= 244, tipo, c(1, 2, 4, 4, 8)[pmax(tipo - 250, 1)])
+    mat <- matrix(b[(fin[k] - 2 - n * sum(tam)):(fin[k] - 3)], nrow = sum(tam))
+    desde <- cumsum(c(0, tam))
+    lapply(seq_len(nv), function(j) {
+      if (tipo[j] <= 244) return(NULL)
+      readBin(as.vector(mat[desde[j] + seq_len(tam[j]), ]),
+              if (tipo[j] >= 254) "double" else "integer", n, size = tam[j], endian = "little")
+    })
+  })
+}
+cotejar <- function(archivo, M) {
+  if (!file.exists(archivo)) return(NULL)
+  v <- leer_gph(archivo)[[1]][[1]]; v <- v[abs(v) < 1e30]
+  data.frame(Archivo = basename(archivo), Valores = length(v),
+             Dif = if (length(v) == length(M)) format(max(abs(sort(v) - sort(c(M)))), scientific = TRUE, digits = 2) else NA)
+}
+kable(rbind(cotejar("Figuras/Figura 1.gph", fa$frec), cotejar("Figuras/Figura 2.gph", fb$frec)),
+      row.names = FALSE, align = "lcr", col.names = c("Archivo", "Valores", "Máxima diferencia (valores ordenados)")) |>
+  kable_styling(full_width = FALSE)
+```
+
+## Contra las diapositivas de la cátedra
+
+Las diapositivas de L. Ramírez (11 y 12) muestran para el ejercicio 2 porcentajes distintos de los del PDF. La réplica reproduce las diapositivas **sin la restricción de edad**: el trabajo la aplica, como pide el enunciado, y las diapositivas no.
+
+```{r verif-catedra}
+sin_edad <- function(v) t(sapply(coh, function(p) {
+  z <- transicion(v, p, cohorte(p, edades = FALSE))
+  100 * z$W["Desocupado", ] / sum(z$W["Desocupado", ])
+}))
+cat_a <- M(c(49,19,32), c(57,16,27), c(44,25,31), c(46,22,32), c(56,16,28), c(44,23,33), c(46,19,35))
+cat_b <- M(c(11,22,16,19,32), c(14,19,23,16,27), c(11,6,26,26,31), c(9,12,25,22,32),
+           c(13,17,26,16,28), c(9,16,19,23,33), c(12,15,19,19,35))
+kable(rbind(comparar("Diapositiva 11, sin restricción de edad", sin_edad("cond_act"), cat_a),
+            comparar("Diapositiva 12, sin restricción de edad", sin_edad("rel_ocup"), cat_b),
+            comparar("Diapositiva 11, con 25 a 54 años", A, cat_a),
+            comparar("Diapositiva 12, con 25 a 54 años", B, cat_b))) |>
+  kable_styling(full_width = FALSE)
+```
+
+```{r sesion}
+sessionInfo()
+```

@@ -1,0 +1,712 @@
+---
+title: "Trabajo Práctico N° 1 — Réplica en R"
+subtitle: "Maestría en Economía UNLP - Economía Laboral. Respuestas originales: Juan Menduiña"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+    self_contained: true
+    code_folding: hide
+params:
+  exportar: false
+---
+
+```{css, echo=FALSE}
+mark { background: #ffe27a; padding: 0 2px; }
+.disc { border-left: 6px solid; border-radius: 4px; padding: 10px 14px; margin: 14px 0; font-size: 0.95em; }
+.disc p:last-child { margin-bottom: 0; }
+.error { border-color: #c0392b; background: #fdecea; }
+.impr  { border-color: #d68910; background: #fef5e7; }
+.metodo{ border-color: #2874a6; background: #eaf2f8; }
+.enunciado { font-style: italic; color: #444; }
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 8, fig.height = 5, dpi = 120)
+library(haven); library(dplyr); library(knitr); library(kableExtra)
+library(sandwich); library(lmtest)
+
+num <- function(x, d = 0) formatC(x, format = "f", digits = d, big.mark = ".", decimal.mark = ",")
+pval <- function(p) ifelse(p < .001, "< 0,001", num(p, 3))
+pin <- function(p) ifelse(p < .001, "p < 0,001", paste("p =", num(p, 3)))
+estrellas <- function(p) ifelse(p < .01, "***", ifelse(p < .05, "**", ifelse(p < .1, "*", "")))
+```
+
+# Cómo leer este documento {-}
+
+El texto de cada ejercicio es el del PDF *Trabajo Práctico N° 1 (R)*. El código replica en R el archivo `Datos/Trabajo Práctico N° 1.do`, y las tablas, las figuras y los números de los recuadros se calculan a partir de `Datos/ury-0509.dta`. Lo <mark>resaltado</mark> es una frase, un número o un rótulo con alguna discrepancia, explicada en el recuadro correspondiente:
+
+::: {.disc .error}
+**Error**: la afirmación contradice los datos, el *do-file* o el paper, o la inferencia no se sigue de los resultados.
+:::
+
+::: {.disc .impr}
+**Imprecisión**: redacción, rótulo o formato que puede inducir a error.
+:::
+
+::: {.disc .metodo}
+**Observación metodológica**: el resultado depende de una decisión discutible o no documentada.
+:::
+
+**Resultado de la réplica.** Las estimaciones de las tablas 2 a 5 y las figuras 1 y 2 se reproducen en R, y los valores numéricos de la tabla 1 coinciden, pero **sus rótulos están corridos una fila** ([D7](#d7)). Además, hay problemas de interpretación en los ejercicios 1 ([D1](#d1)), 2(c) ([D11](#d11), [D12](#d12)) y 4 ([D16](#d16)). Las comparaciones numéricas están en [Verificación](#verificacion).
+
+| N° | Ej. | Tipo | Discrepancia |
+|----|-----|------|--------------|
+| [D1](#d1) | 1 | Error | *Post* se define como 2008 y 2009; es solo 2009 |
+| [D2](#d2) | 1 | Imprecisión | Tendencia común sin condicionar en $X$ y con notación de panel |
+| [D3](#d3) | 1 | Metodológica | Otras políticas no se controlan y la reforma también cambió los aportes |
+| [D4](#d4) | 1 | Imprecisión | Errores de tipeo |
+| [D5](#d5) | 2(a) | Imprecisión | Los grupos no están "bien balanceados" |
+| [D6](#d6) | 2(a) | Metodológica | Controlar en niveles no absorbe *shocks* diferenciales |
+| [D7](#d7) | 2(a) | Error | Tabla 1: rótulos corridos, falta "Jefe de hogar" y faltan los valores de "Personal" |
+| [D8](#d8) | 2(a) | Imprecisión | Tabla 1: título "2005-2009" y rótulo "Sexo" |
+| [D9](#d9) | 2(b) | Imprecisión | El total no es "nacional" |
+| [D10](#d10) | 2(c) | Imprecisión | Orden de la diferencia y unidades de la figura 2 |
+| [D11](#d11) | 2(c) | Error | La brecha no es significativa en 2008 y la figura 1 no hace inferencia |
+| [D12](#d12) | 2(c) | Error | No hay un "quiebre marcado" a partir de 2008 |
+| [D13](#d13) | 2(c) | Metodológica | Las regresiones anuales omiten los efectos por departamento |
+| [D14](#d14) | 3 | Imprecisión | "Estado" en lugar de "departamento" |
+| [D15](#d15) | 3 | Metodológica | Los errores estándar no son los del paper |
+| [D16](#d16) | 4 | Error | El efecto causal se deduce del experimento falso |
+| [D17](#d17) | 4 | Imprecisión | El promedio previo de "24%" y el "6,13%" |
+| [D18](#d18) | 4 | Metodológica | El experimento falso tiene poca potencia |
+| [D19](#d19) | 5 | Imprecisión | La tabla 5 no informa la especificación |
+| [D20](#d20) | 5 | Metodológica | El año de referencia es un año tratado |
+| [D21](#d21) | Ref. | Imprecisión | Referencias bibliográficas |
+
+# Datos y funciones
+
+```{r datos}
+base <- read_dta("Datos/ury-0509.dta") |> zap_labels() |> as.data.frame()
+
+d <- base |>
+  mutate(postpol          = as.numeric(year == 2009),
+         children_postpol = children * postpol,
+         postpol_f        = as.numeric(year == 2007),
+         children_postpol_f = children * postpol_f,
+         ty_5 = children * (year == 2005), ty_6 = children * (year == 2006),
+         ty_7 = children * (year == 2007), ty_8 = children * (year == 2008),
+         ty_9 = children * (year == 2009))
+
+# "muestra" vale 1 o falta (2008)
+m1 <- d |> filter(muestra %in% 1)
+table(anio = d$year, muestra = d$muestra, useNA = "ifany")
+```
+
+```{r funciones}
+controles <- c("age", "age2", "man", "head", "married", "yedu", "yedu2", "children_tot",
+               paste0("fsize_", 2:4), paste0("sector_", 2:9))
+efectos <- c("factor(year)", "factor(dpto)")
+
+# regress y x [pw=pondera], robust
+mco <- function(rhs, datos, cluster = NULL) {
+  m <- lm(reformulate(rhs, "informal"), data = datos, weights = pondera)
+  g <- if (!is.null(cluster)) interaction(datos[cluster], drop = TRUE)
+  V <- if (is.null(cluster)) vcovHC(m, type = "HC1") else vcovCL(m, cluster = g, type = "HC1")
+  gl <- if (is.null(cluster)) df.residual(m) else nlevels(g) - 1
+  list(m = m, V = V, gl = gl, n = nobs(m), r2 = summary(m)$r.squared)
+}
+# Coeficiente, error estándar y valor p
+co <- function(r, v) {
+  b <- unname(coef(r$m)[v]); se <- unname(sqrt(diag(r$V)[v]))
+  c(b = b, se = se, p = 2 * pt(-abs(b / se), r$gl))
+}
+celda <- function(r, v) {
+  if (!v %in% names(coef(r$m))) return(c("", ""))
+  x <- co(r, v)
+  c(paste0(num(x["b"], 4), estrellas(x["p"])), paste0("(", num(x["se"], 4), ")"))
+}
+# Tabla de regresiones con el formato del PDF
+tabla_reg <- function(modelos, vars, titulo, extra = NULL) {
+  cuerpo <- do.call(rbind, lapply(seq_along(vars), function(i) {
+    x <- sapply(modelos, celda, v = vars[[i]][1])
+    data.frame(v = c(names(vars)[i], ""), x, check.names = FALSE)
+  }))
+  if (!is.null(extra)) names(extra) <- names(cuerpo)
+  pie <- rbind(extra,
+               setNames(data.frame(v = c("Observaciones", "R²"),
+                          rbind(sapply(modelos, function(r) num(r$n)),
+                                sapply(modelos, function(r) num(r$r2, 4))), check.names = FALSE), names(cuerpo)))
+  kable(rbind(cuerpo, pie), row.names = FALSE, caption = titulo,
+        col.names = c("Variables", names(modelos)),
+        align = paste0("l", strrep("c", length(modelos)))) |>
+    kable_styling(full_width = FALSE) |>
+    row_spec(nrow(cuerpo), extra_css = "border-bottom: 1px solid #333;")
+}
+# Prueba F robusta de restricciones lineales R b = 0
+prueba_f <- function(r, R) {
+  v <- colnames(R); b <- coef(r$m)[v]; est <- R %*% b
+  Fv <- drop(t(est) %*% solve(R %*% r$V[v, v] %*% t(R)) %*% est) / nrow(R)
+  c(F = Fv, p = pf(Fv, nrow(R), r$gl, lower.tail = FALSE))
+}
+```
+
+# Ejercicio 1: Supuestos de identificación
+
+::: {.enunciado}
+La primera tarea consiste en leer el paper y discutir, brevemente, los supuestos de identificación necesarios para que las estimaciones que surgen del modelo de DiD tengan una interpretación causal y cuál es la forma en que los autores argumentan que dichos supuestos se cumplen.
+:::
+
+El objetivo en Bérgolo y Cruces (2011) es identificar el efecto causal de la reforma del seguro de salud en los niveles de informalidad. Para ello, el enfoque econométrico se basa en la metodología de diferencias en diferencias (*Diff-in-Diff*) y la estrategia de estimación compara los niveles de formalidad entre los trabajadores asalariados del sector privado con hijos menores de 18 años (grupo de tratamiento) y los trabajadores asalariados del sector privado sin hijos (grupo de control), antes y después del cambio de política.
+
+En particular, se estima el siguiente modelo:
+
+$$Y_{it} = \alpha + \delta\, Children_{it} + \beta\, Children_{it} * Post + X_{it}'\gamma + \delta_t + \varphi_r + \varepsilon_{it}, \tag{1}$$
+
+donde $i$ indica trabajadores y $t$ tiempo; $Y_{it}$ indica el estado de informalidad (igual 1 si el trabajador no se encuentra registrado en la seguridad social y 0 en caso contrario); $Children_{it}$ es una variable binaria que vale 1 si el trabajador tiene, al menos, un hijo menor a 18 años y 0 en caso contrario; <mark>*Post* es una variable binaria que vale 1 si el año es posterior a la política (2008 y 2009)</mark> y 0 en caso contrario; $Children_{it} * Post$ es un término de interacción entre ambas variables. La matriz $X_{it}$ contiene covariables individuales y del hogar que incluyen edad, sexo, jefe de familia, estado civil, educación, número de hijos, tamaño de la empresa y variables binarias de la industria. $\delta_t$ y $\varphi_r$ son un conjunto de efectos fijos de año y de departamento, que explican cualquier *shock* sistemático agregado a la elección de informalidad del individuo correlacionado con, pero no causado por, la reforma. Finalmente, $\varepsilon_{it}$ es un término de error. El parámetro $\beta$ captura el impacto causal de la reforma del seguro de salud.
+
+```{r ej1-post}
+post89 <- d |> mutate(children_postpol = children * as.numeric(year >= 2008))
+a_sin <- mco(c("children", "children_postpol", efectos), post89)
+a_con <- mco(c("children", "children_postpol", controles, efectos), post89)
+d09_sin <- mco(c("children", "children_postpol", efectos), m1)
+d09_con <- mco(c("children", "children_postpol", controles, efectos), m1)
+
+tabla_reg(list("Post = 2009, sin 2008 (sin controles)" = d09_sin,
+               "Post = 2009, sin 2008 (con controles)" = d09_con,
+               "Post = 2008 y 2009 (sin controles)" = a_sin,
+               "Post = 2008 y 2009 (con controles)" = a_con),
+          list("Children * Post" = "children_postpol"),
+          "Comparación agregada en la réplica: las dos definiciones de Post.")
+inter89 <- all(base$inter == base$children * (base$year >= 2008))
+```
+
+::: {.disc .error #d1}
+**D1.** En el paper, en el *do-file*, en las tablas 1 y 3 del propio trabajo y en el texto del ejercicio 3, *Post* vale 1 **solo en 2009**: 2008 se considera un período de ajuste y se **excluye** de la muestra (`muestra` está vacía para ese año). La definición importa: con *Post* = 2008 y 2009 el coeficiente con controles pasa de `r num(co(d09_con, "children_postpol")["b"], 4)` (`r pin(co(d09_con, "children_postpol")["p"])`) a `r num(co(a_con, "children_postpol")["b"], 4)` (`r pin(co(a_con, "children_postpol")["p"])`). Una posible fuente de confusión es la variable `inter` incluida en la base, que `r if (inter89) "sí" else "no"` coincide con $Children \times \mathbf{1}[año \geq 2008]$; el *do-file* no la usa.
+:::
+
+<mark>Para que las estimaciones que surgen del modelo *Diff-in-Diff* tengan una interpretación causal, el supuesto de identificación clave es el de tendencia común en ausencia de tratamiento (*common trend*), lo cual implica que, en ausencia de tratamiento, la tendencia para la variable *Y* sería la misma para los grupos de tratamiento y control. Esto es:</mark>
+
+$$E\left[(\varepsilon^T_{i1} - \varepsilon^T_{i0}) - (\varepsilon^C_{i1} - \varepsilon^C_{i0})\right] = 0,$$
+
+donde $\varepsilon^T_{i0}$, $\varepsilon^T_{i1}$, $\varepsilon^C_{i0}$ y $\varepsilon^C_{i1}$ son los términos de error del grupo de tratamiento y control, antes y después de la reforma, respectivamente. Además, el otro supuesto de identificación necesario para obtener <mark>un interpretación</mark> causal es que, por fuera de la expansión de la cobertura de atención de salud debido a la reforma del <mark>seguro salud</mark>, no hay otros *shocks* contemporáneos que afecten, de manera diferencial, la elección de informalidad de los trabajadores de ambos grupos después de la política.
+
+::: {.disc .impr #d2}
+**D2.** El paper formula la tendencia común **condicional en $X$** ("*underlying trends in informality levels (conditional on X)*"). Además, la ECH usada es una serie de **cortes transversales repetidos**: no se observa al mismo individuo antes y después, por lo que $\varepsilon_{i1} - \varepsilon_{i0}$ no está definido. La condición debe escribirse con esperanzas por grupo y período:
+$$\{E[\varepsilon \mid T, 1, X] - E[\varepsilon \mid T, 0, X]\} - \{E[\varepsilon \mid C, 1, X] - E[\varepsilon \mid C, 0, X]\} = 0.$$
+:::
+
+::: {.disc .impr #d4}
+**D4.** "un interpretación" por "una interpretación" y "seguro salud" por "seguro de salud".
+:::
+
+El primer supuesto se puede verificar comparando las tendencias previas al tratamiento y realizando "experimentos falsos" y pruebas de robustez. La validez del segundo supuesto viene dada por el hecho de que <mark>las políticas de bienestar del gobierno, que pueden haber afectado las decisiones del mercado laboral de los grupos de tratamiento y control, son identificables en los datos y, por lo tanto, es posible controlar por ellas</mark>.
+
+::: {.disc .metodo #d3}
+**D3.** La frase reproduce fielmente el argumento del paper, pero ni el *do-file* ni la ecuación (1) incluyen variable alguna sobre otras políticas, y el apartado de datos del paper no las describe. Además, la misma reforma elevó el aporte personal de 3% a 6% para quienes tienen hijos y de 3% a 4,5% para quienes no (sección 2.3 del paper). Ese cambio diferencial ocurre junto con la cobertura, de modo que $\beta$ identifica el **efecto neto** del paquete (cobertura y aportes), no el de la cobertura sola.
+:::
+
+# Ejercicio 2: Estadísticas descriptivas
+
+::: {.enunciado}
+La base de datos ury-0509.dta contiene microdatos de la Encuesta Continua de Hogares (ECH) de Uruguay para los años 2005 a 2009. Los datos se restringen a trabajadores asalariados del sector privado de entre 19 y 60 años que residen en áreas urbanas. Se pide:
+:::
+
+## (a) Tabla descriptiva
+
+::: {.enunciado}
+Construir una tabla similar a la tabla 1 del paper, con estadísticas descriptivas para el grupo de tratamiento y el grupo de control en el período pre-política y pos-política. Comentar, brevemente, qué se observa y por qué es importante incluir controles sociodemográficos en las estimaciones.
+:::
+
+En la tabla 1, se presentan estadísticas descriptivas de las variables de interés para el grupo tratamiento y control, tanto para el período pre-política (2005-2007) como para el período pos-política (2009). Como dato relevante, se puede observar que, tanto para el grupo de control como para el grupo de tratamiento, la tasa de informalidad promedio se reduce significativamente entre el período pre-política y pos-política, siendo mayor la reducción en el caso del grupo de tratamiento (aproximadamente, 6 puntos porcentuales). En particular, para el grupo de control, esta tasa promedio se reduce 19% y, para el grupo de tratamiento, 25%. Además, en principio, <mark>los dos grupos están bien balanceados</mark>, aunque se puede distinguir que el grupo de control presenta, en promedio, mayor edad, menor probabilidad de estar casado, mayor probabilidad de ser jefe de hogar y más años de educación.
+
+```{r tabla1}
+# summarize x [w=pondera]: ponderadores analíticos
+resumen <- function(x, w) {
+  mu <- sum(w * x) / sum(w); n <- length(x)
+  c(mu, sqrt(sum(w * (x - mu)^2) / sum(w) * n / (n - 1)))
+}
+variables <- c(informal = "Informal", children_tot = "Nro. hijos", age = "Edad",
+  man = "Hombre", married = "Casado", head = "Jefe de hogar", yedu = "Años educación",
+  region_1 = "Montevideo", region_2 = "Norte", region_3 = "Centro-Norte",
+  region_4 = "Centro-Sur", region_5 = "Sur",
+  fsize_1 = "1 empleado", fsize_2 = "2-4 empleados", fsize_3 = "5-49 empleados",
+  fsize_4 = "Más de 49 empleados",
+  sector_1 = "Agricultura", sector_2 = "Industria", sector_3 = "Manufactura",
+  sector_4 = "Construcción", sector_5 = "Comercio", sector_6 = "Transporte/Comunicaciones",
+  sector_7 = "Finanzas/Profesional", sector_8 = "Educación/Salud", sector_9 = "Personal",
+  hswrp = "Horas semanales trabajadas", wage_m = "Salario horario (USD PPP 2005)")
+grupos <- expand.grid(postpol = 0:1, children = 0:1)
+
+STATS <- t(sapply(names(variables), function(v)
+  unlist(lapply(1:4, function(g) {
+    s <- m1[m1$children == grupos$children[g] & m1$postpol == grupos$postpol[g], ]
+    resumen(s[[v]], s$pondera)
+  }))))
+N <- sapply(1:4, function(g)
+  sum(m1$children == grupos$children[g] & m1$postpol == grupos$postpol[g]))
+
+t1 <- data.frame(Variable = unname(variables), matrix(num(STATS, 2), nrow(STATS)))
+enc <- paste0(c("PrePol (2005-2007)", "PostPol (2009)"), "<br/>N = ", num(N))
+kable(t1, row.names = FALSE, escape = FALSE, col.names = c("Variable", rep(c("Media", "SD"), 4)),
+      align = "lrrrrrrrr",
+      caption = "Tabla 1 (corregida). Estadísticas descriptivas, 2005-2007 y 2009.") |>
+  kable_styling(font_size = 12) |>
+  add_header_above(setNames(c(1, 2, 2, 2, 2), c(" ", enc)), escape = FALSE) |>
+  add_header_above(c(" " = 1, "Control" = 4, "Tratamiento" = 4)) |>
+  pack_rows("Región", 8, 12) |>
+  pack_rows("Tamaño de la firma", 13, 16) |>
+  pack_rows("Rama de actividad", 17, 25) |>
+  row_spec(c(6, 25), background = "#ffe27a")
+```
+
+```{r tabla1-export, eval=params$exportar}
+# Equivalente a "export excel", sin sobrescribir la salida de Stata
+writexl::write_xlsx(data.frame(variable = names(variables), STATS), "Datos/Tabla 1 (R).xlsx")
+```
+
+```{r tabla1-pdf}
+# Tabla 1 tal como figura en el PDF: rótulo seguido de las 8 cifras
+pdf_t1 <- read.table(sep = "|", strip.white = TRUE, text = "
+Informal|0.21 0.41 0.17 0.37 0.25 0.43 0.19 0.39
+Nro. hijos|0.00 0.00 0.00 0.00 2.10 1.16 2.05 1.14
+Edad|39.34 12.24 39.24 12.29 38.31 8.39 38.32 8.36
+Sexo|0.52 0.50 0.52 0.50 0.53 0.50 0.52 0.50
+Casado|0.62 0.49 0.61 0.49 0.87 0.33 0.86 0.34
+Años educación|0.70 0.46 0.68 0.46 0.64 0.48 0.63 0.48
+Montevideo|10.42 3.91 10.53 3.82 9.62 3.58 9.64 3.52
+Norte|0.71 0.45 0.70 0.46 0.60 0.49 0.62 0.48
+Centro-Norte|0.05 0.23 0.06 0.24 0.09 0.29 0.09 0.29
+Centro-Sur|0.06 0.24 0.06 0.24 0.09 0.29 0.09 0.28
+Sur|0.05 0.23 0.06 0.24 0.07 0.26 0.07 0.26
+1 empleado|0.12 0.32 0.12 0.32 0.14 0.35 0.13 0.33
+2-4 empleados|0.12 0.32 0.09 0.29 0.14 0.35 0.11 0.31
+5-49 empleados|0.17 0.38 0.16 0.36 0.17 0.38 0.15 0.36
++ 49 empleados|0.36 0.48 0.35 0.48 0.36 0.48 0.36 0.48
+Agricultura|0.35 0.48 0.40 0.49 0.33 0.47 0.38 0.49
+Industria|0.05 0.21 0.04 0.20 0.06 0.24 0.06 0.24
+Manufactura/Común|0.10 0.30 0.09 0.29 0.12 0.32 0.11 0.31
+Construcción|0.07 0.26 0.08 0.27 0.08 0.26 0.07 0.26
+Comercio|0.05 0.23 0.06 0.24 0.07 0.26 0.08 0.28
+Transporte|0.23 0.42 0.23 0.42 0.20 0.40 0.23 0.42
+Finanzas/Profesional|0.07 0.26 0.08 0.28 0.08 0.27 0.08 0.27
+Educación/Salud|0.10 0.31 0.11 0.32 0.07 0.26 0.07 0.26
+Personal|0.19 0.39 0.17 0.38 0.16 0.37 0.16 0.37
+Horas semanales trabajadas|41.47 14.39 41.64 13.67 41.50 16.03 41.70 14.66
+Salario horario (USD PPP 2005)|3.06 3.79 3.54 5.64 2.94 3.81 3.43 4.14")
+M_pdf <- do.call(rbind, lapply(strsplit(pdf_t1$V2, " +"), as.numeric))
+
+# ¿A qué variable corresponden las cifras de cada fila del PDF?
+origen <- sapply(seq_len(nrow(M_pdf)), function(i) {
+  dif <- apply(abs(sweep(round(STATS, 2), 2, M_pdf[i, ])), 1, max)
+  if (min(dif) < .0051) names(which.min(dif)) else NA
+})
+esperada <- names(variables)[-6]   # el PDF no tiene fila "Jefe de hogar"
+mal <- which(origen != esperada)
+sin_publicar <- setdiff(names(variables), origen)
+kable(data.frame(`Rótulo en el PDF` = sub("^\\+", "\u2060+", pdf_t1$V1[mal]),
+                 `Las cifras son de` = paste0(variables[origen[mal]], " (", origen[mal], ")"),
+                 check.names = FALSE),
+      caption = "Filas de la tabla 1 del PDF cuyo rótulo no corresponde a sus cifras.") |>
+  kable_styling(full_width = FALSE)
+```
+
+::: {.disc .error #d7}
+**D7.** En la tabla 1 del PDF hay **`r length(mal)` filas con el rótulo equivocado**. La tabla tiene `r nrow(M_pdf)` filas para `r length(variables)` variables: se omitió el rótulo "Jefe de hogar", de modo que desde "Años educación" cada rótulo recibe las cifras de la variable anterior, y las cifras de `r paste0(variables[sin_publicar], " (", sin_publicar, ")", collapse = ", ")` no se publican. Por ejemplo, "Montevideo = 10,42" son los años de educación, y "Agricultura = 0,35" es la proporción en firmas de más de 49 empleados; la proporción en agricultura es `r num(STATS["sector_1", 1], 2)`. Una explicación probable es la transcripción manual: `svmat` no exporta los nombres de las filas a `Tabla 1.xlsx`. El comentario del texto sobre jefatura de hogar y educación sí es correcto según las cifras recalculadas.
+:::
+
+::: {.disc .impr #d8}
+**D8.** El título dice "2005-2009", pero 2008 está excluido. "Sexo" es la proporción de **hombres** (`man`). El rótulo "Manufactura/Común" mezcla dos ramas distintas de la base: `sector_3` (Manufactura) y `sector_6` (Transporte/comunicaciones).
+:::
+
+```{r ej2a-control}
+f1 <- function(g, p) unname(STATS["informal", 4 * g + 2 * p + 1])
+caida <- sapply(0:1, function(g) c(pp = 100 * (f1(g, 0) - f1(g, 1)), rel = 100 * (1 - f1(g, 1) / f1(g, 0))))
+p_caida <- sapply(0:1, function(g) co(mco("postpol", m1[m1$children == g, ]), "postpol")["p"])
+kable(data.frame(Grupo = c("Control", "Tratamiento"), PP = num(caida["pp", ], 2),
+                 Rel = num(caida["rel", ], 1), p = pval(p_caida)),
+      col.names = c("Grupo", "Caída (puntos porcentuales)", "Caída relativa (%)", "p de la caída"),
+      align = "lrrr") |> kable_styling(full_width = FALSE)
+
+# Diferencias estandarizadas en el período previo
+bal <- c("age", "man", "married", "head", "yedu", "region_1")
+dif_std <- (STATS[bal, 5] - STATS[bal, 1]) / sqrt((STATS[bal, 2]^2 + STATS[bal, 6]^2) / 2)
+kable(data.frame(Variable = variables[bal], Control = num(STATS[bal, 1], 2),
+                 Trat = num(STATS[bal, 5], 2), Dif = num(dif_std, 2)), row.names = FALSE,
+      col.names = c("Variable (2005-2007)", "Control", "Tratamiento", "Diferencia estandarizada"),
+      align = "lrrr") |> kable_styling(full_width = FALSE)
+```
+
+Las cifras del párrafo (reducción de unos 6 puntos en el grupo de tratamiento, 19% y 25% en términos relativos, y caídas significativas) se confirman.
+
+::: {.disc .impr #d5}
+**D5.** Hay desbalances grandes: casados `r num(100 * STATS["married", 1])`% contra `r num(100 * STATS["married", 5])`% (diferencia estandarizada `r num(dif_std["married"], 2)`) y residentes en Montevideo `r num(100 * STATS["region_1", 1])`% contra `r num(100 * STATS["region_1", 5])`% (`r num(dif_std["region_1"], 2)`), esta última no mencionada. Una referencia habitual considera relevantes las diferencias estandarizadas mayores que 0,1 o 0,25. En DiD no se requiere balance en niveles, pero estas diferencias son las que justifican los controles.
+:::
+
+Por otra parte, se debe mencionar que <mark>es importante incluir controles sociodemográficos en las estimaciones porque es posible que el impacto estimado de la reforma del seguro de salud sea el resultado de *shocks* no observables correlacionados con las características sociodemográficas que afectan de manera diferente a los trabajadores asalariados con hijos y sin hijos</mark>. Es decir, de no incluir controles sociodemográficos en las estimaciones y considerando que pueden existir *shocks* no observables que se encuentren correlacionados con las características sociodemográficas y que afectarían de manera asimétrica a ambos grupos, no estaríamos aislando el efecto causal que queremos estimar al ser las estimaciones sesgadas e inconsistentes. Por ejemplo, si se hubiera incluido una transferencia monetaria para los individuos menores de 25 años, sin empleo registrado formalmente, y estos individuos estuvieran concentrados, mayoritariamente, en el grupo control, tendríamos estimaciones sesgadas e inconsistentes. Puntualmente, si es que el incentivo a mantenerse en la informalidad generado por esta transferencia, efectivamente, ralentiza la caída en la tasa de informalidad de estos individuos, entonces (*céteris páribus*), esto haría que se ralentice más la caída en la tasa de informalidad del grupo de control, donde tienen mayor participación relativo al grupo de tratamiento. Por lo tanto, tendríamos una sobreestimación del efecto causal de la reforma del seguro de salud sobre los incentivos a la formalización laboral.
+
+```{r ej2a-interacciones}
+ixt <- c("children", "children_postpol",
+         paste0("(", paste(controles, collapse = " + "), ") * factor(year)"), "factor(dpto)")
+r_ixt <- mco(ixt, m1)
+x_ixt <- co(r_ixt, "children_postpol")
+```
+
+::: {.disc .metodo #d6}
+**D6.** Los controles de la ecuación (1) entran **en niveles**, con un coeficiente igual en todos los años. Así corrigen cambios en la composición de los grupos, pero **no** un *shock* que afecte distinto a ciertas características a partir de la política, como la transferencia del ejemplo. Para eso hacen falta interacciones de las características con *Post* o con los años (columna 3 de la tabla 7 del paper). Agregando en la réplica todas las interacciones control × año, $\beta$ pasa de `r num(co(d09_con, "children_postpol")["b"], 4)` a `r num(x_ixt["b"], 4)`: la magnitud no es robusta a esta especificación, aunque el signo y la significatividad se mantienen (error estándar `r num(x_ixt["se"], 4)`, `r pin(x_ixt["p"])`). El signo del sesgo descrito en el ejemplo es correcto.
+:::
+
+## (b) Tasas de informalidad por año y grupo
+
+::: {.enunciado}
+Calcular las tasas de informalidad por año y por grupo (tratamiento y control) y replicar (parcialmente) la Figura 1 del paper (sin controles).
+:::
+
+En la tabla 2, se presentan las tasas de informalidad por grupo y para el <mark>total nacional</mark> para el período 2005-2009. Por un lado, mediante un análisis transversal, se puede observar que, para cada año, la tasa de informalidad del grupo de tratamiento es mayor tanto a la del grupo de control como a la del <mark>total nacional</mark>. Por otro lado, mediante un análisis temporal, se observa una reducción sistemática de la tasa de informalidad para cada grupo y para el <mark>total nacional</mark>. Esto también se ve en la figura 1.
+
+```{r tabla2}
+# table year children [w=pondera], contents(mean informal) row
+tasa <- function(s) sapply(split(s, s$year), function(z) weighted.mean(z$informal, z$pondera))
+T2 <- rbind(Control = tasa(d[d$children == 0, ]), Tratamiento = tasa(d[d$children == 1, ]),
+            Total = tasa(d))
+kable(data.frame(Grupo = rownames(T2), matrix(num(T2, 3), 3)), row.names = FALSE,
+      col.names = c("Grupo", colnames(T2)), align = "lrrrrr",
+      caption = "Tabla 2. Tasas de informalidad por grupo (2005-2009).") |>
+  kable_styling(full_width = FALSE)
+```
+
+::: {.disc .impr #d9}
+**D9.** La fila "Total" es el total de la **muestra**: asalariados del sector privado, de 19 a 60 años y de áreas urbanas. No es una tasa de informalidad nacional (excluye cuentapropistas, sector público, otras edades y áreas rurales). Las afirmaciones comparativas sí se cumplen en los cinco años.
+:::
+
+```{r figura1, fig.height=5.5}
+anios <- 2005:2009
+par(mar = c(7, 4.5, 1, 1), las = 1)
+plot(anios, T2["Tratamiento", ], type = "o", pch = 19, col = "#1a476f", lwd = 1.5,
+     ylim = c(.15, .30), xlab = "Año", ylab = "Tasa de informalidad")
+lines(anios, T2["Control", ], type = "o", pch = 19, col = "#90353b", lty = 2, lwd = 1.5)
+abline(v = 2008, col = "#c10534")
+legend("bottom", inset = c(0, -0.36), xpd = TRUE, horiz = TRUE, bty = "n", pch = 19,
+       lty = 1:2, col = c("#1a476f", "#90353b"),
+       legend = c("Asalariados con hijos < 18", "Asalariados sin hijos"))
+```
+
+**Figura 1.** Tasas de informalidad por grupo (2005-2009).
+
+## (c) Diferencia entre grupos con controles
+
+::: {.enunciado}
+Graficar la diferencia en la tasa de informalidad entre grupo tratamiento y control a lo largo del período 2005-2009, con controles y mostrando su significatividad estadística. ¿Qué información presentan los gráficos de este inciso y el anterior en relación a la estrategia de identificación utilizada por los autores?
+:::
+
+En la figura 2, se presenta la diferencia en la tasa de informalidad entre grupo de tratamiento y control para el período 2005-2009. En relación a la estrategia de identificación utilizada por los autores, la figura 1 y 2 presentan información respecto a que existe, por un lado, <mark>una reducción significativa de la tasa de informalidad entre el grupo de tratamiento y control luego de la reforma en el 2008 (ver figura 1)</mark> y, por otro lado, <mark>la brecha en la tasa de informalidad entre el grupo de tratamiento y control es estadísticamente significativa luego de la reforma (ver figura 2)</mark>. Además, también se evidencia que los dos grupos muestran una tendencia a la baja bastante similar antes del año de la reforma (*common trend*), <mark>la cual tiene un quiebre marcado a partir de este año</mark>. Esto es evidencia a favor del supuesto de que las tendencias, en ausencia de tratamiento, son similares.
+
+```{r figura2-datos}
+anual <- function(extra = NULL) {
+  t(sapply(anios, function(a) {
+    x <- co(mco(c("children", controles, extra), d[d$year == a, ]), "children")
+    c(anio = a, dif = 100 * x[["b"]], li = 100 * (x[["b"]] - 1.96 * x[["se"]]),
+      ls = 100 * (x[["b"]] + 1.96 * x[["se"]]), se = 100 * x[["se"]], p = x[["p"]])
+  })) |> as.data.frame()
+}
+beta_dif <- anual()
+```
+
+```{r figura2, fig.height=5.5}
+par(mar = c(7, 4.5, 1, 1), las = 1)
+plot(beta_dif$anio, beta_dif$dif, type = "l", lwd = 3, col = "#1a476f", ylim = c(-10, 10),
+     xlab = "Año", ylab = "Tratamiento − control (puntos porcentuales)")
+lines(beta_dif$anio, beta_dif$li, lty = 2, lwd = 2, col = "#90353b")
+lines(beta_dif$anio, beta_dif$ls, lty = 2, lwd = 2, col = "#55752f")
+abline(h = 0, col = "#c10534")
+legend("bottom", inset = c(0, -0.36), xpd = TRUE, horiz = TRUE, bty = "n",
+       lty = c(1, 2, 2), lwd = c(3, 2, 2), col = c("#1a476f", "#90353b", "#55752f"),
+       legend = c("Diferencia en informalidad", "Límite inferior", "Límite superior"))
+```
+
+**Figura 2.** Diferencia en la tasa de informalidad entre grupo de tratamiento y control (2005-2009), con controles. Intervalos de 95%.
+
+```{r figura2-tabla}
+brecha_sc <- 100 * (T2["Tratamiento", ] - T2["Control", ])
+kable(data.frame(Anio = anios, Sin = num(brecha_sc, 2), Con = num(beta_dif$dif, 2),
+                 IC = paste0("[", num(beta_dif$li, 2), "; ", num(beta_dif$ls, 2), "]"),
+                 p = pval(beta_dif$p)), row.names = FALSE, align = "lrrrr",
+      col.names = c("Año", "Brecha sin controles", "Brecha con controles", "IC 95%", "p"),
+      caption = "Brecha tratamiento − control, en puntos porcentuales (agregado en la réplica).") |>
+  kable_styling(full_width = FALSE)
+
+# Cambios en la brecha con controles (cortes transversales independientes)
+pares <- list(c(2005, 2006), c(2006, 2007), c(2007, 2008), c(2008, 2009), c(2007, 2009))
+cambios <- do.call(rbind, lapply(pares, function(z) {
+  i <- match(z, anios); dif <- diff(beta_dif$dif[i]); se <- sqrt(sum(beta_dif$se[i]^2))
+  data.frame(par = paste(z, collapse = " a "), dif = dif, se = se, p = 2 * pnorm(-abs(dif / se)))
+}))
+kable(data.frame(cambios$par, num(cambios$dif, 2), num(cambios$se, 2), pval(cambios$p)),
+      col.names = c("Período", "Cambio en la brecha (p.p.)", "Error estándar", "p"),
+      align = "lrrr", caption = "Cambios de la brecha con controles (agregado en la réplica).") |>
+  kable_styling(full_width = FALSE)
+```
+
+::: {.disc .impr #d10}
+**D10.** El enunciado entregado a los alumnos pide la diferencia "entre grupo **control y tratamiento**", mientras que el PDF de respuestas lo transcribe como "tratamiento y control". El *do-file* calcula **tratamiento − control** (el coeficiente de `children`). La figura 2 del PDF no indica que el eje está en puntos porcentuales y usa nombres de variables como leyenda.
+:::
+
+::: {.disc .error #d11}
+**D11.** La figura 1 muestra solo promedios: **no permite afirmar significatividad**. En la figura 2, "luego de la reforma" incluye 2008 y 2009, pero en 2008 el intervalo contiene el cero (`r num(beta_dif$dif[4], 2)` p.p., `r pin(beta_dif$p[4])`). La brecha con controles solo es significativa al 5% en **2009** (`r num(beta_dif$dif[5], 2)` p.p., `r pin(beta_dif$p[5])`). Además, que la brecha de un año difiera de cero no equivale a que haya **cambiado** respecto del período previo.
+:::
+
+::: {.disc .error #d12}
+**D12.** Los gráficos no muestran un quiebre en 2008. La brecha con controles cambia `r num(cambios$dif[2], 2)` p.p. entre 2006 y 2007 (**antes** de la reforma) y `r num(cambios$dif[3], 2)` p.p. entre 2007 y 2008. Sin controles, la brecha pasa de `r num(brecha_sc[3], 2)` p.p. en 2007 a `r num(brecha_sc[4], 2)` en 2008, un cambio de tamaño similar a las oscilaciones previas (`r num(brecha_sc[1], 2)`, `r num(brecha_sc[2], 2)` y `r num(brecha_sc[3], 2)` p.p. en 2005-2007), y recién en 2009 cae a `r num(brecha_sc[5], 2)`. Tampoco el cambio entre 2007 y 2009 con controles es significativo por sí solo (`r pin(cambios$p[5])`). La evidencia de un efecto proviene de comparar 2009 con el conjunto 2005-2007 (ejercicio 3).
+:::
+
+```{r figura2-dpto}
+beta_dpto <- anual("factor(dpto)")
+kable(data.frame(anios, num(beta_dif$dif, 2), pval(beta_dif$p),
+                 num(beta_dpto$dif, 2), pval(beta_dpto$p)), align = "lrrrr",
+      col.names = c("Año", "Do-file", "p", "Con efectos por departamento", "p")) |>
+  kable_styling(full_width = FALSE)
+```
+
+::: {.disc .metodo #d13}
+**D13.** Las regresiones anuales del *do-file* usan `controles` **sin** las variables binarias de departamento, aunque la nota de la tabla 2 del paper, citada como guía, las incluye y los ejercicios 3 a 5 también. Al agregarlas, la conclusión para 2009 se mantiene (`r num(beta_dpto$dif[5], 2)` p.p.) y 2007 pasa a tener `r pin(beta_dpto$p[3])`, cercano a la significatividad **antes** de la reforma. La figura 1 del paper, además, grafica **niveles** predichos para 2001-2009, no la diferencia.
+:::
+
+# Ejercicio 3: *Diff-in-Diff*
+
+::: {.enunciado}
+Estimar la ecuación (1) del paper. (Ayuda: (i) en la nota al pie de la tabla 2, se detallan las variables de control a considerar; (ii) utilizar ponderadores muestrales). Discutir los resultados.
+:::
+
+En la tabla 3, se presenta la estimación por MCO del modelo (1), bajo dos especificaciones (una sin controles sociodemográficos y otra con estos controles). Se puede observar que, tanto en la especificación sin controles sociodemográficos como en la especificación que incluye estos controles, el coeficiente que capta la relación causal ($\beta$) es estadísticamente significativo. En particular, deja de manifiesto que, debido a la reforma, hubo una reducción de la tasa de informalidad para el grupo de tratamiento en 1,47 puntos porcentuales (*céteris páribus*). Además, es destacable el hecho de que la variable *children* no es estadísticamente significativa (en la especificación con controles) pero sí lo es la interacción de ésta con el período pos-política (año 2009), como se mencionó.
+
+```{r tabla3}
+est_sinctrl <- mco(c("children", "children_postpol", efectos), m1)
+est_conctrl <- mco(c("children", "children_postpol", controles, efectos), m1)
+filas_si_no <- function(col1) data.frame(
+  v = c("Variables sociodemográficas", col1), a = c("No", "Sí"), b = c("Sí", "Sí"))
+
+tabla_reg(list("Sin controles (1)" = est_sinctrl, "Con controles (2)" = est_conctrl),
+          list("Children * Post" = "children_postpol", "Children (< 18 dummy)" = "children"),
+          "Tabla 3. Estimación del modelo (1) (2005-2007 y 2009).",
+          filas_si_no("Dummies tiempo y departamento"))
+```
+
+Errores estándar robustos entre paréntesis. Nivel de significatividad: \* 10%, \*\* 5%, \*\*\* 1%.
+
+::: {.disc .impr #d14}
+**D14.** La tabla 3 del PDF dice "Dummies Tiempo y <mark>Estado</mark>". Se trata de efectos por **departamento** (`i.dpto`); "Estado" proviene de traducir *State* de la tabla del paper. El título "2005-2009" tampoco avisa que 2008 está excluido.
+:::
+
+```{r tabla3-cluster}
+cl <- c("children", "year")
+cl_sin <- mco(c("children", "children_postpol", efectos), m1, cluster = cl)
+cl_con <- mco(c("children", "children_postpol", controles, efectos), m1, cluster = cl)
+hh_con <- mco(c("children", "children_postpol", controles, efectos), m1, cluster = "id_aux")
+fila <- function(n, r) data.frame(Metodo = n,
+  b = num(co(r, "children_postpol")["b"], 4), se = num(co(r, "children_postpol")["se"], 4),
+  p = pval(co(r, "children_postpol")["p"]),
+  seC = num(co(r, "children")["se"], 4))
+kable(rbind(fila("Robusto (do-file), con controles", est_conctrl),
+            fila("Agrupado por children × año (paper), con controles", cl_con),
+            fila("Agrupado por id_aux, con controles", hh_con),
+            fila("Agrupado por children × año, sin controles", cl_sin)),
+      row.names = FALSE,
+      col.names = c("Errores estándar", "Children * Post", "EE", "p", "EE de Children"),
+      align = "lrrrr", caption = "Alternativas de inferencia (agregado en la réplica).") |>
+  kable_styling(full_width = FALSE)
+n_grupos <- nrow(unique(m1[cl]))
+repetidos <- sum(duplicated(base[c("id_aux", "year")]))
+```
+
+::: {.disc .metodo #d15}
+**D15.** El paper **agrupa** los errores estándar por *Children* × año; el *do-file* usa errores robustos sin agrupar, y el trabajo no lo señala. La columna 8 de la tabla 7 del paper (muestra 2005-2009) informa −0,0147 [0,0026] y −0,0073 [0,0072]; la réplica con esa agrupación obtiene `r num(co(cl_con, "children_postpol")["b"], 4)` [`r num(co(cl_con, "children_postpol")["se"], 4)`] y `r num(co(cl_con, "children")["b"], 4)` [`r num(co(cl_con, "children")["se"], 4)`]. Con solo `r n_grupos` grupos, esos errores agrupados son poco confiables. Por otra parte, `id_aux` (rotulado "identificador persona/año") se repite dentro de un mismo año en `r num(repetidos)` observaciones, por lo que probablemente identifica hogares.
+:::
+
+# Ejercicio 4: Experimentos falsos
+
+::: {.enunciado}
+En la práctica, una manera de testear supuestos de identificación es mediante la realización de experimentos falsos. En base a la estrategia adoptada por los autores (tabla 3), proponer (y estimar) un experimento falso con los años que se dispone. ¿Qué ocurre con la significatividad estadística del coeficiente que captura la relación causal? ¿Qué sugiere este resultado?
+:::
+
+Las estimaciones presentadas en la tabla 3 estarían sesgadas si los grupos de tratamiento y control tuvieran diferentes tendencias subyacentes en los resultados del mercado laboral. Con el fin de chequear la robustez de estos resultados, se modifica el modelo (1) y se procede a estimar un experimento falso. Ahora, *Post* será una variable binaria que vale 1 si el año es 2007. Dados los resultados de la estimación (ver tabla 4), <mark>se puede afirmar que, ya que el coeficiente que captura la relación causal ($\beta$) no es estadísticamente significativo, la reforma del seguro de salud indujo significativamente a los trabajadores asalariados del sector privado con, al menos, un hijo a cambiar a un empleo formal</mark>. En particular, hubo un cambio en la tasa de formalidad de 1,47 puntos porcentuales (*céteris páribus*), lo cual, en términos del <mark>promedio previo a la intervención (24% en el período 2005-2007), representa una disminución del 6,13%</mark> en la probabilidad de trabajar informalmente.
+
+```{r tabla4}
+pre <- d |> filter(muestra %in% 1, year <= 2007)
+est_sinctrl_f <- mco(c("children", "children_postpol_f", efectos), pre)
+est_conctrl_f <- mco(c("children", "children_postpol_f", controles, efectos), pre)
+
+tabla_reg(list("Sin controles (1)" = est_sinctrl_f, "Con controles (2)" = est_conctrl_f),
+          list("Children * Post (falso)" = "children_postpol_f",
+               "Children (< 18 dummy)" = "children"),
+          "Tabla 4. Estimación de experimento falso (2005-2007).",
+          filas_si_no("Dummies tiempo y departamento"))
+```
+
+Errores estándar robustos entre paréntesis. Nivel de significatividad: \* 10%, \*\* 5%, \*\*\* 1%.
+
+::: {.disc .error #d16}
+**D16.** La inferencia está invertida. Que el coeficiente **falso** no sea significativo **no demuestra** que la reforma haya inducido a nadie a formalizarse. Solo indica que no se detecta un "efecto" en un año sin política, lo que es **compatible** con el supuesto de tendencia común. El efecto de 1,47 puntos proviene de la **tabla 3**, no de la tabla 4. Una redacción correcta sería: *"Como el coeficiente del experimento falso no es significativo, no se encuentra evidencia de tendencias diferenciales previas; esto respalda interpretar causalmente la estimación de la tabla 3, según la cual la reforma redujo la informalidad del grupo de tratamiento en 1,47 puntos porcentuales"*.
+:::
+
+```{r ej4-promedio}
+efecto <- -co(est_conctrl, "children_postpol")[["b"]]
+medias <- c("Grupo de tratamiento, 2005-2007" = with(pre[pre$children == 1, ], weighted.mean(informal, pondera)),
+            "Muestra completa, 2005-2007" = with(pre, weighted.mean(informal, pondera)),
+            "Valor usado en el texto" = .24)
+kable(data.frame(Base = names(medias), Media = num(100 * medias, 2),
+                 Rel = num(100 * efecto / medias, 2)), row.names = FALSE, align = "lrr",
+      col.names = c("Base de comparación", "Informalidad (%)", "Efecto relativo (%)")) |>
+  kable_styling(full_width = FALSE)
+```
+
+::: {.disc .impr #d17}
+**D17.** El 6,13% surge de dividir 1,47 por 24 (con el efecto sin redondear resulta 6,14%). El texto no dice a qué población corresponde ese 24%, y no es exactamente ninguna de las dos medias posibles. En el grupo de tratamiento la media previa es `r num(100 * medias[1], 2)`% (efecto relativo `r num(100 * efecto / medias[1], 1)`%) y en la muestra completa, que es la convención del paper, `r num(100 * medias[2], 2)`% (`r num(100 * efecto / medias[2], 1)`%).
+:::
+
+```{r ej4-ic}
+x_f <- co(est_conctrl_f, "children_postpol_f")
+ic_f <- x_f[["b"]] + c(-1.96, 1.96) * x_f[["se"]]
+```
+
+::: {.disc .metodo #d18}
+**D18.** El intervalo de 95% del coeficiente falso con controles es [`r num(ic_f[1], 4)`; `r num(ic_f[2], 4)`] y **incluye** `r num(-efecto, 4)`, la estimación de la tabla 3. No rechazar el cero no permite descartar una diferencia previa de la misma magnitud que el efecto estimado. Además, el experimento usa un solo año falso (el paper, con más años, prueba cuatro).
+:::
+
+# Ejercicio 5: Especificación dinámica del modelo *Diff-in-Diff*
+
+::: {.enunciado}
+Estimar la especificación dinámica del modelo de diferencias en diferencias. ¿Qué información brinda y cuál es su utilidad en términos de chequeo de robustez?
+:::
+
+Al igual que en el ejercicio anterior, se busca chequear la robustez de los resultados presentados en la tabla 3. En este caso, se plantea una especificación dinámica del modelo *Diff-in-Diff*, en donde se omite el año de la reforma y los resultados obtenidos se interpretan respecto a este año de referencia. En particular, al incluir interacciones entre el grupo de tratamiento y cada año, se obtiene mayor información al corroborar si hubo algún *shock* que pudo haber afectado de manera diferencial a algunos de los dos grupos (tratamiento y control) en algún año anterior a la política. Dados los resultados de esta estimación (ver tabla 5), se puede afirmar, nuevamente, la solidez de la estrategia de identificación, ya que ninguno de los tres coeficientes anteriores al año de la reforma es estadísticamente significativo, lo cual <mark>confirma la ausencia de tendencias diferenciales</mark> entre el grupo de tratamiento y control en el período anterior a la reforma.
+
+```{r tabla5}
+tys <- c("ty_9", "ty_7", "ty_6", "ty_5")
+est_sinctrl_d <- mco(c(tys, "children", efectos), d)
+est_conctrl_d <- mco(c(tys, "children", controles, efectos), d)
+
+tabla_reg(list("Sin controles" = est_sinctrl_d, "Con controles (PDF)" = est_conctrl_d),
+          list("Children * 2009" = "ty_9", "Children * 2007" = "ty_7",
+               "Children * 2006" = "ty_6", "Children * 2005" = "ty_5"),
+          "Tabla 5. Estimación dinámica del modelo (1) (2005-2009; año omitido: 2008).",
+          filas_si_no("Dummies tiempo y departamento"))
+```
+
+Errores estándar robustos entre paréntesis. Nivel de significatividad: \* 10%, \*\* 5%, \*\*\* 1%.
+
+```{r tabla5-resumen}
+# estimates table: los coeficientes de interés de las seis especificaciones
+todas <- list(est_sinctrl, est_conctrl, est_sinctrl_f, est_conctrl_f, est_sinctrl_d, est_conctrl_d)
+names(todas) <- c("Tabla 3, sin", "Tabla 3, con", "Falso, sin", "Falso, con", "Dinám., sin", "Dinám., con")
+tabla_reg(todas, as.list(c("Children * Post" = "children_postpol",
+                           "Children * Post falso" = "children_postpol_f",
+                           "Children * 2009" = "ty_9", "Children * 2007" = "ty_7",
+                           "Children * 2006" = "ty_6", "Children * 2005" = "ty_5")),
+          "Resumen de las estimaciones de los ejercicios 3 a 5.")
+```
+
+::: {.disc .impr #d19}
+**D19.** La tabla 5 del PDF muestra solo la especificación **con** controles sociodemográficos y efectos por año y departamento, sin decirlo. La distinción importa: sin controles el coeficiente de 2009 es `r num(co(est_sinctrl_d, "ty_9")["b"], 4)` con `r pin(co(est_sinctrl_d, "ty_9")["p"])` (no significativo), y con controles es significativo solo al 10% (`r pin(co(est_conctrl_d, "ty_9")["p"])`). El texto no comenta el coeficiente de 2009.
+:::
+
+```{r ej5-pruebas}
+iguales <- rbind(c(-1, 1, 0), c(-1, 0, 1)); colnames(iguales) <- c("ty_5", "ty_6", "ty_7")
+cero <- diag(3); colnames(cero) <- c("ty_5", "ty_6", "ty_7")
+pr_ig <- prueba_f(est_conctrl_d, iguales); pr_0 <- prueba_f(est_conctrl_d, cero)
+
+# Referencia en 2007, el último año previo (como el paper)
+ref07 <- mco(c("ty_9", "ty_8", "ty_6", "ty_5", "children", controles, efectos), d)
+tabla_reg(list("Referencia 2008 (PDF)" = est_conctrl_d, "Referencia 2007" = ref07),
+          list("Children * 2009" = "ty_9", "Children * 2008" = "ty_8",
+               "Children * 2007" = "ty_7", "Children * 2006" = "ty_6",
+               "Children * 2005" = "ty_5"),
+          "Cambio del año de referencia, con controles (agregado en la réplica).")
+x07 <- co(ref07, "ty_9")
+```
+
+::: {.disc .metodo #d20}
+**D20.** 2008 es el año en que **empieza** la reforma, es decir, un año tratado (de ajuste). Medidos contra 2008, los coeficientes de 2005-2007 mezclan las diferencias previas con el posible efecto de 2008. El paper omite **2007**, el último año previo. La prueba relevante de tendencias previas es que los coeficientes de 2005-2007 sean **iguales entre sí**: F = `r num(pr_ig["F"], 2)`, `r pin(pr_ig["p"])` (que los tres sean cero: `r pin(pr_0["p"])`). No se rechaza, así que la lectura favorable se mantiene, pero no rechazar **no "confirma"** la ausencia de tendencias diferenciales. Con referencia en 2007, el coeficiente de 2009 es `r num(x07["b"], 4)` (`r pin(x07["p"])`), **no significativo**.
+:::
+
+# Referencias
+
+Bérgolo, M. y Cruces, G. (2011). Labor Informality and the Incentive Effects of Social Security: Evidence from a Health Reform in Uruguay. <mark>*Centro de Estudios Distributivos, Laborales y Sociales (CEDLAS)*</mark>. Recuperado de <https://api.paperflite.com/api/2.0/shared_url/5d5d94eb0b593a2b6eb3e0ad/asset/5d5d94eb0b593a2b6eb3e0ac/download>
+
+Bérgolo, M. y Cruces, G. (2014). Work and Tax Evasion Incentive Effects of Social Insurance Programs. Evidence from an Employment-Based Benefit Extension. <mark>*Journal of Public Economic*</mark>, 117, 211-228. Recuperado de <http://eva.fcea.edu.uy/pluginfile.php/202127/mod_folder/content/0/Bergolo-Cruces-2014.pdf?forcedownload=1>
+
+::: {.disc .impr #d21}
+**D21.** La revista es *Journal of Public **Economics***. El enunciado cita el trabajo de 2011 como publicación del Banco Interamericano de Desarrollo (*IDB Publications* 62318); CEDLAS es la afiliación de los autores. Los enlaces no se verificaron.
+:::
+
+# Verificación {#verificacion -}
+
+## Contra el PDF
+
+Cada cifra recalculada se compara con la publicada, redondeada a los mismos decimales.
+
+```{r verif-pdf}
+comparar <- function(nombre, r, publicado, dec)
+  data.frame(Tabla = nombre, Cifras = length(publicado),
+             Coinciden = sum(abs(round(r, dec) - publicado) < 10^-dec / 2))
+reg <- function(modelos, vars) unlist(lapply(modelos, function(r)
+  c(unlist(lapply(vars, function(v) co(r, v)[c("b", "se")])), r$r2)))
+
+ver <- rbind(
+  comparar("Tabla 1 (cifras, según la variable real)", STATS[origen, ], M_pdf, 2),
+  comparar("Tabla 1, tamaño de muestra", N, c(12899, 5380, 30940, 11250), 0),
+  comparar("Tabla 2", T2, rbind(c(.249, .202, .182, .176, .168),
+                                c(.292, .239, .227, .211, .187),
+                                c(.279, .228, .213, .201, .181)), 3),
+  comparar("Tabla 3", reg(list(est_sinctrl, est_conctrl), c("children_postpol", "children")),
+           c(-.0193, .0082, .0251, .0050, .0391, -.0147, .0071, -.0073, .0059, .2946), 4),
+  comparar("Tabla 4", reg(list(est_sinctrl_f, est_conctrl_f), c("children_postpol_f", "children")),
+           c(.0021, .0095, .0245, .0069, .0357, -.0085, .0082, .0004, .0077, .2944), 4),
+  comparar("Tabla 5", reg(list(est_conctrl_d), tys),
+           c(-.0139, .0083, -.0044, .0083, -.0002, .0084, .0090, .0123, .2953), 4))
+kable(ver) |> kable_styling(full_width = FALSE)
+c(obs_tabla3 = est_conctrl$n, obs_tabla4 = est_conctrl_f$n, obs_tabla5 = est_conctrl_d$n)
+```
+
+## Contra las salidas de Stata
+
+`Datos/Tabla 1.xlsx` es la exportación del *do-file* y los archivos `.gph` guardan las series graficadas.
+
+```{r verif-stata}
+xlsx <- "Datos/Tabla 1.xlsx"
+if (file.exists(xlsx) && requireNamespace("readxl", quietly = TRUE)) {
+  X <- suppressMessages(readxl::read_excel(xlsx, col_names = FALSE))
+  X <- as.matrix(X[complete.cases(X), ])
+  cat("Tabla 1.xlsx:", nrow(X), "filas; máxima diferencia con R:",
+      format(max(abs(X - STATS)), digits = 2), "\n")
+}
+
+# Series (sersets) guardadas dentro de un .gph
+leer_gph <- function(archivo) {
+  b <- readBin(archivo, "raw", file.size(archivo))
+  ini <- grepRaw("sersetreadwrite", b, all = TRUE, fixed = TRUE)
+  fin <- grepRaw("<EndSersetData>", b, all = TRUE, fixed = TRUE)
+  lapply(seq_along(ini), function(k) {
+    i <- ini[k]
+    nv <- readBin(b[i + 18:21], "integer", size = 4, endian = "little")
+    n  <- readBin(b[i + 22:25], "integer", size = 4, endian = "little")
+    tipo <- as.integer(b[i + 25 + seq_len(nv)])          # 251 a 255: byte, int, long, float, double
+    tam <- c(1, 2, 4, 4, 8)[tipo - 250]
+    mat <- matrix(b[(fin[k] - 2 - n * sum(tam)):(fin[k] - 3)], nrow = sum(tam))
+    desde <- cumsum(c(0, tam))
+    lapply(seq_len(nv), function(j)
+      readBin(as.vector(mat[desde[j] + seq_len(tam[j]), ]),
+              if (tipo[j] >= 254) "double" else "integer", n, size = tam[j], endian = "little"))
+  })
+}
+# Distancia entre cada serie de R y la serie más parecida del gráfico
+cotejar <- function(archivo, series) {
+  if (!file.exists(archivo)) return(NULL)
+  s <- unlist(leer_gph(archivo), recursive = FALSE)
+  data.frame(Archivo = basename(archivo), Serie = names(series),
+    Dif = sapply(series, function(y)
+      min(sapply(s, function(z) if (length(z) == length(y)) max(abs(z - y)) else Inf))))
+}
+gph <- rbind(
+  cotejar("Figuras/Figura 1.gph", list("Tratamiento" = T2["Tratamiento", ], "Control" = T2["Control", ])),
+  cotejar("Figuras/Figura 2.gph", list("Diferencia" = beta_dif$dif, "Límite inferior" = beta_dif$li,
+                                       "Límite superior" = beta_dif$ls)))
+kable(transform(gph, Dif = format(Dif, scientific = TRUE, digits = 2)), row.names = FALSE,
+      col.names = c("Archivo", "Serie", "Máxima diferencia"), align = "llr") |>
+  kable_styling(full_width = FALSE)
+```
+
+```{r sesion}
+sessionInfo()
+```
