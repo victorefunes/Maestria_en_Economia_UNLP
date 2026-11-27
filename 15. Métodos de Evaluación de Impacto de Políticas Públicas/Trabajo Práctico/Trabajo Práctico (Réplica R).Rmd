@@ -1,0 +1,1143 @@
+---
+title: "Trabajo Práctico — Réplica en R"
+subtitle: "Maestría en Economía UNLP - Métodos de Evaluación de Impacto de Políticas Públicas. Respuestas originales: Juan Menduiña"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+    self_contained: true
+    code_folding: hide
+---
+
+```{css, echo=FALSE}
+mark { background: #ffe27a; padding: 0 2px; }
+.disc { border-left: 6px solid; border-radius: 4px; padding: 10px 14px; margin: 14px 0; font-size: 0.95em; }
+.disc p:last-child { margin-bottom: 0; }
+.error { border-color: #c0392b; background: #fdecea; }
+.impr  { border-color: #d68910; background: #fef5e7; }
+.metodo{ border-color: #2874a6; background: #eaf2f8; }
+.enunciado { font-style: italic; color: #444; }
+table { margin-left: auto; margin-right: auto; width: auto !important; }
+th, td { padding: 3px 14px !important; }
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 8, fig.height = 5, dpi = 120)
+library(haven); library(knitr); library(ggplot2); library(rdrobust); library(rddensity)
+
+num <- function(x, d = 3) {
+  x <- ifelse(abs(x) < 10^-d / 2, 0, x)            # evita "-0,000"
+  formatC(x, format = "f", digits = d, big.mark = ".", decimal.mark = ",")
+}
+ent <- function(x) formatC(x, format = "d", big.mark = ".", decimal.mark = ",")
+estrellas <- function(p) ifelse(p < .01, "\\*\\*\\*", ifelse(p < .05, "\\*\\*", ifelse(p < .1, "\\*", "")))
+pin <- function(p) if (p < 0.001) "p < 0,001" else paste0("p = ", num(p, 3))
+```
+
+# Cómo leer este documento {-}
+
+El texto de cada ejercicio es el del PDF *Trabajo Práctico (R)*. El código replica en R el archivo `Datos/Trabajo Práctico.do`, y las tablas, las figuras y los números de los recuadros se calculan a partir de las tres bases de `Datos/`. Lo <mark>resaltado</mark> es una frase, un número o un rótulo con alguna discrepancia, explicada en el recuadro correspondiente. Las tablas muestran las cifras **calculadas en R**; cuando difieren de las del PDF, la cifra queda resaltada.
+
+::: {.disc .error}
+**Error**: la afirmación contradice los datos o el paper, la respuesta omite lo que se pide, o el cálculo no corresponde.
+:::
+
+::: {.disc .impr}
+**Imprecisión**: redacción, rótulo, formato u omisión que puede inducir a error.
+:::
+
+::: {.disc .metodo}
+**Observación metodológica**: la conclusión depende de una decisión discutible o no documentada.
+:::
+
+**Resultado de la réplica.** Las estimaciones de MCO, DD, DDD y variables instrumentales se reproducen en R, igual que las de `rdrobust` con ancho de banda fijo. **No se reproduce el ancho de banda óptimo** de la tabla 4 con la versión actual del paquete ([D10](#d10)), y en la tabla 6 hay una diferencia menor en el error estándar. Algunas cifras de las tablas 8 y 10 a 13 difieren en el último decimal (ver el [control de cifras](#control)). Los problemas principales son de interpretación: la lectura de la figura 1 ([D3](#d3)), una significatividad mal marcada ([D5](#d5)), la justificación de `rdrobust` ([D7](#d7)), las unidades del empleo ([D18](#d18)), el ejercicio de Pensilvania ([D27](#d27)), la prueba DDD ([D29](#d29)), la fortaleza del instrumento ([D33](#d33)) y los supuestos para un ATE ([D35](#d35)). Además, el *do-file* tiene **comentada** la prueba `rddensity` que el texto informa ([D12](#d12)).
+
+| N° | Parte y ej. | Tipo | Discrepancia |
+|----|-------------|------|--------------|
+| [D1](#d1) | I.1 | Error | Supuestos de identificación del diseño |
+| [D2](#d2) | I.2 | Imprecisión | Nombres de variables |
+| [D3](#d3) | I.3 | Error | Las observaciones no están solo en los cuadrantes I y III |
+| [D4](#d4) | I.4 | Metodológica | El salto visual proviene de un polinomio global de grado 4 |
+| [D5](#d5) | I.5 | Error | Significatividad de la pendiente derecha en la tabla 1 |
+| [D6](#d6) | I.6 | Imprecisión | Interpretación de los coeficientes |
+| [D7](#d7) | I.7 | Error | `rdrobust` no es más eficiente que MCO |
+| [D8](#d8) | I.7-9 | Imprecisión | "Observaciones" no son las usadas en la estimación |
+| [D9](#d9) | I.7-9 | Metodológica | Inferencia convencional en lugar de robusta |
+| [D10](#d10) | I.8 | Metodológica | El ancho de banda óptimo depende de la versión |
+| [D11](#d11) | I.9a | Imprecisión | Tipo de error estándar y nombre de la variable |
+| [D12](#d12) | I.9b | Error | `rddensity` está comentado en el *do-file* |
+| [D13](#d13) | I.9b | Error | No se explica la idea de un test de densidad |
+| [D14](#d14) | I.9c | Error | Por qué restringir a $X \geq 0$ |
+| [D15](#d15) | I.9c | Metodológica | Ventana del cutoff falso y figura 7 |
+| [D16](#d16) | II.1c | Imprecisión | La tendencia común no se puede verificar |
+| [D17](#d17) | II.2 | Imprecisión | Remite a la tabla 7 en lugar de la 8 |
+| [D18](#d18) | II.2, II.4 | Error | El empleo no se mide en horas |
+| [D19](#d19) | II.2 | Imprecisión | Redondeo de dos cifras de PA en la tabla 8 |
+| [D20](#d20) | II.2 | Imprecisión | Efecto "positivo" sin mencionar la incertidumbre |
+| [D21](#d21) | II.2 | Metodológica | El traspaso a precios no explica el resultado |
+| [D22](#d22) | II.2 | Error | El paper sí menciona la aprobación anticipada de la ley |
+| [D23](#d23) | II.3a | Imprecisión | Rótulos del grupo de control |
+| [D24](#d24) | II.3-4 | Metodológica | Errores estándar sin agrupar por restaurante |
+| [D25](#d25) | II.3c | Error | No significativo no implica ausencia de efecto |
+| [D26](#d26) | II.4 | Metodológica | Restaurantes entre \$5,00 y \$5,05 en el grupo de control |
+| [D27](#d27) | II.4a | Error | No se interpreta el resultado de PA como placebo |
+| [D28](#d28) | II.4b | Error | Lectura de la prueba DDD |
+| [D29](#d29) | II.4c | Error | Qué compara DDD y qué concluye la comparación |
+| [D30](#d30) | III.1 | Imprecisión | Resumen del instrumento |
+| [D31](#d31) | III.2 | Imprecisión | Enunciado de los supuestos |
+| [D32](#d32) | III.2 | Error | Críticas atribuidas a Glaeser *et al.* y Sachs |
+| [D33](#d33) | III.3 | Error | Fortaleza del instrumento |
+| [D34](#d34) | III.3 | Imprecisión | Tabla 13 frente a la tabla 4 del paper |
+| [D35](#d35) | III.4 | Error | Supuestos para un ATE |
+| [D36](#d36) | III.5 | Imprecisión | Resumen de las críticas |
+| [D37](#d37) | Ref. | Imprecisión | Referencias faltantes |
+| [D38](#d38) | II y III | Imprecisión | Último decimal de algunas cifras |
+
+# Parte I: Diseño de Regresión Discontinua
+
+Este ejercicio está basado en el texto de Cattaneo, M. D., Frandsen, B. R. y Titiunik, R. (2015). *Randomization Inference in the Regression Discontinuity Design: An Application to Party Advantages in the U.S. Senate*. Journal of Causal Inference, 3(1), 1-24.
+
+::: {.enunciado}
+Se tratará de analizar si el hecho de que un político haya ganado las elecciones (es decir, esté actualmente en el poder) se traduce en una ventaja electoral para ese individuo en la elección siguiente. Esto ha sido muy estudiado por la literatura y se llama "incumbency advantage". Cattaneo, Frandsen y Titiunik aplican un diseño de RDD para estudiar este fenómeno en el Senado de EE.UU. En este caso particular, la estrategia se basa en comparar los estados donde el partido demócrata "apenas" ganó las elecciones con los estados donde el partido demócrata "apenas" perdió y chequear si existe un "incumbency advantage" en las siguientes elecciones.
+
+Para el análisis, utilizar la base de datos llamada "CIT_2019_Cambridge_senate.dta". La variable de resultado de interés será "demvoteshfor2: Democratic vote share at t+2" y la forcing variable "demmv: Democratic margin of victory at t". Antes de analizar la base de datos, se deberán instalar los siguientes comandos: RDROBUST: "ssc install rdrobust" y RDDENSITY: "ssc install rddensity".
+:::
+
+```{r paquetes-rd, eval=FALSE}
+# Equivalente a "ssc install rdrobust" y "ssc install rddensity"
+install.packages(c("rdrobust", "rddensity"))
+```
+
+```{r datos-rd}
+senado <- as.data.frame(zap_labels(read_dta("Datos/CIT_2019_Cambridge_senate.dta")))
+c(filas = nrow(senado), periodo = paste(range(senado$year), collapse = "-"),
+  sin_resultado = sum(is.na(senado$demvoteshfor2)))
+```
+
+## Ejercicio 1
+
+::: {.enunciado}
+Se quiere identificar este "incumbency advantage" descripto anteriormente. Explicar los supuestos básicos para que los resultados tengan interpretación causal usando una estrategia RDD. ¿Es un caso de RDD sharp o fuzzy?
+:::
+
+Los supuestos básicos para que los resultados tengan interpretación causal usando una estrategia *RDD* son:
+
+- en primer lugar, que las unidades que están justo por debajo y justo por encima del punto de corte (*cutoff*) son comparables entre sí en todos los aspectos relevantes, excepto por el hecho de que algunas son tratadas y otras no;
+- luego, que <mark>la distribución de la puntuación (*score*)</mark>, conocida también como *"running variable"* o *"forcing variable"*, <mark>es la misma para todas las unidades</mark>, lo cual implica que el *score* puede considerarse "como asignado aleatoriamente alrededor del *cutoff*" (esto se cumple siempre que las unidades no posean control exacto sobre si el valor de su *forcing variable* se encuentra por debajo o por encima del *cutoff*);
+- por último, se tiene la no interferencia entre las unidades, lo cual significa que <mark>el resultado potencial de la unidad *i* depende sólo de su *score*</mark>.
+
+Éste es un caso de *RDD sharp*, ya que el cumplimiento con la asignación del tratamiento es perfecto, todos los años/estados con triunfo demócrata son el grupo de Tratados y todos los años/estados con derrota demócrata son el grupo de No Tratados.
+
+::: {.disc .error #d1}
+**D1.** Se mezclan dos marcos y falta el supuesto central de cada uno.
+
+- El enfoque que se estima en los ejercicios 5 a 9 es el de **continuidad**: $E[Y_i(0)\mid X_i=x]$ y $E[Y_i(1)\mid X_i=x]$ son continuas en $x=0$. No se enuncia.
+- Los puntos segundo y tercero corresponden al supuesto 1 de **aleatorización local** de Cattaneo *et al.* (2015), que vale **solo dentro de una ventana** $W_0$ alrededor del corte: (a) la distribución del *score*, condicional en estar en $W_0$, es la misma para todas las unidades; (b) dentro de $W_0$, el resultado potencial depende del *score* **únicamente a través del tratamiento**. Sin la ventana, (a) es insostenible, y "depende sólo de su *score*" invierte (b).
+
+La clasificación como diseño *sharp* es correcta: $P(T_i=1\mid X_i)$ salta de 0 a 1 en el corte.
+:::
+
+## Ejercicio 2
+
+::: {.enunciado}
+Definir X = demmv e Y = demvoteshfor2. Definir, ahora, T (variable de tratamiento) como una variable que indique si los demócratas ganaron la elección en el período "t".
+:::
+
+```{r definiciones}
+senado$X <- senado$demmv                      # rename demmv X
+senado$Y <- senado$demvoteshfor2              # rename demvoteshfor2 Y
+senado$T <- ifelse(senado$X >= 0, 1, 0)       # 1 si ganan los demócratas en t
+table(T = senado$T, useNA = "ifany")
+```
+
+Se definen las siguientes variables:
+
+- X = <mark>*demmy*</mark> (*Democratic margin victory at t*), que será la *forcing variable*.
+- Y = <mark>*demvotehfor2*</mark> (*Democratic vote share at t+2*), que será la variable de resultado de interés.
+- T = 1 si $X \geq 0$ y T = 0 si $X < 0$, que será la variable de tratamiento.
+
+::: {.disc .impr #d2}
+**D2.** Las variables se llaman `demmv` y `demvoteshfor2`. El *do-file* repite "demmy" en un comentario, aunque el código usa el nombre correcto.
+:::
+
+## Ejercicio 3
+
+::: {.enunciado}
+Hacer un gráfico scatter de X e Y. Interpretar.
+:::
+
+En la figura 1, se presenta la relación entre el *share* de votos demócratas en *t+2* y el margen de victoria demócrata en *t*. Se puede observar una relación marcadamente positiva entre ambas variables y <mark>que todas las observaciones se encuentran en el I y en el III cuadrante</mark>. A simple vista, alrededor del punto de corte, no es posible corroborar una discontinuidad.
+
+```{r figura1, fig.cap="Figura 1. Relación entre share de votos demócratas en t+2 y margen de victoria demócrata en t (gráfico scatter). Fuente: Elaboración propia."}
+ok <- !is.na(senado$X) & !is.na(senado$Y)
+ggplot(senado[ok, ], aes(X, Y)) +
+  geom_hline(yintercept = 50, colour = "red") + geom_vline(xintercept = 0, colour = "red") +
+  geom_point(size = 1.2) + theme_bw() +
+  labs(x = "Democratic margin of victory at t", y = "Democratic vote share at t+2")
+```
+
+```{r cuadrantes}
+cuad <- with(senado[ok, ], table(`X >= 0` = X >= 0, `Y > 50` = Y > 50))
+cuad
+fuera <- cuad["TRUE", "FALSE"] + cuad["FALSE", "TRUE"]
+```
+
+::: {.disc .error #d3}
+**D3.** Es falso. Respecto de las líneas rojas ($X=0$, $Y=50$) hay `r ent(cuad["FALSE", "TRUE"])` observaciones en el cuadrante II y `r ent(cuad["TRUE", "FALSE"])` en el IV: `r ent(fuera)` de `r ent(sum(ok))` (`r num(100 * fuera / sum(ok), 1)`%). La propia figura 1 las muestra. La relación positiva sí se observa (correlación de `r num(cor(senado$X[ok], senado$Y[ok]), 2)`).
+:::
+
+## Ejercicio 4
+
+::: {.enunciado}
+Usando el comando "rdplot", graficar los datos crudos de X e Y. Utilizar 20 bins de cada lado de la misma longitud cada bin (ayuda: opción "nbins(20 20)"). Interpretar.
+:::
+
+En la figura 2, se presenta una "suavización" de los datos originales por medio de promedios locales, ya que, anteriormente, no se pudo corroborar discontinuidad. Se puede observar que, alrededor del punto de corte, existe una discontinuidad. En particular, se tiene que, en el punto de corte (un margen de victoria demócrata en *t* igual a cero), el *share* de votos demócratas en *t+2* aumenta, <mark>aproximadamente, entre 5 y 10 puntos porcentuales</mark>.
+
+```{r funcion-rdplot}
+# Calcula los puntos de rdplot y los grafica con el formato de Stata
+grafico_rd <- function(y, x, ..., c = 0) {
+  r <- suppressWarnings(rdplot(y, x, c = c, hide = TRUE, ...))
+  pol <- r$vars_poly
+  pol$lado <- rep(c("izq", "der"), each = nrow(pol) / 2)
+  ggplot() +
+    geom_point(aes(rdplot_mean_bin, rdplot_mean_y, colour = "Promedio muestral por bin"), data = r$vars_bins) +
+    geom_line(aes(rdplot_x, rdplot_y, group = lado, linetype = paste("Ajuste polinómico de grado", r$p[1])), data = pol) +
+    geom_vline(xintercept = c) + theme_bw() +
+    scale_colour_manual(values = "red") +
+    labs(x = NULL, y = NULL, colour = NULL, linetype = NULL) + theme(legend.position = "bottom")
+}
+```
+
+```{r figura2, fig.cap="Figura 2. Relación entre share de votos demócratas en t+2 y margen de victoria demócrata en t (gráfico suavizado). Fuente: Elaboración propia."}
+grafico_rd(senado$Y, senado$X, nbins = c(20, 20))
+```
+
+```{r salto-global}
+g4 <- suppressWarnings(rdplot(senado$Y, senado$X, nbins = c(20, 20), hide = TRUE))$coef
+salto4 <- unname(g4[1, 2] - g4[1, 1])
+salto4
+```
+
+::: {.disc .metodo #d4}
+**D4.** Los puntos son promedios por intervalo, pero las curvas son **polinomios globales de grado 4**, ajustados con todos los datos de cada lado. El salto que sugieren en el corte es de `r num(salto4, 2)` puntos, dentro del rango citado pero bastante mayor que las estimaciones locales de los ejercicios 5 a 8 (alrededor de 7). Los polinomios globales de grado alto son poco confiables en los bordes (Gelman e Imbens, 2019): el gráfico sirve para inspeccionar, no para medir el efecto.
+:::
+
+## Ejercicio 5
+
+::: {.enunciado}
+Como se vio en clase, ahora, usar dos regresiones independientes para calcular el efecto causal de interés (usar MCO, polinomio grado 1). Para estas regresiones, usar sólo un ancho de banda de +/- 10 (ayuda: correr la regresión primero para la muestra "if X < 0 & X ≥ -10" y, luego, para "if X ≥ 0 & X ≤ 10"). Usando estos coeficientes, ¿cómo se calcula el estimador RD? ¿qué valor asume?
+:::
+
+```{r dos-regresiones}
+izq <- lm(Y ~ X, data = senado, subset = X < 0 & X >= -10)
+der <- lm(Y ~ X, data = senado, subset = X >= 0 & X <= 10)
+rd_mco <- unname(coef(der)[1] - coef(izq)[1])
+c(constante_izq = unname(coef(izq)[1]), constante_der = unname(coef(der)[1]), estimador_RD = rd_mco)
+```
+
+En la tabla 1, se presentan dos regresiones independientes a la izquierda y a la derecha del punto de corte para calcular el efecto causal de interés, usando MCO, un polinomio de grado 1 y un ancho de banda de +/- 10. El estimador *RD* se calcula como la diferencia entre la constante de la regresión a la derecha del punto de corte y la constante de la regresión a la izquierda del punto de corte. Se puede observar que, en este caso, el estimador *RD* es `r num(rd_mco)` puntos porcentuales (`r num(coef(der)[1])` - `r num(coef(izq)[1])`), lo cual indica que, en el punto de corte (margen de victoria demócrata en *t* igual a cero), aumenta `r num(rd_mco)` puntos porcentuales el *share* de votos demócratas en *t+2*.
+
+```{r funcion-tabla}
+# Coeficientes, errores estándar y estadísticos de una o más regresiones
+resumen <- function(m, tipo = c("clasico", "robusto", "cluster"), id = NULL) {
+  tipo <- match.arg(tipo)
+  X <- model.matrix(m); u <- resid(m); n <- nrow(X); k <- ncol(X); A <- solve(crossprod(X))
+  V <- switch(tipo,
+    clasico = vcov(m),
+    robusto = A %*% crossprod(X * u) %*% A * n / (n - k),                       # HC1: "robust" de Stata
+    cluster = { s <- rowsum(X * u, id); G <- nrow(s)
+                A %*% crossprod(s) %*% A * G / (G - 1) * (n - 1) / (n - k) })
+  gl <- if (tipo == "cluster") nrow(rowsum(X * u, id)) - 1 else n - k
+  se <- sqrt(diag(V))
+  list(b = coef(m), se = se, p = 2 * pt(-abs(coef(m) / se), gl), n = n, r2 = summary(m)$r.squared)
+}
+# Arma la tabla; "marcar" resalta las celdas (coeficiente o error estándar) que difieren del PDF
+tabla <- function(res, filas, d = 3, marcar = NULL, ...) {
+  cuerpo <- do.call(rbind, lapply(names(filas), function(f) {
+    v <- filas[[f]]
+    b  <- sapply(res, function(r) if (v %in% names(r$b)) paste0(num(r$b[[v]], d), estrellas(r$p[[v]])) else "")
+    se <- sapply(res, function(r) if (v %in% names(r$b)) paste0("(", num(r$se[[v]], d), ")") else "")
+    for (j in seq_along(res)) if (paste(f, j) %in% marcar) b[j] <- paste0("<mark>", b[j], "</mark>")
+    for (j in seq_along(res)) if (paste(f, j, "se") %in% marcar) se[j] <- paste0("<mark>", se[j], "</mark>")
+    rbind(c(f, b), c("", se))
+  }))
+  cuerpo <- rbind(cuerpo, c("Observaciones", sapply(res, function(r) ent(r$n))),
+                  c("$R^2$", sapply(res, function(r) num(r$r2, 4))))
+  colnames(cuerpo) <- c("Variables", names(res))
+  kable(cuerpo, align = c("l", rep("c", length(res))), ...)
+}
+```
+
+```{r tabla1}
+t1 <- list(Y_left = resumen(izq), Y_right = resumen(der))
+tabla(t1, list(X = "X", constante = "(Intercept)"), marcar = "X 2",
+      caption = "Tabla 1. Estimaciones mediante MCO y polinomio de grado 1.")
+```
+
+Los datos en paréntesis corresponden a los desvíos estándar. Nivel de significatividad: \* al 10%, \*\* al 5%, \*\*\* al 1%. Fuente: Elaboración propia. En el PDF, la pendiente derecha figura como <mark>0,398\*\*</mark>.
+
+::: {.disc .error #d5}
+**D5.** La pendiente de `Y_right` tiene `r pin(t1$Y_right$p[["X"]])`: es significativa al **10%** (\*), no al 5% (\*\*). No afecta al estimador RD, que usa las constantes. (Los valores entre paréntesis son errores estándar.)
+:::
+
+## Ejercicio 6
+
+::: {.enunciado}
+Ahora, estimar ese efecto corriendo una sola regresión. Escribir el modelo que se estimará. Interpretar cada coeficiente. ¿Cuál es el coeficiente de interés? Comparar con lo obtenido en el punto anterior.
+:::
+
+```{r una-regresion}
+senado$TX <- senado$T * senado$X
+conjunta <- lm(Y ~ T + X + TX, data = senado, subset = X >= -10 & X <= 10)
+t2 <- list(Y = resumen(conjunta))
+```
+
+Ahora, se procede a estimar el mismo efecto pero corriendo una sola regresión. El modelo que se estimará es el siguiente:
+
+$$Y_{it} = \alpha + \beta T_{it} + \gamma (X_{it} - c) + \rho (X_{it} - c) T_{it} + \epsilon_{it}, \tag{1}$$
+
+donde $Y_{it}$ es el *share* de votos que los demócratas obtienen en el período *t+2*, $T_{it}$ indica si la observación pertenece al grupo de tratamiento ($X_{it} \geq 0$), $X_{it}$ es el margen de victoria de los demócratas en *t* y $\epsilon_{it}$ es el término de error del modelo. El efecto del tratamiento es capturado por $\beta$, es decir, el cambio en el *share* de votos demócratas en *t+2* en el punto de corte (margen de victoria demócrata en *t* igual a cero).
+
+En la tabla 2, se presenta la estimación del modelo (1). Se puede observar que, al comparar con lo obtenido en el punto anterior, el efecto del tratamiento (capturado por $\beta$) es estadísticamente significativo (al 1% de significatividad) e idéntico al estimado previamente (`r num(t2$Y$b[["T"]])` puntos porcentuales), indicando que <mark>los senadores demócratas que ganaron en *t*</mark> tienen, en promedio, un *share* de votos demócratas en *t+2* mayor en `r num(t2$Y$b[["T"]])` puntos porcentuales. Esto deja de manifiesto que se obtiene el mismo resultado realizando dos regresiones independientes (a la izquierda y a la derecha del punto de corte) o una sola regresión conjunta. Por otra parte, se observa que, si la observación no pertenece al grupo de tratamiento ($T_{it}=0$), un aumento de un punto porcentual en el margen de victoria demócrata en *t* <mark>aumenta</mark>, en promedio, el *share* de votos demócratas en *t+2* en `r num(t2$Y$b[["X"]])` puntos porcentuales (*céteris páribus*), mientras que, si la observación pertenece al grupo de tratamiento ($T_{it}=1$), al efecto anterior, se le adiciona `r num(t2$Y$b[["TX"]])` puntos porcentuales, por lo que, cuando $T_{it}=1$, este efecto total es de `r num(t2$Y$b[["X"]] + t2$Y$b[["TX"]])` puntos porcentuales (al igual que como se observa en la tabla 1).
+
+```{r tabla2}
+tabla(t2, list(T = "T", X = "X", TX = "TX", constante = "(Intercept)"),
+      caption = "Tabla 2. Estimación mediante MCO del modelo (1).")
+```
+
+Los datos en paréntesis corresponden a los desvíos estándar. Nivel de significatividad: \* al 10%, \*\* al 5%, \*\*\* al 1%. Fuente: Elaboración propia.
+
+::: {.disc .impr #d6}
+**D6.** (i) Se pide interpretar **cada** coeficiente y falta $\alpha$ = `r num(t2$Y$b[["(Intercept)"]])`: el *share* esperado en *t+2* en el límite izquierdo del corte (derrota por un margen casi nulo). (ii) $\gamma$ y $\rho$ son las pendientes del ajuste local, sin interpretación causal, y no son significativas (`r pin(t2$Y$p[["X"]])` y `r pin(t2$Y$p[["TX"]])`). (iii) La unidad es la elección estado-año y el tratamiento es la victoria del **partido**: $\beta$ mide la ventaja del partido incumbente, que Cattaneo *et al.* distinguen de la ventaja personal del senador (en *t+2* el candidato puede ser otro). La coincidencia con el punto anterior es algebraica: un modelo totalmente interactuado equivale a las dos regresiones; solo cambian los errores estándar, porque se estima una única varianza residual.
+:::
+
+## Ejercicio 7
+
+::: {.enunciado}
+Ahora, usar el comando "rdrobust" con pesos uniformes (ayuda: opción "kernel(uniform)") para estimar el mismo coeficiente. (Ayuda: usar opción "p(?)" y, para el ancho de banda, la opción "h(?)"). Comparar con las estimaciones anteriores.
+:::
+
+```{r rd10}
+rd10 <- suppressWarnings(rdrobust(senado$Y, senado$X, p = 1, h = 10, kernel = "uniform"))
+summary(rd10)
+tabla_rd <- function(r, var = "Y", ...) {
+  m <- rbind(c("X", paste0(num(r$coef[1]), estrellas(r$pv[1]))),
+             c("", paste0("(", num(r$se[1]), ")")),
+             c("Observaciones", ent(sum(r$N))),
+             c("Observaciones efectivas (agregado en R)", ent(sum(r$N_h))),
+             c("Ancho de banda", num(r$bws[1, 1])))
+  colnames(m) <- c("Variable", var)
+  kable(m, align = c("l", "c"), ...)
+}
+```
+
+En la tabla 3, se presentan nuevas estimaciones con el comando *"rdrobust"* (con *kernel* uniforme y ancho de banda 10), <mark>ya que el estimador MCO es insesgado pero puede ser ineficiente (errores estándar grandes)</mark>. Se puede observar que, si bien el efecto causal es el mismo, <mark>el error estándar es un tanto menor que en el caso de MCO</mark>. En la figura 3, se presenta el *share* de votos demócratas en *t+2* en función del margen de victoria demócrata en *t* (con ancho de banda 10).
+
+```{r tabla3}
+tabla_rd(rd10, caption = "Tabla 3. Estimación mediante \"rdrobust\" (con ancho de banda 10) del modelo (1).")
+```
+
+Los datos en paréntesis corresponden a los desvíos estándar. Nivel de significatividad: \* al 10%, \*\* al 5%, \*\*\* al 1%. Fuente: Elaboración propia.
+
+```{r figura3, fig.cap="Figura 3. Relación entre share de votos demócratas en t+2 y margen de victoria demócrata en t (regresiones con ancho de banda 10). Fuente: Elaboración propia."}
+s <- which(abs(senado$X) <= 10)
+grafico_rd(senado$Y[s], senado$X[s], p = 1, h = 10, kernel = "uniform")
+```
+
+```{r comparacion-se}
+hc <- resumen(conjunta, "robusto")
+comp <- data.frame(
+  Estimador = c("MCO, errores clásicos", "MCO, errores robustos (HC1)",
+                "rdrobust convencional (varianza de vecinos más cercanos)", "rdrobust con corrección de sesgo y error robusto"),
+  Coeficiente = num(c(t2$Y$b[["T"]], hc$b[["T"]], rd10$coef[1], rd10$coef[3])),
+  `Error estándar` = num(c(t2$Y$se[["T"]], hc$se[["T"]], rd10$se[1], rd10$se[3])), check.names = FALSE)
+kable(comp, align = c("l", "c", "c"))
+```
+
+::: {.disc .error #d7}
+**D7.** Con *kernel* uniforme, $p=1$ y el mismo $h$, el estimador convencional de `rdrobust` **es** el de MCO: no puede ganar eficiencia. La diferencia en el error estándar (`r num(rd10$se[1])` frente a `r num(t2$Y$se[["T"]])`) se debe solo a la **fórmula de la varianza** (vecinos más cercanos, robusta a heterocedasticidad, frente a la clásica), no a un estimador más preciso. Tampoco corresponde afirmar que MCO es insesgado: una recta local tiene **sesgo de aproximación** si la esperanza condicional es curva, y de eso se ocupa la corrección de sesgo de `rdrobust` (última fila).
+:::
+
+::: {.disc .impr #d8}
+**D8.** "Observaciones" (`r ent(sum(rd10$N))` en las tablas 3 y 4; 1.349 en la 5; 702 en la 6) es el total sin datos faltantes. Las **efectivamente usadas** dentro del ancho de banda son mucho menos: `r ent(sum(rd10$N_h))` en la tabla 3, igual que en la tabla 2.
+:::
+
+::: {.disc .metodo #d9}
+**D9.** Las tablas 3 a 6 informan el coeficiente, el error estándar y las estrellas de la inferencia **convencional**, que no corrige el sesgo del ancho de banda. El propósito de `rdrobust` es la inferencia **robusta con corrección de sesgo**, que es la que el comando usa en su resumen. Con $h=10$ fijo, el estimador corregido es `r num(rd10$coef[3])` (error `r num(rd10$se[3])`): sigue siendo significativo, pero su magnitud cambia bastante, señal de que el resultado es sensible a la curvatura. (Con $h$ fijo, `rdrobust` usa $b=h$ para estimar el sesgo.)
+:::
+
+## Ejercicio 8
+
+::: {.enunciado}
+Ahora, hacer lo mismo que en el inciso anterior pero sin imponer el valor de ancho de banda en 10. ¿Cuál es el ancho de banda óptimo reportado? Graficar los datos para ese ancho de banda. Ayuda para el gráfico: rdplot Y X if abs(X) ≤ "bandwidth", p(1) h('bandwidth') kernel(uniforme).
+:::
+
+```{r rd-optimo}
+rdopt <- suppressWarnings(rdrobust(senado$Y, senado$X, p = 1, kernel = "uniform"))
+summary(rdopt)
+h_pdf <- 12.112                                   # ancho de banda informado en el PDF
+rdpdf <- suppressWarnings(rdrobust(senado$Y, senado$X, p = 1, h = h_pdf, kernel = "uniform"))
+```
+
+Ahora, se realiza lo mismo que en el inciso anterior pero sin imponer el valor de ancho de banda en 10. En la tabla 4, se presentan los resultados de esta estimación (con *kernel* uniforme). Se puede observar, por un lado, que el ancho de banda óptimo reportado es <mark>12,112</mark> y, por otro lado, que el efecto causal es un tanto mayor (alrededor de <mark>0,26 puntos porcentuales</mark>) que en el caso con ancho de banda 10. En la figura 4, se presenta el *share* de votos demócratas en *t+2* en función del margen de victoria demócrata en *t* (con ancho de banda óptimo).
+
+```{r tabla4}
+m4 <- rbind(
+  c("X", paste0(num(rdpdf$coef[1]), estrellas(rdpdf$pv[1])), paste0(num(rdopt$coef[1]), estrellas(rdopt$pv[1]))),
+  c("", paste0("(", num(rdpdf$se[1]), ")"), paste0("(", num(rdopt$se[1]), ")")),
+  c("Observaciones", ent(sum(rdpdf$N)), ent(sum(rdopt$N))),
+  c("Observaciones efectivas", ent(sum(rdpdf$N_h)), ent(sum(rdopt$N_h))),
+  c("Ancho de banda", num(h_pdf), paste0("<mark>", num(rdopt$bws[1, 1]), "</mark>")))
+colnames(m4) <- c("Variable", "Y (h del PDF)", "Y (h óptimo en R)")
+kable(m4, align = c("l", "c", "c"), caption = "Tabla 4. Estimación mediante \"rdrobust\" (con ancho de banda óptimo) del modelo (1).")
+```
+
+Los datos en paréntesis corresponden a los desvíos estándar. Nivel de significatividad: \* al 10%, \*\* al 5%, \*\*\* al 1%. Fuente: Elaboración propia.
+
+```{r figura4, fig.cap="Figura 4. Relación entre share de votos demócratas en t+2 y margen de victoria demócrata en t (regresiones con ancho de banda óptimo calculado en R). Fuente: Elaboración propia."}
+h <- rdopt$bws[1, 1]
+s <- which(abs(senado$X) <= h)
+grafico_rd(senado$Y[s], senado$X[s], p = 1, h = h, kernel = "uniform")
+```
+
+```{r sensibilidad-h}
+h_sin <- suppressWarnings(rdrobust(senado$Y, senado$X, p = 1, kernel = "uniform", masspoints = "off"))
+c(masspoints_adjust = rdopt$bws[1, 1], masspoints_off = h_sin$bws[1, 1])
+```
+
+::: {.disc .metodo #d10}
+**D10.** Con `rdrobust` `r as.character(packageVersion("rdrobust"))` el ancho de banda óptimo (MSE, mismo a ambos lados) es **`r num(rdopt$bws[1, 1])`** y el efecto `r num(rdopt$coef[1])` (error `r num(rdopt$se[1])`), una diferencia de `r num(rdopt$coef[1] - rd10$coef[1], 2)` puntos respecto de $h=10$. Si se **impone** $h=12{,}112$, R devuelve exactamente las cifras del PDF (`r num(rdpdf$coef[1])`; `r num(rdpdf$se[1])`), de modo que la diferencia está en la **selección del ancho de banda**, no en los datos ni en el estimador. Lo atribuyo a cambios entre versiones del paquete: el *do-file* instala la más reciente de GitHub (`net install`, y no `ssc install` como pide el enunciado) sin fijar versión. Ninguna de las opciones probadas en R reprodujo 12,112; el ajuste por masas de puntos, por ejemplo, lleva el valor a `r num(h_sin$bws[1, 1])` si se desactiva. La conclusión no cambia.
+:::
+
+## Ejercicio 9
+
+::: {.enunciado}
+Ahora, se ven algunos tests que se podrían hacer para validar la estrategia RDD usada.
+:::
+
+### (a) {-}
+
+::: {.enunciado}
+¿Cómo se podría usar la variable "demvoteshlag1" para validar la estrategia RD? Ejecutar este test y graficar, usando los comandos rdrobust y rdplot, respectivamente.
+:::
+
+```{r rd-lag}
+lag10 <- suppressWarnings(rdrobust(senado$demvoteshlag1, senado$X, p = 1, h = 10, kernel = "uniform"))
+lagtri <- suppressWarnings(rdrobust(senado$demvoteshlag1, senado$X, p = 1, kernel = "triangular"))
+laguni <- suppressWarnings(rdrobust(senado$demvoteshlag1, senado$X, p = 1, kernel = "uniform"))
+summary(lag10); summary(lagtri)
+```
+
+Para validar la estrategia *RDD*, se podría usar la variable <mark>*"demvoteslag1"*</mark> (*share* de votos demócratas en *t-1*) como variable dependiente, considerando que no se debería encontrar una relación causal entre esta variable y el margen de victoria demócrata en *t*. En la tabla 5, se presentan los resultados (con *kernel* uniforme y ancho de banda 10). Se puede observar que el efecto causal no es estadísticamente significativo. En la figura 5, se presenta el *share* de votos demócratas en *t-1* en función del margen de victoria demócrata en *t* (con ancho de banda 10). Se encuentran resultados análogos si se utiliza un ancho de banda óptimo y *kernel* triangular (ver *.do file*).
+
+```{r tabla5}
+tabla_rd(lag10, "demvoteshlag1",
+         caption = "Tabla 5. Estimación mediante \"rdrobust\" (con ancho de banda 10) del modelo (1) con variable dependiente \"demvoteshlag1\".")
+```
+
+Los datos en paréntesis corresponden a los desvíos estándar <mark>robustos</mark>. Nivel de significatividad: \* al 10%, \*\* al 5%, \*\*\* al 1%. Fuente: Elaboración propia.
+
+```{r figura5, fig.cap="Figura 5. Relación entre share de votos demócratas en t-1 y margen de victoria demócrata en t (regresiones con ancho de banda 10). Fuente: Elaboración propia."}
+s <- which(abs(senado$X) <= 10)
+grafico_rd(senado$demvoteshlag1[s], senado$X[s], p = 1, h = 10, kernel = "uniform")
+```
+
+```{r figura-lag-optimo, fig.cap="Gráfico adicional del do-file (no incluido en el PDF): share en t-1 con ancho de banda óptimo y kernel triangular."}
+h <- lagtri$bws[1, 1]
+s <- which(abs(senado$X) <= h)
+grafico_rd(senado$demvoteshlag1[s], senado$X[s], p = 1, h = h, kernel = "triangular")
+```
+
+::: {.disc .impr #d11}
+**D11.** La variable es `demvoteshlag1`. El error informado, `r num(lag10$se[1])`, es el **convencional** (el mismo tipo que en las tablas 3, 4 y 6, cuyas notas no dicen "robustos"); el robusto con corrección de sesgo es `r num(lag10$se[3])`. La falta de significatividad se mantiene con *kernel* triangular y ancho óptimo (`r num(lagtri$coef[1])`, `r pin(lagtri$pv[1])`). Con *kernel* **uniforme** y ancho óptimo, en cambio, el resultado queda cerca del umbral (`r num(laguni$coef[1])`, `r pin(laguni$pv[1])` convencional; `r pin(laguni$pv[3])` robusto).
+:::
+
+### (b) {-}
+
+::: {.enunciado}
+Realizar un test de densidad usando el comando rddensity (ayuda: rddensity X). Graficar (ayuda: use la opción "plot" del comando rddensity). Interpretar y describir cuál es la idea que hay detrás de un test de densidad, cualquiera que sea el test.
+:::
+
+```{r histograma, fig.cap="Histograma del score (incluido en el do-file, no en el PDF)."}
+ggplot(senado, aes(X)) + geom_histogram(bins = 31, fill = "#1a476f", colour = "white") +
+  theme_bw() + labs(x = "Score", y = "Número de observaciones")
+```
+
+```{r funcion-mccrary}
+# Traducción a R de Datos/DCdensity.ado (McCrary, 2008)
+DCdensity <- function(x, c = 0) {
+  x <- x[!is.na(x)]; n <- length(x)
+  b <- 2 * sd(x) / sqrt(n)                                     # ancho de los bins
+  l <- floor((min(x) - c) / b) * b + b / 2 + c
+  r <- floor((max(x) - c) / b) * b + b / 2 + c
+  j <- floor((max(x) - min(x)) / b) + 2
+  celda <- round(((floor((x - c) / b) * b + b / 2 + c) - l) / b + 1)
+  val <- tabulate(celda, j) / n / b                            # histograma normalizado
+  mp <- floor(((l + (seq_len(j) - 1) * b) - c) / b) * b + b / 2 + c
+  # Ancho de banda: polinomio de grado 4 a cada lado
+  izq <- round(((floor((-b / 2) / b) * b + b / 2 + c) - l) / b + 1)
+  hlado <- function(ajuste, evalua, largo) {
+    m <- lm(val[ajuste] ~ poly(mp[ajuste], 4, raw = TRUE)); a <- coef(m)
+    f2 <- 2 * a[3] + 6 * a[4] * mp[evalua] + 12 * a[5] * mp[evalua]^2
+    unname(3.348 * (summary(m)$sigma^2 * largo / sum(f2^2))^(1/5))
+  }
+  h <- mean(c(hlado(mp < c, 1:izq, c - l), hlado(mp > c, (izq + 1):j, r - c)))
+  # Histograma con ceros en los extremos y regresión local lineal
+  z <- ceiling(h / b)
+  val2 <- c(rep(0, z), val, rep(0, z))
+  mp2 <- c(seq(l - z * b, by = b, length.out = z), mp, seq(r + b, by = b, length.out = z))
+  local <- function(punto, lado) {
+    d <- mp2 - punto
+    w <- pmax(0, 1 - abs(d / h)) * lado                        # kernel triangular
+    unname(lm.wfit(cbind(1, d[w > 0]), val2[w > 0], w[w > 0])$coefficients[1])
+  }
+  fi <- local(c, mp2 < c); fd <- local(c, mp2 >= c)
+  theta <- log(fd) - log(fi)
+  se <- sqrt(1 / (n * h) * 24 / 5 * (1 / fd + 1 / fi))
+  suave <- sapply(mp, function(a) local(a, if (a >= c) mp2 >= c else mp2 < c))
+  ee <- mapply(function(a, f) {
+    if (a > c) { m <- max(-1, (c - a) / h)
+      v <- (12 * f / (5 * n * h)) * (2-3*m^11-24*m^10-83*m^9-72*m^8+42*m^7+18*m^6-18*m^5+18*m^4-3*m^3+18*m^2-15*m) /
+        (1+m^6+6*m^5-3*m^4-4*m^3+9*m^2-6*m)^2
+    } else { m <- min((c - a) / h, 1)
+      v <- (12 * f / (5 * n * h)) * (2+3*m^11-24*m^10+83*m^9-72*m^8-42*m^7+18*m^6+18*m^5+18*m^4-3*m^3+18*m^2+15*m) /
+        (1+m^6-6*m^5-3*m^4+4*m^3+9*m^2+6*m)^2 }
+    suppressWarnings(sqrt(v))
+  }, mp, suave)
+  list(theta = theta, se = se, p = 2 * pnorm(-abs(theta / se)), bin = b, h = h,
+       histograma = data.frame(x = mp2, y = val2), suave = data.frame(x = mp, f = suave, ee = ee))
+}
+```
+
+```{r tests-densidad}
+mc <- DCdensity(senado$X, c = 0)
+c(theta = mc$theta, error_estandar = mc$se, valor_p = mc$p, bin = mc$bin, ancho_de_banda = mc$h)
+cjm <- rddensity(senado$X)               # en el do-file está comentado
+summary(cjm)
+```
+
+El supuesto de no manipulación de la variable de asignación al tratamiento se puede validar realizando un test de densidad, como, por ejemplo, el *McCrary Density Test* (2008), el cual permite testear si existe una diferencia estadísticamente significativa <mark>en la discontinuidad del puntaje</mark> en el punto de corte. Estos tests son una prueba de validación empírica que permiten verificar la continuidad de la densidad de un puntaje alrededor del punto de corte. En el caso del test de McCrary (2008), la estimación arroja que esta discontinuidad no es estadísticamente significativa (ver figura 6 -lado izquierdo- y *.do file*), lo cual brinda evidencia acerca de la validez del supuesto de no manipulación de la variable de asignación al tratamiento. En tanto que, en el caso del test de Cattaneo *et al.* (2017), no se rechaza la hipótesis nula de continuidad en el punto de corte (ver figura 6 -lado derecho- y <mark>*.do file*</mark>), lo cual adiciona evidencia en la misma dirección que el test anterior.
+
+```{r figura6, fig.show="hold", out.width="50%", fig.width=6, fig.height=4.5, fig.cap="Figura 6. Tests de densidad (McCrary, 2008 y Cattaneo et al.). Fuente: Elaboración propia."}
+sm <- mc$suave
+sm$lado <- sm$x >= 0
+sm <- sm[sm$x >= min(senado$X) & sm$x <= max(senado$X), ]
+ggplot() +
+  geom_point(aes(x, y), data = mc$histograma, shape = 1, colour = "grey50") +
+  geom_line(aes(x, f, group = lado), data = sm, linewidth = 0.8) +
+  geom_line(aes(x, f + 1.96 * ee, group = lado), data = sm, linewidth = 0.2) +
+  geom_line(aes(x, f - 1.96 * ee, group = lado), data = sm, linewidth = 0.2) +
+  geom_vline(xintercept = 0) + theme_bw() + labs(title = "McCrary (2008)", x = NULL, y = NULL)
+
+dib <- rdplotdensity(cjm, senado$X, plotRange = c(-cjm$h$left, cjm$h$right), noPlot = TRUE)
+dib$Estplot + labs(title = "rddensity", x = "X", y = NULL) + theme(legend.position = "none")
+```
+
+```{r histograma-ventana, fig.cap="Histograma dentro de los anchos de banda de rddensity (bloque comentado del do-file)."}
+v <- senado[senado$X >= -cjm$h$left & senado$X <= cjm$h$right, ]
+ggplot(v, aes(X, fill = X >= 0)) + geom_histogram(binwidth = 1, boundary = 0, colour = "white") +
+  theme_bw() + theme(legend.position = "none") + labs(x = "Score", y = "Número de observaciones")
+```
+
+::: {.disc .error #d12}
+**D12.** En el *do-file*, todo el bloque de `rddensity` (la prueba que **pide** el enunciado) está entre `/*` y `*/`: la figura 6 derecha y la conclusión del texto no surgen de ejecutarlo. Al correrlo en R se confirma la conclusión: estadístico `r num(cjm$test$t_jk)`, `r pin(cjm$test$p_jk)`, con anchos de banda de `r num(cjm$h$left, 2)` (izquierda) y `r num(cjm$h$right, 2)` (derecha).
+:::
+
+::: {.disc .error #d13}
+**D13.** Falta responder **cuál es la idea** del test. Si las unidades pudieran controlar con precisión de qué lado del corte quedan (manipulación o *sorting*), se acumularían observaciones del lado conveniente y la densidad del *score* tendría un **salto en el corte**; los grupos a cada lado dejarían de ser comparables. Se contrasta $H_0: \lim_{x \uparrow c} f(x) = \lim_{x \downarrow c} f(x)$. Lo que se compara es la altura de la **densidad**, no "la discontinuidad del puntaje". No rechazar es evidencia compatible con ausencia de manipulación, no una demostración. Tampoco se informan los estadísticos: McCrary, $\hat\theta$ = `r num(mc$theta)` (error `r num(mc$se)`, `r pin(mc$p)`), donde $\hat\theta$ es la diferencia de logaritmos de la densidad. El punto aislado en $X=100$ de la figura corresponde a `r sum(senado$X == 100)` elecciones con margen de 100.
+:::
+
+### (c) {-}
+
+::: {.enunciado}
+Ahora, correr la regresión RDD del paso 7 pero para un cutoff falso (distinto del real que es 0). Ayuda: usar, por ejemplo, opción "c(1)" y recordar que esto se debe hacer para X ≥ 0. ¿De qué serviría este ejercicio? ¿Por qué se debe hacer para X ≥ 0? Interpretar los resultados.
+:::
+
+```{r rd-falso}
+pos <- which(senado$X >= 0)
+falso <- suppressWarnings(rdrobust(senado$Y[pos], senado$X[pos], c = 1, p = 1, h = 10, kernel = "uniform"))
+summary(falso)
+```
+
+Por último, se corre la regresión *RDD* del inciso 7 pero para un *cutoff* falso (*cutoff* igual a 1), con el fin de analizar si existen otras discontinuidades en la variable dependiente fuera del valor elegido (*cutoff* igual a 0). En la tabla 6, se presentan los resultados de esta estimación. Se puede observar que el efecto causal no es estadísticamente significativo, lo cual brinda evidencia acerca de la validez de utilizar a *score* igual a 0 como punto de corte. Por otra parte, cabe mencionar que se debe hacer el test para $X \geq 0$ porque, <mark>dado que es un *cutoff* falso que está por encima del *cutoff* real, se deben usar las observaciones del tratamiento</mark>. Por último, en la figura 7, se presenta el *share* de votos demócratas en *t+2* en función del margen de victoria demócrata en *t* (con ancho de banda 10 y *cutoff* falso).
+
+```{r tabla6}
+tabla_rd(falso, caption = "Tabla 6. Estimación mediante \"rdrobust\" (con ancho de banda 10) del modelo (1) con cutoff falso.")
+```
+
+Los datos en paréntesis corresponden a los desvíos estándar. Nivel de significatividad: \* al 10%, \*\* al 5%, \*\*\* al 1%. Fuente: Elaboración propia. En el PDF, el error estándar es <mark>3,601</mark>.
+
+```{r figura7, fig.cap="Figura 7. Relación entre share de votos demócratas en t+2 y margen de victoria demócrata en t (regresiones con ancho de banda 10 y cutoff falso). Fuente: Elaboración propia."}
+s <- which(senado$X >= 0 & abs(senado$X) <= 10)
+grafico_rd(senado$Y[s], senado$X[s], c = 1, p = 1, h = 10, kernel = "uniform")
+```
+
+::: {.disc .error #d14}
+**D14.** La razón es evitar la **contaminación por la discontinuidad verdadera**. Con corte en 1 y $h=10$, la muestra completa incluiría observaciones a ambos lados de 0 en el tramo izquierdo, y el salto real sesgaría la estimación placebo. Restringir a $X \geq 0$ deja a todas las unidades con el mismo estado de tratamiento, de modo que en $c=1$ no debería haber salto. El mismo ejercicio podría hacerse con un corte negativo usando solo $X<0$.
+:::
+
+::: {.disc .metodo #d15}
+**D15.** El "ancho de banda 10" es efectivo solo a la derecha. A la izquierda quedan únicamente los datos de $[0, 1)$: `r falso$N_h[1]` observaciones, frente a `r falso$N_h[2]` a la derecha, por lo que la prueba tiene poca potencia. Además, la figura 7 **extrapola la recta izquierda hasta $-9$**, donde no hay ningún dato, y esa pendiente no tiene contenido. El resultado robusto tampoco es significativo (`r num(falso$coef[3])`, `r pin(falso$pv[3])`).
+:::
+
+# Parte II: Diferencias en Diferencias
+
+::: {.enunciado}
+Para este ejercicio, usar los datos llamados "minwage.dta" que contienen datos recopilados por David Card y Alan Krueger sobre restaurantes de comida rápida en Nueva Jersey (NJ) y el este de Pensilvania (PA) durante dos olas de entrevistas en marzo y noviembre/diciembre de 1992. El 1 de abril de 1992, Nueva Jersey aumentó su salario mínimo de \$4,25 a \$5,05. El mínimo en Pennsylvania se mantuvo en el nivel federal de \$4,25. Utilizar estos datos para analizar el impacto del aumento del salario mínimo en Nueva Jersey en variables laborales en la industria de comida rápida.
+
+En la base, los nombres de las variables con un "2" al final se refieren a la segunda ola (noviembre/diciembre) de los datos, los mismos nombres sin ningún número se refieren a la variable correspondiente de la ola de marzo. "fte" y "fte2" son medidas de empleos full time equivalente (es la suma del número de empleados a tiempo completo y la mitad del número de empleados a tiempo parcial, excluidos los gerentes). "Sample" es una variable que asume el valor 1 si tanto los datos de salario como de empleo están disponibles en la primera y segunda entrevista, y 0 de lo contrario. Se debe realizar todo el análisis para la "sample" igual a 1.
+:::
+
+```{r datos-dd}
+mw <- as.data.frame(zap_labels(read_dta("Datos/minwage.dta")))
+mw <- mw[which(mw$sample == 1), ]                       # keep if (sample==1)
+table(estado = ifelse(mw$state == 1, "NJ", "PA"))
+medias <- function(v1, v2) {
+  m <- rbind(NJ = c(mean(mw[mw$state == 1, v1]), mean(mw[mw$state == 1, v2])),
+             PA = c(mean(mw[mw$state == 0, v1]), mean(mw[mw$state == 0, v2])))
+  m <- cbind(m, m[, 2] - m[, 1]); colnames(m) <- c("ola1", "ola2", "dif"); m
+}
+tabla_medias <- function(m, titulo, d_nivel, nombre, marca_pa = FALSE) {
+  dif_pa <- num(m["PA", "dif"], 4); if (marca_pa) dif_pa <- paste0("<mark>", dif_pa, "</mark>")
+  pa2 <- num(m["PA", "ola2"], 4); if (marca_pa) pa2 <- paste0("<mark>", pa2, "</mark>")
+  t <- rbind(c("NJ (ola 1)", num(m["NJ", "ola1"], d_nivel[1]), ""),
+             c("NJ (ola 2)", num(m["NJ", "ola2"], d_nivel[1]), num(m["NJ", "dif"], 4)),
+             c("PA (ola 1)", num(m["PA", "ola1"], 4), ""),
+             c("PA (ola 2)", pa2, dif_pa),
+             c("**Diferencia en Diferencia**", "", paste0("**", num(m["NJ", "dif"] - m["PA", "dif"], 4), "**")))
+  colnames(t) <- c("Estado", nombre, "Diferencia")
+  kable(t, align = c("l", "c", "c"), caption = titulo)
+}
+```
+
+## Ejercicio 1
+
+::: {.enunciado}
+Calcular el salario inicial promedio por separado para los restaurantes en NJ y en PA, en cada caso para cada ola de las entrevistas. (a) Calcular, para NJ y PA, la diferencia en el salario promedio entre la segunda y la primera entrevista. (b) Ahora, calcular la diferencia entre las diferencias estimadas para NJ y PA que se acaban de obtener. (c) ¿Cuál es la interpretación de tal estimación DD? ¿Bajo qué condiciones proporciona esto una estimación válida del efecto del aumento del salario mínimo sobre los salarios en la industria de comida rápida? Interpretar.
+:::
+
+```{r medias-salario}
+sal <- medias("wage_st", "wage_st2")
+dd_sal <- sal["NJ", "dif"] - sal["PA", "dif"]
+```
+
+En la tabla 7, se presenta el salario inicial promedio por separado para los restaurantes en NJ y PA para cada ola de las entrevistas, la diferencia en el salario promedio entre la segunda y la primera entrevista para NJ y PA y la diferencia entre estas diferencias estimadas para NJ y PA. Se puede observar que, en la primera ola, los salarios promedio entre los dos estados difiere mínimamente, mientras que, en la segunda ola, el salario promedio de NJ pasa a ser significativamente mayor que el de PA.
+
+```{r tabla7}
+tabla_medias(sal, "Tabla 7. Salarios iniciales promedio (NJ y PA).", 4, "Salario promedio")
+```
+
+Fuente: Elaboración propia.
+
+**(a)** La diferencia en el salario promedio entre la segunda y la primera entrevista es, para NJ, \$`r num(sal["NJ", "dif"], 4)` y, para PA, -\$`r num(-sal["PA", "dif"], 4)` (ver tabla 7).
+
+**(b)** La diferencia entre las diferencias estimadas para NJ y PA es \$`r num(dd_sal, 4)` (ver tabla 7).
+
+**(c)** Esta estimación DD mide la diferencia entre el cambio en el salario promedio en NJ y el cambio en el salario promedio en PA. Para que esto proporcione una estimación válida del efecto del aumento del salario mínimo sobre los salarios en la industria de comida rápida, el supuesto de identificación clave es el de tendencia común en ausencia de tratamiento (*common trend*), lo cual implica que, en ausencia de tratamiento, la tendencia para los salarios en la industria de comida rápida sería la misma para los grupos de tratamiento y control. Esto es: $E\,[(\varepsilon^T_{i1} - \varepsilon^T_{i0}) - (\varepsilon^C_{i1} - \varepsilon^C_{i0})] = 0$, donde $\varepsilon^T_{i0}$, $\varepsilon^T_{i1}$, $\varepsilon^C_{i0}$ y $\varepsilon^C_{i1}$ son los términos de error del grupo de tratamiento y control, antes y después de la intervención, respectivamente. Además, el otro supuesto de identificación necesario para obtener un interpretación causal es que, por fuera del aumento del salario mínimo, no hay otros shocks contemporáneos que afecten, de manera diferencial, los salarios en la industria de comida rápida de ambos estados después de la intervención. <mark>El primer supuesto se puede verificar comparando las tendencias previas al tratamiento</mark> y realizando "experimentos falsos" y pruebas de robustez.
+
+::: {.disc .impr #d16}
+**D16.** La tendencia común se refiere a un **contrafactual** y no se puede verificar. Las tendencias previas paralelas y los placebos solo aportan evidencia a favor o en contra. Además, esta base tiene una sola ola anterior a la intervención, así que con ella no se pueden comparar tendencias previas.
+:::
+
+## Ejercicio 2
+
+::: {.enunciado}
+Repetir el mismo ejercicio que en (1) para la variable de empleo equivalente a tiempo completo. ¿Cuál es el impacto que tuvo el aumento del salario mínimo en el empleo en restaurantes de Nueva Jersey?
+:::
+
+```{r medias-empleo}
+emp <- medias("fte", "fte2")
+dd_emp <- emp["NJ", "dif"] - emp["PA", "dif"]
+max(abs(mw$fte - (mw$empft + 0.5 * mw$emppt)))     # fte = completos + 0,5 x parciales (personas)
+```
+
+En <mark>la tabla 7</mark>, se presenta el empleo equivalente a tiempo completo promedio por separado para los restaurantes en NJ y PA para cada ola de las entrevistas, la diferencia en el empleo promedio entre la segunda y la primera entrevista para NJ y PA y la diferencia entre estas diferencias estimadas para NJ y PA. Se puede observar que, en la primera ola, el empleo promedio entre los dos estados difiere en alrededor de <mark>3 horas</mark>, mientras que, en la segunda ola, esta diferencia disminuye. Además, la diferencia en el empleo promedio entre la segunda y la primera entrevista es, para NJ, `r num(emp["NJ", "dif"], 4)` <mark>horas</mark> y, para PA, <mark>-2,0151 horas</mark>, mientras que la diferencia entre estas diferencias estimadas es `r num(dd_emp, 4)` <mark>horas</mark>. Por lo tanto, se observa que <mark>el impacto que tuvo el aumento del salario mínimo en el empleo en restaurantes de NJ es positivo</mark>, siendo que, ante un aumento del salario mínimo, se espera lo contrario, que el empleo disminuya.
+
+A modo de conclusión, los autores encuentran que los datos, estudiados bajo las metodologías aplicadas, rechazan, para el caso, la predicción del modelo teórico clásico de que un aumento en los salarios mínimos haría caer el empleo, al menos en aquellos sectores donde los salarios mínimos fueran operativos. Sin embargo, aquí, se debe hacer una mención respecto de que el modelo clásico se expresa en términos reales, mientras que, en el caso estudiado, el aumento del salario en términos de unidades de producto es menor que en términos nominales, ya que media una aceleración de los precios en New Jersey respecto de Pennsylvania. Dicho esto, <mark>un traspaso a precios mayor al necesario para compensar, exactamente, el aumento estimado en los costos que implicó la nueva ley de salario mínimo en los locales de comida rápida parecería estar explicando el hecho de que se observe un aumento en el empleo en lugar de una caída</mark> (de hecho, sería bueno calcular el cambio en los salarios medidos en términos de unidades de producto -salario mínimo/precio del combo- para tener una medida de la evolución de los salarios percibida por los empleadores cuando internalizan el aumento de precios).
+
+Otra cuestión no considerada, al menos explícitamente, en el trabajo y que merece una mención es la posibilidad de que el aumento salarial en New Jersey opere con rezago en los salarios mínimos de Pennsylvania como también en la estructura salarial de la propia <mark>ciudad</mark>, de modo que los empleadores en <mark>ambos grupos de control</mark> hayan internalizado el futuro aumento y ajustado sus demandas de empleo con antelación, lo cual podría explicar el hecho de que no se observen caídas diferenciales en el empleo en las tiendas que pagaban salarios mínimos en New Jersey antes de la reforma. <mark>En el trabajo, tampoco se hace un tratamiento explícito del hecho, para nada menor, de que el aumento salarial había sido decidido con dos años de antelación</mark> a la fecha tomada como "de quiebre" para el estudio, con lo cual las decisiones de empleo podrían haberse anticipado a la aplicación efectiva de la medida e, incluso, haberlo hecho con algún tipo de sobrerreacción, cuyo ajuste al tiempo de la aplicación efectiva estaría explicando el aparente efecto positivo de los salarios mínimos en el empleo identificado por los autores.
+
+```{r tabla8}
+tabla_medias(emp, "Tabla 8. Empleo equivalente a tiempo completo promedio (NJ y PA).", 3, "Empleo promedio", marca_pa = TRUE)
+```
+
+Fuente: Elaboración propia. En el PDF, el promedio de PA en la ola 2 figura como <mark>18,0984</mark> y la diferencia como <mark>-2,0151</mark>.
+
+::: {.disc .impr #d17}
+**D17.** Los resultados de empleo están en la **tabla 8**; la tabla 7 es la de salarios.
+:::
+
+::: {.disc .error #d18}
+**D18.** `fte` no se mide en horas: es la **cantidad de empleados** equivalentes a tiempo completo por restaurante (completos más la mitad de los parciales, como verifica el código). Las diferencias son de `r num(emp["PA", "ola1"] - emp["NJ", "ola1"], 2)`, `r num(emp["NJ", "dif"], 4)`, `r num(emp["PA", "dif"], 4)` y `r num(dd_emp, 4)` **empleos**. El mismo error se repite en el ejercicio 4 ("3,3014 horas").
+:::
+
+::: {.disc .impr #d19}
+**D19.** El promedio de PA en la ola 2 es `r num(emp["PA", "ola2"], 6)` (redondea a **`r num(emp["PA", "ola2"], 4)`**, no a 18,0984) y la diferencia es `r num(emp["PA", "dif"], 6)` (**`r num(emp["PA", "dif"], 4)`**, no -2,0151). La tabla 9 informa correctamente -2,0152.
+:::
+
+::: {.disc .impr #d20}
+**D20.** Es el signo de la estimación puntual, pero no se puede distinguir de cero (ejercicio 3: error estándar mayor que 1,4 y valor p mayor que 0,10). Además, casi toda la DD proviene de la **caída en PA** (`r num(emp["PA", "dif"], 2)`) y no de un aumento en NJ (`r num(emp["NJ", "dif"], 2)`).
+:::
+
+```{r precios}
+alza_nj <- sal["NJ", "ola2"] / sal["NJ", "ola1"] - 1
+alza_pa <- sal["PA", "ola2"] / sal["PA", "ola1"] - 1
+salario_rel <- (1 + alza_nj) / (1 + alza_pa) - 1
+```
+
+::: {.disc .metodo #d21}
+**D21.** El paper (sección V) estima que los precios **antes de impuestos** subieron cerca de 4% más en NJ, "algo más" que lo necesario para trasladar el aumento de **costos totales**. Eso no revierte el encarecimiento del trabajo en unidades de producto: el salario inicial medio de NJ subió `r num(100 * salario_rel, 1)`% respecto del de PA en esta muestra, y el mínimo legal casi 19%, de modo que el salario producto relativo **igualmente aumentó** (del orden de `r num(100 * ((1 + salario_rel) / 1.04 - 1), 1)`% con el salario medio). En un modelo competitivo, el mayor precio acompaña a una **menor** cantidad, no explica un aumento del empleo. El paper agrega que, dentro de NJ, los precios no subieron más en los locales más afectados.
+:::
+
+::: {.disc .error #d22}
+**D22.** La sección I del paper dice expresamente que el aumento había sido **aprobado dos años antes** (a comienzos de 1990) y relata el intento de marzo de 1992 de aplicarlo en etapas. Lo que sí puede señalarse es que **no estima efectos de anticipación**: la primera ola (febrero-marzo de 1992) ya podría reflejar ajustes. En el mismo párrafo, NJ es un estado (no una ciudad) y es el grupo **de tratamiento**, no un grupo de control.
+:::
+
+## Ejercicio 3
+
+::: {.enunciado}
+Las estimaciones DD también se pueden calcular a partir de una regresión como la siguiente: $Y_{i,s,t} = \alpha + \beta\, TREAT_{i,s} + \gamma\, POST_t + \delta_{rDD} (TREAT_{i,s} * POST_t) + e_{i,s,t}$.
+:::
+
+### (a) {-}
+
+::: {.enunciado}
+Definir TREAT y POST, señalar cuál es el coeficiente de interés e interpretar.
+:::
+
+Se tiene el siguiente modelo:
+
+$$Y_{i,s,t} = \alpha + \beta\, TREAT_{i,s} + \gamma\, POST_t + \delta_{rDD} (TREAT_{i,s} * POST_t) + e_{i,s,t}. \tag{2}$$
+
+Se definen las siguientes variables:
+
+- TREAT: es una variable binaria, que indica si la observación pertenece al grupo de tratamiento (restaurantes de comida rápida en NJ) o al grupo de control (restaurantes de comida rápida en PA); igual 1 en el primer caso e igual a 0 en el segundo.
+- POST: es una variable binaria, que indica si la observación corresponde al momento posterior a la intervención (segunda entrevista) o al momento previo a la intervención (primera entrevista); igual 1 en el primer caso e igual a 0 en el segundo.
+
+Para el grupo de tratamiento ($s=1$), se tiene:
+
+| | |
+|---|---|
+| Tratados en t = 0: | $Y_{i,1,0} = \alpha + \beta + e_{i,1,0}$ |
+| Tratados en t = 1: | $Y_{i,1,1} = \alpha + \beta + \gamma + \delta_{rDD} + e_{i,1,1}$ |
+| Diferencia en el tiempo: | $Y_{i,1,1} - Y_{i,1,0} = \gamma + \delta_{rDD} + (e_{i,1,1} - e_{i,1,0})$ |
+
+Para el grupo de control ($s=0$), se tiene:
+
+| | |
+|---|---|
+| <mark>Tratados</mark> en t = 0: | $Y_{i,0,0} = \alpha + e_{i,0,0}$ |
+| <mark>Tratados</mark> en t = 1: | $Y_{i,0,1} = \alpha + \gamma + e_{i,0,1}$ |
+| Diferencia en el tiempo: | $Y_{i,0,1} - Y_{i,0,0} = \gamma + (e_{i,0,1} - e_{i,0,0})$ |
+
+Por lo tanto, el estimador *DD* se obtiene restando las diferencias en el tiempo que se calcularon para cada grupo:
+
+$$(Y_{i,1,1} - Y_{i,1,0}) - (Y_{i,0,1} - Y_{i,0,0}) = \delta_{rDD} + [(e_{i,1,1} - e_{i,1,0}) - (e_{i,0,1} - e_{i,0,0})].$$
+
+Entonces, si se cumple $E\,[(e_{i,1,1} - e_{i,1,0}) - (e_{i,0,1} - e_{i,0,0})] = 0$ (*common trend*), *DD* provee un estimador consistente del efecto del salario mínimo sobre *Y*, el cual es $\delta_{rDD}$.
+
+::: {.disc .impr #d23}
+**D23.** En el bloque del grupo de control, las filas deben decir **"Controles"**, no "Tratados".
+:::
+
+### (b) {-}
+
+::: {.enunciado}
+Correr la regresión. Ayuda: se va a tener que hacer reshape de los datos.
+:::
+
+```{r reshape}
+mw$TREAT  <- as.numeric(mw$state == 1)
+mw$TREAT2 <- as.numeric(mw$wage_st < 5)           # salario inicial (ola 1) menor a $5
+mw$tienda <- paste(mw$sheet, mw$chain)            # i(sheet chain)
+ola <- function(t) {
+  suf <- if (t == 1) "" else "2"
+  data.frame(mw[c("tienda", "TREAT", "TREAT2")], POST = t - 1,
+             empft = mw[[paste0("empft", suf)]], emppt = mw[[paste0("emppt", suf)]],
+             wage_st = mw[[paste0("wage_st", suf)]], fte = mw[[paste0("fte", suf)]])
+}
+largo <- rbind(ola(1), ola(2))                    # reshape long
+c(filas = nrow(largo), restaurantes = length(unique(largo$tienda)))
+
+# Regresiones de salario y empleo con una fórmula y una submuestra
+estimar <- function(rhs, datos = largo, tipo = "robusto")
+  list(Salarios = resumen(lm(reformulate(rhs, "wage_st"), datos), tipo, datos$tienda),
+       Empleo   = resumen(lm(reformulate(rhs, "fte"), datos), tipo, datos$tienda))
+t9 <- estimar("TREAT * POST")
+```
+
+En la tabla 9, se presenta la estimación del modelo (2) tanto para el caso en que la variable dependiente son los salarios como para el caso en que la variable dependiente es el empleo.
+
+```{r tabla9}
+tabla(t9, list(TREAT = "TREAT", POST = "POST", `TREAT\\*POST` = "TREAT:POST", constante = "(Intercept)"), d = 4,
+      caption = "Tabla 9. Estimación del modelo (2).")
+```
+
+Los datos en paréntesis corresponden a los desvíos estándar robustos. Nivel de significatividad: \* al 10%, \*\* al 5%, \*\*\* al 1%. Fuente: Elaboración propia.
+
+### (c) {-}
+
+::: {.enunciado}
+¿Qué valores asumen los coeficientes estimados por medio de esta regresión para el caso de las variables de resultado de interés: salarios y empleo? Comparar con los resultados que han encontrado en (1) y (2).
+:::
+
+Por un lado, se puede observar que, para ambas variables de resultado de interés (salarios y empleo), los coeficientes estimados de $\delta_{rDD}$ coinciden con los estimados previamente en los incisos (1) y (2). Por otro lado, se observa que este coeficiente es estadísticamente significativo en el caso de salarios, pero no lo es en el caso de empleo <mark>(no hay efectos del aumento del salario mínimo sobre el empleo)</mark>. En particular, esta estimación deja de manifiesto que hubo un aumento de los salarios para el grupo de tratamiento en \$`r num(t9$Salarios$b[["TREAT:POST"]], 4)` (*céteris páribus*).
+
+```{r cluster}
+nj <- largo[largo$TREAT == 1, ]; pa <- largo[largo$TREAT == 0, ]
+fila <- function(nombre, rhs, datos, coef) {
+  r <- estimar(rhs, datos); k <- estimar(rhs, datos, "cluster")
+  do.call(rbind, lapply(c("Salarios", "Empleo"), function(y)
+    data.frame(Modelo = nombre, Resultado = y, Coeficiente = num(r[[y]]$b[[coef]], 4),
+               `EE robusto` = num(r[[y]]$se[[coef]], 4), `p robusto` = num(r[[y]]$p[[coef]], 3),
+               `EE agrupado` = num(k[[y]]$se[[coef]], 4), `p agrupado` = num(k[[y]]$p[[coef]], 3), check.names = FALSE)))
+}
+kable(rbind(fila("DD NJ-PA (tabla 9)", "TREAT * POST", largo, "TREAT:POST"),
+            fila("DD dentro de NJ (tabla 10)", "TREAT2 * POST", nj, "TREAT2:POST"),
+            fila("DD dentro de PA (tabla 11)", "TREAT2 * POST", pa, "TREAT2:POST"),
+            fila("DDD (tabla 12)", "TREAT * TREAT2 * POST", largo, "TREAT:TREAT2:POST")),
+      align = "llccccc", caption = "Agregado en R: errores estándar agrupados por restaurante.")
+k9 <- estimar("TREAT * POST", largo, "cluster")
+k10 <- estimar("TREAT2 * POST", nj, "cluster")
+ic <- t9$Empleo$b[["TREAT:POST"]] + c(-1, 1) * qt(.975, t9$Empleo$n - 4) * t9$Empleo$se[["TREAT:POST"]]
+```
+
+::: {.disc .metodo #d24}
+**D24.** Cada restaurante aparece **dos veces**, pero los errores "robustos" tratan las `r ent(t9$Empleo$n)` observaciones como independientes. Agrupando por restaurante, el error de la DD de empleo baja de `r num(t9$Empleo$se[["TREAT:POST"]], 2)` a `r num(k9$Empleo$se[["TREAT:POST"]], 2)` (`r pin(k9$Empleo$p[["TREAT:POST"]])`: sigue sin ser significativa al 10%), y la DD de empleo **dentro de NJ** pasa a ser significativa al 1% (`r pin(k10$Empleo$p[["TREAT2:POST"]])`). Agrupar por estado, el nivel al que se asigna la política, no es viable con solo dos grupos.
+:::
+
+::: {.disc .error #d25}
+**D25.** No rechazar $\delta=0$ no demuestra que el efecto sea nulo. El intervalo de confianza del 95% para empleo es [`r num(ic[1], 2)`; `r num(ic[2], 2)`]: incluye cero, pero también aumentos importantes. Lo que se puede decir es que **no hay evidencia de una caída** del empleo, y que la estimación es imprecisa.
+:::
+
+## Ejercicio 4
+
+::: {.enunciado}
+Una alternativa para comparar los restaurantes de NJ y PA es comparar restaurantes dentro de NJ que, antes del aumento del salario mínimo, tuvieran salarios altos y bajos. Restringir, ahora, la muestra a restaurantes en NJ y construir una variable para aquellos restaurantes que antes del aumento del salario mínimo pagaban salarios iniciales menores a \$5. Por medio de una regresión, obtener una estimación DD de los efectos del aumento del salario mínimo sobre el empleo y salarios. ¿Cuál es el impacto estimado del salario mínimo en los salarios y el empleo en NJ? Comparar con los DD estimados anteriormente e interpretar.
+:::
+
+```{r nj}
+t10 <- estimar("TREAT2 * POST", nj)
+```
+
+En la tabla 10, se presenta la estimación del modelo (2), pero, en este caso, restringiendo la muestra a restaurantes en NJ y considerando que la variable TREAT es igual a 1 cuando se trata de restaurantes que, antes del aumento del salario mínimo, pagaban salarios iniciales menores a \$5. Se puede observar, por un lado, que los coeficientes estimados de $\delta_{rDD}$ son más grandes que en el caso anterior y, por otro lado, que, en el caso de empleo, este coeficiente es estadísticamente significativo (al 10% de significatividad), cuando anteriormente no lo era. En particular, esta estimación deja de manifiesto que hubo un aumento de los salarios y del empleo para el grupo de tratamiento en \$`r num(t10$Salarios$b[["TREAT2:POST"]], 4)` y `r num(t10$Empleo$b[["TREAT2:POST"]], 4)` <mark>horas</mark> (*céteris páribus*), respectivamente.
+
+```{r tabla10}
+tabla(t10, list(TREAT2 = "TREAT2", POST = "POST", `TREAT2\\*POST` = "TREAT2:POST", constante = "(Intercept)"), d = 4,
+      marcar = "TREAT2 1", caption = "Tabla 10. Estimación del modelo (2) para NJ.")
+```
+
+Los datos en paréntesis corresponden a los desvíos estándar robustos. Nivel de significatividad: \* al 10%, \*\* al 5%, \*\*\* al 1%. Fuente: Elaboración propia. En el PDF, el coeficiente de TREAT2 en salarios es <mark>-0,6510</mark> (en R, `r num(t10$Salarios$b[["TREAT2"]], 6)`).
+
+```{r umbral}
+intermedios <- sum(nj$POST == 0 & nj$wage_st >= 5 & nj$wage_st < 5.05)
+nj$BAJO505 <- ave(nj$wage_st * (nj$POST == 0), nj$tienda, FUN = sum) < 5.05 - 1e-6
+nj$BAJO505 <- as.numeric(nj$BAJO505)
+alt <- estimar("BAJO505 * POST", nj)
+```
+
+::: {.disc .metodo #d26}
+**D26.** El umbral de \$5 es el que pide el enunciado, pero `r intermedios` restaurantes de NJ pagaban al menos \$5,00 y menos de \$5,05: quedan en el grupo de control aunque la ley **los obligaba** a subir el salario. Si el tratamiento se define como salario inicial menor a \$5,05, la DD dentro de NJ es `r num(alt$Salarios$b[["BAJO505:POST"]], 4)` en salarios y `r num(alt$Empleo$b[["BAJO505:POST"]], 4)` en empleo (`r pin(alt$Empleo$p[["BAJO505:POST"]])`).
+:::
+
+### (a) {-}
+
+::: {.enunciado}
+Hacer, ahora, para PA el mismo ejercicio que se hizo en el punto anterior (no existe un cambio en el salario mínimo que obligue a esos restaurantes a pagar más en el segundo período, pero puede haber existido un aumento general de los salarios). ¿Cómo difieren los resultados de los encontrados para NJ?
+:::
+
+```{r pa}
+t11 <- estimar("TREAT2 * POST", pa)
+```
+
+En la tabla 11, se presenta la estimación del modelo (2), pero, en este caso, restringiendo la muestra a restaurantes en PA y considerando que la variable TREAT se define como en el caso anterior. Se puede observar que los coeficientes estimados de $\delta_{rDD}$ son más chicos que en el caso de NJ, aunque, en el caso de empleo, este coeficiente no es estadísticamente significativo. En particular, <mark>esta estimación deja de manifiesto que hubo un aumento de los salarios para el grupo de tratamiento en \$`r num(t11$Salarios$b[["TREAT2:POST"]], 4)`</mark> (*céteris páribus*).
+
+```{r tabla11}
+tabla(t11, list(TREAT2 = "TREAT2", POST = "POST", `TREAT2\\*POST` = "TREAT2:POST", constante = "(Intercept)"), d = 4,
+      marcar = "TREAT2 2 se", caption = "Tabla 11. Estimación del modelo (2) para PA.")
+```
+
+Los datos en paréntesis corresponden a los desvíos estándar robustos. Nivel de significatividad: \* al 10%, \*\* al 5%, \*\*\* al 1%. Fuente: Elaboración propia.
+
+::: {.disc .error #d27}
+**D27.** PA es un **placebo**: no hubo política, así que un $\delta$ válido debería ser cero. En salarios es `r num(t11$Salarios$b[["TREAT2:POST"]], 4)` y muy significativo, lo que apunta a **reversión a la media**: los locales que pagaban poco suben y los que pagaban mucho bajan (POST = `r num(t11$Salarios$b[["POST"]], 4)`). No hubo, entonces, el "aumento general" que sugiere el enunciado. Parte de la DD de salarios de NJ (`r num(t10$Salarios$b[["TREAT2:POST"]], 4)`) refleja ese fenómeno y no la ley. En empleo, el coeficiente de PA (`r num(t11$Empleo$b[["TREAT2:POST"]], 4)`) es de magnitud parecida al de NJ (`r num(t10$Empleo$b[["TREAT2:POST"]], 4)`), aunque muy impreciso. La respuesta no advierte que este resultado **cuestiona** la comparación del ejercicio 4.
+:::
+
+### (b) {-}
+
+::: {.enunciado}
+¿Qué prueba estadística se puede hacer para chequear la hipótesis de que el coeficiente de la "dummy de salario bajo" es el mismo en NJ y en PA? Escribir y correr el test (ayuda: DDD, es decir, incluir todas las interacciones).
+:::
+
+```{r ddd}
+t12 <- estimar("TREAT * TREAT2 * POST")
+```
+
+La prueba estadística que se puede hacer para chequear la hipótesis de que el coeficiente de la "*dummy* de salario bajo" es el mismo en NJ y en PA es realizar una estimación *DDD* y analizar la significancia estadística del estimador $\delta_{rDDD}$, el cual, si se cumple el supuesto de tendencia común en ausencia de tratamiento, provee un estimador consistente del efecto del salario mínimo sobre *Y*.
+
+Se tiene el siguiente modelo:
+
+$$\begin{aligned} Y_{i,s,t} = {} & \alpha + \beta_1 TREAT_{i,s} + \beta_2 TREAT2_{i,s} + \beta_3 (TREAT_{i,s} * TREAT2_{i,s}) + \\ & \gamma_1 POST_t + \gamma_2 (TREAT_{i,s} * POST_t) + \gamma_3 (TREAT2_{i,s} * POST_t) + \\ & \delta_{rDDD} (TREAT_{i,s} * TREAT2_{i,s} * POST_t) + e_{i,s,t}. \end{aligned} \tag{3}$$
+
+En la tabla 12, se presenta la estimación del modelo (3), tanto para el caso en que la variable dependiente son los salarios como para el caso en que la variable dependiente es el empleo. Por un lado, se puede observar que los coeficientes estimados de $\delta_{rDDD}$ son más chicos que los coeficientes estimados de $\delta_{rDD}$ (ver tabla 9). Por otro lado, al igual que en *DD*, se observa que este coeficiente es estadísticamente significativo en el caso de salarios (lo cual permite rechazar la hipótesis de que el coeficiente de la "*dummy* de salario bajo" es el mismo en NJ y en PA), pero no lo es en el caso de empleo <mark>(no hay efectos del aumento del salario mínimo sobre el empleo)</mark>. En particular, esta estimación deja de manifiesto que <mark>hubo un aumento de los salarios para el grupo de tratamiento en \$`r num(t12$Salarios$b[["TREAT:TREAT2:POST"]], 4)`</mark> (*céteris páribus*).
+
+```{r tabla12}
+tabla(t12, list(TREAT = "TREAT", TREAT2 = "TREAT2", `TREAT\\*TREAT2` = "TREAT:TREAT2", POST = "POST",
+                `TREAT\\*POST` = "TREAT:POST", `TREAT2\\*POST` = "TREAT2:POST",
+                `TREAT\\*TREAT2\\*POST` = "TREAT:TREAT2:POST", constante = "(Intercept)"), d = 4,
+      marcar = c("TREAT\\*POST 2 se", "TREAT2\\*POST 2 se", "constante 2 se"),
+      caption = "Tabla 12. Estimación del modelo (3).")
+```
+
+Los datos en paréntesis corresponden a los desvíos estándar robustos. Nivel de significatividad: \* al 10%, \*\* al 5%, \*\*\* al 1%. Fuente: Elaboración propia.
+
+::: {.disc .error #d28}
+**D28.** $\delta_{rDDD}$ es la **diferencia entre los coeficientes** de las tablas 10 y 11 (`r num(t10$Salarios$b[["TREAT2:POST"]], 4)` - `r num(t11$Salarios$b[["TREAT2:POST"]], 4)` = `r num(t12$Salarios$b[["TREAT:TREAT2:POST"]], 4)`; en empleo, `r num(t12$Empleo$b[["TREAT:TREAT2:POST"]], 4)`). Para salarios se rechaza la igualdad (`r pin(t12$Salarios$p[["TREAT:TREAT2:POST"]])`). Para empleo **no se rechaza** (`r pin(t12$Empleo$p[["TREAT:TREAT2:POST"]])`), con un error estándar de `r num(t12$Empleo$se[["TREAT:TREAT2:POST"]], 2)`: la prueba no permite concluir que no haya efectos. El valor de salarios es un aumento de la **brecha** bajo-alto en NJ por encima del observado en PA, no el aumento total del grupo tratado.
+:::
+
+### (c) {-}
+
+::: {.enunciado}
+¿Por qué esto puede ser un buen test para verificar qué tan bien funciona la metodología usada para identificar el impacto del aumento del salario mínimo? Desarrollar.
+:::
+
+Esto puede ser un buen test para verificar qué tan bien funciona la metodología usada para identificar el impacto del aumento del salario mínimo porque, al utilizar *DDD*, se eliminan algunas tendencias que estar afectando, de manera diferencial, al grupo tratamiento y al grupo de control bajo el estimador *DD* (restaurantes de comida rápida en NJ y en PA, respectivamente). En *DDD*, <mark>se compara el impacto del salario mínimo en el grupo de tratamiento (restaurantes en NJ que, antes del aumento del salario mínimo, pagaban salarios iniciales menores a \$5) con el impacto en el grupo de control (restaurantes en PA que, antes del aumento del salario mínimo, pagaban salarios iniciales mayores a \$5)</mark>. Por lo tanto, <mark>si los resultados, al utilizar *DDD*, son semejantes (en magnitud y significancia estadística) a los de *DD*, se verifica cuán bien funciona la metodología *DD* usada</mark>, ya que sería evidencia a favor de que no hay tendencias que podrían estar afectando, de manera diferencial, al grupo de tratamiento y al grupo de control.
+
+::: {.disc .error #d29}
+**D29.** (i) DDD usa **cuatro grupos**, no dos: $(\Delta_{NJ,bajo} - \Delta_{NJ,alto}) - (\Delta_{PA,bajo} - \Delta_{PA,alto})$. El grupo de salario alto es $\geq$ \$5, no "mayor a \$5". (ii) Aplicando el criterio de la propia respuesta, los resultados **no son semejantes**: en salarios, DDD = `r num(t12$Salarios$b[["TREAT:TREAT2:POST"]], 4)` frente a `r num(t9$Salarios$b[["TREAT:POST"]], 4)` (DD NJ-PA) y `r num(t10$Salarios$b[["TREAT2:POST"]], 4)` (DD dentro de NJ); en empleo, `r num(t12$Empleo$b[["TREAT:TREAT2:POST"]], 4)` frente a `r num(t9$Empleo$b[["TREAT:POST"]], 4)` y `r num(t10$Empleo$b[["TREAT2:POST"]], 4)`. La respuesta no extrae esa conclusión: el placebo de PA explica `r num(100 * t11$Salarios$b[["TREAT2:POST"]] / t10$Salarios$b[["TREAT2:POST"]], 0)`% de la DD de salarios dentro de NJ, y el aumento de empleo casi desaparece. (DD y DDD estiman parámetros algo distintos, pero DDD es la comparación que controla la reversión a la media común a ambos estados.)
+:::
+
+# Parte III: Variables Instrumentales
+
+::: {.enunciado}
+Esta parte del trabajo se basa en el siguiente texto: Acemoglu, D., Johnson, S. y Robinson, J. A. (2001). The Colonial Origins of Comparative Development: An Empirical Investigation. The American Economic Review, 91(5), 1369-1401. Utilizar la base de datos llamada "ajr-aer.dta". En lo que sigue, se deberán replicar algunos de los resultados empíricos del paper y responder las siguientes preguntas.
+:::
+
+```{r datos-vi}
+ajr <- as.data.frame(zap_labels(read_dta("Datos/ajr-aer.dta")))
+ajr <- ajr[which(ajr$baseco == 1), ]                     # keep if (baseco==1)
+summary(ajr[c("logpgp95", "lat_abst", "avexpr", "logem4")])
+```
+
+## Ejercicio 1
+
+::: {.enunciado}
+Resumir la principal contribución del trabajo en una carilla.
+:::
+
+Los autores sugieren que las instituciones tienen algo que ver con las grandes diferencias en el ingreso per cápita entre países. Para llevar a cabo el análisis, ofrecen una teoría de la variación en las instituciones entre las antiguas colonias de países europeos basada en tres premisas: diferentes tipos de políticas coloniales europeas, viabilidad de asentamientos y persistencia de esas instituciones.
+
+Los europeos adoptaron políticas de colonización muy diferentes en las colonias según las instituciones asociadas. Por un lado, consideran "malas instituciones" a aquellas donde el asentamiento era difícil, enfrentaban altas tasas de mortalidad, no podían establecerse permanentemente y tenían más probabilidades de establecer instituciones extractivas. Por otro lado, consideraran "buenas instituciones" a aquellas donde el asentamiento fue más sencillo, podían establecerse permanentemente y tenían tasas de mortalidad más bajas. Es importante aclarar que suponen que este tipo de instituciones perduran en la actualidad.
+
+Para evitar posibles problemas de endogeneidad y de medición en la estimación, los autores utilizan variables instrumentales. En particular, instrumentan la calidad de las instituciones actuales a través de la <mark>tasa de mortalidad de los colonos</mark> entre los siglos XVII y XIX. Luego, estiman los efectos de estas instituciones sobre el ingreso per cápita actual. Resumidamente, se puede decir que los autores analizan las condiciones en las colonias para explicar la calidad de las instituciones actuales y, luego, utilizan esta *performance* institucional para explicar el desarrollo actual de los países, ya que argumentan que estas instituciones tienen efectos persistentes en las economías actuales. La fortaleza de este enfoque se basa en que su <mark>variable independiente clave</mark> (mortalidad de los colonos) sólo debería tener un efecto en el desarrollo actual de los países a través de la calidad de las instituciones actuales.
+
+En cuanto a los resultados, los autores encuentran que existe una alta correlación entre las tasas de mortalidad y los asentamientos, entre los asentamientos y las instituciones tempranas y entre las instituciones tempranas y las instituciones actuales. También que "buenas instituciones" afectan positivamente el grado de desarrollo actual de los países. También encuentran que las variables de tipo geográficas o climáticas no poseen un rol relevante.
+
+::: {.disc .impr #d30}
+**D30.** La mortalidad es el **instrumento**; la variable explicativa de interés es la calidad institucional (protección contra el riesgo de expropiación). El paper la aproxima con tasas de mortalidad de **soldados, obispos y marineros** destinados en las colonias, no de colonos, un punto central de las críticas posteriores. El resumen tampoco informa la magnitud del resultado principal (ejercicio 3).
+:::
+
+## Ejercicio 2
+
+::: {.enunciado}
+¿Cuáles son los supuestos fundamentales que deben cumplirse para que los supuestos de VI sean válidos. Para el caso del trabajo de Acemoglu y otros, ¿parecen supuestos razonables? ¿Por qué?
+:::
+
+Los supuestos fundamentales que deben cumplirse para que <mark>los supuestos de VI sean válidos</mark> son:
+
+- <u>Relevancia:</u> Debe existir correlación entre el instrumento y el regresor potencialmente endógeno $\Longrightarrow Cov(Z_i, S_i) \neq 0$. <mark>Si esto no se cumple, se tendrá un instrumento débil</mark> y el estimador VI será inconsistente. Este supuesto es testeable.
+- <u>Exclusión:</u> No debe existir correlación entre el instrumento y el término de error $\Longrightarrow Cov(Z_i, \eta_i) = 0$. Si esto no se cumple, se tendrán <mark>estimadores sesgados</mark>. Este supuesto no es testeable.
+
+Para el caso del trabajo de Acemoglu *et al.* (2001), no es del todo claro el cumplimiento de estos supuestos. Se puede mencionar, por un lado, que <mark>Glaeser (2004)</mark> y Albouy (2006) encuentran que el instrumento es débil; y, por otro lado, que <mark>Sachs (2012)</mark> cuestiona la validez del supuesto de exclusión, en tanto que la tasa de mortalidad en la época colonial está correlacionada con la prevalencia de enfermedades en la actualidad y, siendo así, la tasa de mortalidad de los colonos puede afectar el PBI actual no sólo a través de las instituciones actuales, sino también mediante la prevalencia de enfermedades.
+
+::: {.disc .impr #d31}
+**D31.** Son los supuestos para que **el estimador** de VI sea válido. Si $Cov(Z,S)=0$, el parámetro **no está identificado**; "débil" es el caso en que la covarianza no es nula pero es pequeña. Si falla la exclusión, el estimador es **inconsistente** (el sesgo no desaparece al crecer la muestra), y tanto más cuanto más débil sea el instrumento. En este modelo ambos supuestos son **condicionales en la latitud**. La exclusión no es contrastable con un solo instrumento; con más de uno se pueden probar las restricciones de sobreidentificación.
+:::
+
+::: {.disc .error #d32}
+**D32.** La crítica de Glaeser, La Porta, López-de-Silanes y Shleifer (2004) apunta a la **exclusión**, no a la debilidad: los colonos pudieron aportar **capital humano**, un canal distinto de las instituciones. La objeción por enfermedades es válida y conocida, y los autores la abordan: argumentan que la malaria y la fiebre amarilla afectaban mucho más a los europeos que a la población local (sección I) y agregan controles de salud y geografía (tabla 7). La respuesta no menciona esa defensa. La atribución a "Sachs (2012)" conviene verificarla: no figura en las referencias, y el texto de Sachs de ese año que se encuentra es una reseña de *Why Nations Fail*, no de este paper.
+:::
+
+## Ejercicio 3
+
+::: {.enunciado}
+Reproducir la columna 2 de la tabla 4, incluyendo los estimadores de la primera etapa, mínimos cuadrados en dos etapas y mínimos cuadrados ordinarios. Comentar los resultados.
+:::
+
+```{r vi}
+# ivregress 2sls logpgp95 lat_abst (avexpr=logem4), first
+Z <- cbind(`(Intercept)` = 1, lat_abst = ajr$lat_abst, logem4 = ajr$logem4)
+Xm <- cbind(`(Intercept)` = 1, lat_abst = ajr$lat_abst, avexpr = ajr$avexpr)
+y <- ajr$logpgp95; n <- length(y)
+Xh <- Z %*% solve(crossprod(Z), crossprod(Z, Xm))
+b <- drop(solve(crossprod(Xh, Xm), crossprod(Xh, y)))
+u <- drop(y - Xm %*% b)
+se <- sqrt(diag(solve(crossprod(Xh))) * sum(u^2) / n)     # como ivregress: sin ajuste por grados de libertad
+mc2e <- list(b = b, se = se, p = 2 * pnorm(-abs(b / se)), n = n)
+primera <- lm(avexpr ~ lat_abst + logem4, data = ajr)
+pe <- resumen(primera)
+mco <- resumen(lm(logpgp95 ~ lat_abst + avexpr, data = ajr))     # regress logpgp95 lat_abst avexpr
+F_clasico <- (pe$b[["logem4"]] / pe$se[["logem4"]])^2
+F_robusto <- (pe$b[["logem4"]] / resumen(primera, "robusto")$se[["logem4"]])^2
+se_gl <- se * sqrt(n / (n - 3))
+summary(primera)
+```
+
+En la tabla 13, se reproduce la columna 2 de la tabla 4 de Acemoglu *et al.* (2001), en donde se presentan regresiones para estimar el log del PBI per cápita, tanto por MC2E como por MCO. Por un lado, comparando las estimaciones por MC2E con las estimaciones por MCO, se puede observar que, en este último caso, existe un marcado sesgo negativo. Por otro lado, se observa que la variable *latitude* es estadísticamente significativa sólo en el caso de la estimación por MCO, mientras que no lo es en ninguna etapa de la estimación por MC2E. Por último, en la estimación de la primera etapa, <mark>parece que el instrumento no es débil, ya que es estadísticamente significativo (al 5% de significatividad)</mark>.
+
+Además, vale aclarar que estos resultados representan un LATE (*Local Average Treatment Effect*), es decir, su validez es, meramente, local.
+
+```{r tabla13}
+celda <- function(r, v) c(paste0(num(r$b[[v]]), estrellas(r$p[[v]])), paste0("(", num(r$se[[v]]), ")"))
+bloque <- function(titulo, r, vars) rbind(c(paste0("**", titulo, "**"), ""),
+  do.call(rbind, lapply(names(vars), function(k) cbind(c(k, ""), celda(r, vars[[k]])))))
+instit <- "Average protection against expropriation risk 1985-1995"
+t13 <- rbind(
+  bloque("Panel A. Mínimos Cuadrados en Dos Etapas", mc2e, setNames(list("avexpr", "lat_abst"), c(instit, "Latitude"))),
+  bloque("Panel B. Estimadores de la Primera Etapa", pe, list(`Log European settler mortality` = "logem4", Latitude = "lat_abst")),
+  c("$R^2$ de la primera etapa (agregado en R)", num(pe$r2, 2)),
+  c("Estadístico F del instrumento (agregado en R)", num(F_clasico, 2)),
+  bloque("Panel C. Mínimos Cuadrados Ordinarios", mco, setNames(list("avexpr", "lat_abst"), c(instit, "Latitude"))),
+  c("Observaciones", ent(n)))
+fila_lat <- which(t13[, 1] == "Latitude" & t13[, 2] == num(pe$b[["lat_abst"]]))
+t13[fila_lat, 2] <- paste0("<mark>", t13[fila_lat, 2], "</mark>")
+colnames(t13) <- c("", "log PBI per cápita")
+kable(t13, align = c("l", "c"), caption = "Tabla 13. Regresiones para estimar el log del PBI per cápita.")
+```
+
+Los datos en paréntesis corresponden a los desvíos estándar. Nivel de significatividad: \* al 10%, \*\* al 5%, \*\*\* al 1%. Fuente: Elaboración propia. (En el panel B la variable dependiente es la protección contra expropiación.)
+
+::: {.disc .error #d33}
+**D33.** (i) El instrumento es significativo al **1%** (`r pin(pe$p[["logem4"]])`), como marca la propia tabla. (ii) La significatividad convencional **no es el criterio** de fortaleza: se usa el estadístico F de la primera etapa. Es `r num(F_clasico, 2)` con errores clásicos y `r num(F_robusto, 2)` con errores robustos. Supera apenas la regla informal de 10 en el primer caso, no en el segundo, y queda por debajo del valor crítico de Stock y Yogo para una distorsión de tamaño máxima del 10% (16,38). El instrumento es, en el mejor caso, **moderadamente fuerte**; conviene complementar con inferencia robusta a instrumentos débiles (Anderson-Rubin).
+:::
+
+::: {.disc .impr #d34}
+**D34.** El paper informa 1,00 (0,22) para las instituciones y -0,65 (1,34) para latitud. Los coeficientes coinciden; los errores difieren porque `ivregress` no corrige por grados de libertad (con la corrección son `r num(se_gl[["avexpr"]])` y `r num(se_gl[["lat_abst"]])`). En la primera etapa, la latitud es `r num(pe$b[["lat_abst"]], 4)` (redondea a `r num(pe$b[["lat_abst"]])`, no a 2,001). La tabla del PDF omite el $R^2$ de la primera etapa (0,30 en el paper) y escribe "expropiation". El panel C del paper solo muestra el coeficiente de las instituciones; la latitud es un agregado. El efecto principal no se interpreta: un punto más en el índice se asocia, según MC2E, con `r num(mc2e$b[["avexpr"]], 2)` unidades logarítmicas más de PBI per cápita (aproximadamente `r num(exp(mc2e$b[["avexpr"]]), 1)` veces), frente a `r num(mco$b[["avexpr"]], 2)` en MCO.
+:::
+
+## Ejercicio 4
+
+::: {.enunciado}
+¿Qué supuestos adicionales se necesitan para interpretar los resultados como un ATE?
+:::
+
+El estimador LATE identifica el efecto de las instituciones sobre el nivel de desarrollo actual a partir de un promedio ponderado donde las ponderaciones están establecidas de acuerdo a cuánto afecta el instrumento a la variable instrumentada. <mark>Los supuestos adicionales que se necesitan para interpretar los resultados como un ATE son:</mark>
+
+- <u>Monotonicidad:</u> <mark>La relación entre la mortalidad de los colonos europeos y la calidad de las instituciones debe ser igual para todos los países.</mark>
+- <u>Independencia:</u> La comparación de resultados entre unidades de análisis expuestas a diferentes valores del instrumento identifica el impacto causal del mismo, lo cual se verifica con asignación aleatoria del instrumento; los resultados potenciales no deben ser afectados, directamente, por el instrumento.
+
+::: {.disc .error #d35}
+**D35.** Independencia y monotonicidad (junto con exclusión y relevancia) son los supuestos del teorema **LATE** (Imbens y Angrist, 1994): no alcanzan para un ATE. Para que VI identifique el efecto promedio sobre toda la población hace falta, además, **homogeneidad del efecto** (mismo efecto causal en todos los países) o, en forma más débil, que la heterogeneidad no esté relacionada con la respuesta de las instituciones al instrumento (sin selección según ganancias); otra posibilidad es que casi todas las unidades respondan al instrumento. Con un tratamiento continuo se necesita también que el efecto sea lineal. Por otra parte, monotonicidad no exige una relación **igual** en todos los países, sino que mayor mortalidad no **mejore** las instituciones en ninguno (el efecto puede variar en magnitud, no en signo). La última frase sobre efectos directos es la restricción de exclusión.
+:::
+
+## Ejercicio 5
+
+::: {.enunciado}
+Resumir las principales críticas al trabajo.
+:::
+
+Si bien, desde su publicación, el paper es considerado una contribución fundamental a la economía del desarrollo, también ha sido muy criticado. Autores como Albouy (2006) y Sachs (2012) han realizado duras críticas al trabajo.
+
+Por un lado, Albouy (2006) plantea tres inconvenientes: primero, respecto a la <mark>confiabilidad de los datos de Latinoamérica y de algunos países africanos</mark>; segundo, el trabajo mezcla, inapropiadamente, información de tiempos de paz y de episodios de campaña (enfrentamientos por conquista); tercero, existe una preocupación general de que haya valores atípicos de alta mortalidad, lo que podría afectar esta relación. Su argumentación es que cada uno de estos inconvenientes por separado debilita los resultados y, en conjunto, socavan los resultados de la estimación de la primera etapa lo suficiente como para que el instrumento (mortalidad de los colonos) no presente validez para determinar que las instituciones afecten al PBI per cápita.
+
+Por otro lado, <mark>Sachs (2012)</mark> critica que se dejan de lado cuestiones climáticas a la hora de explicar el desarrollo económico y también el supuesto de que las instituciones son estáticas. Además, recalca que <mark>regímenes dictatoriales con riesgos de expropiación altos no instauraron instituciones extractivas</mark>.
+
+::: {.disc .impr #d36}
+**D36.** (i) El primer problema que plantea Albouy es más preciso: buena parte de los países recibe tasas de mortalidad **tomadas de otros países**, con fundamentos que considera erróneos o contradictorios (36 de 64 según la versión de 2008). La versión publicada es de 2012 (*American Economic Review*, 102(6), 3059-3076) y no se menciona la **respuesta de los autores**. (ii) La reseña de Sachs de 2012 discute el libro *Why Nations Fail*; su argumento sobre los regímenes autoritarios, según los resúmenes consultados, es que algunos impulsaron reformas económicas y crecimiento, distinto de lo que dice la frase resaltada. Los dos puntos, igual que la observación sobre Glaeser *et al.* en [D32](#d32), se apoyan en resúmenes de búsqueda web y no en la lectura de esos textos.
+:::
+
+# Referencias
+
+Acemoglu, D., Johnson, S. y Robinson, J. A. (2001). The Colonial Origins of Comparative Development: An Empirical Investigation. *The American Economic Review*, 91(5), 1369-1401. <https://www.aeaweb.org/articles/pdf/doi/10.1257/aer.91.5.1369>
+
+Card, D. y Krueger, A. B. (1994). Minimum Wages and Employment: A Case Study of the Fast-Food Industry in New Jersey and Pennsylvania. *The American Economic Review*, 84(4), 772-793. <http://davidcard.berkeley.edu/papers/njmin-aer.pdf>
+
+Cattaneo, M. D., Frandsen, B. R. y Titiunik, R. (2015). Randomization Inference in the Regression Discontinuity Design: An Application to Party Advantages in the U.S. Senate. *Journal of Causal Inference*, 3(1), 1-24. <https://cattaneo.princeton.edu/papers/Cattaneo-Frandsen-Titiunik_2015_JCI.pdf>
+
+::: {.disc .impr #d37}
+**D37.** Se citan en el texto, pero **faltan**, Albouy (2006), Glaeser (2004; es Glaeser *et al.*), Sachs (2012), McCrary (2008) y Cattaneo *et al.* (2017, sobre `rddensity`). Las obras citadas solo en los recuadros (Gelman e Imbens, 2019; Imbens y Angrist, 1994; Stock y Yogo) no forman parte del PDF original.
+:::
+
+# Control de cifras {#control}
+
+Comparación de las cifras de las tablas 1 a 13 del PDF (coeficientes, errores estándar, promedios, $R^2$ y anchos de banda) con las calculadas en R. Una cifra "coincide" si la diferencia no supera el redondeo; se listan solo las que no coinciden.
+
+```{r control}
+filas <- list()
+agregar <- function(nombre, pdf, r, d) filas[[length(filas) + 1]] <<-
+  data.frame(Cifra = nombre, pdf = pdf, r = unname(r), d = d)
+# Tablas 1 a 6
+t1pdf <- list(Y_left = c(.170, 45.302, .225, 1.271, .0023), Y_right = c(.398, 52.201, .213, 1.192, .0167))
+for (col in names(t1pdf)) {
+  r <- t1[[col]]
+  agregar(paste("T1", col, c("pendiente", "constante", "EE pendiente", "EE constante")), t1pdf[[col]][1:4], c(r$b[2:1], r$se[2:1]), 3)
+  agregar(paste("T1", col, "R2"), t1pdf[[col]][5], r$r2, 4)
+}
+v2 <- c("T", "X", "TX", "(Intercept)")
+agregar(paste("T2", v2), c(6.899, .170, .228, 45.302), t2$Y$b[v2], 3)
+agregar(paste("T2 EE", v2), c(1.751, .217, .312, 1.223), t2$Y$se[v2], 3)
+agregar("T2 R2", .211, t2$Y$r2, 3)
+agregar(c("T3 efecto", "T3 EE"), c(6.899, 1.722), c(rd10$coef[1], rd10$se[1]), 3)
+agregar(c("T4 efecto (h óptimo)", "T4 EE (h óptimo)", "T4 ancho de banda"), c(7.158, 1.590, 12.112),
+        c(rdopt$coef[1], rdopt$se[1], rdopt$bws[1, 1]), 3)
+agregar(c("T5 efecto", "T5 EE"), c(1.557, 2.637), c(lag10$coef[1], lag10$se[1]), 3)
+agregar(c("T6 efecto", "T6 EE"), c(2.645, 3.601), c(falso$coef[1], falso$se[1]), 3)
+# Tablas 7 y 8
+agregar(paste("T7", c("NJ ola 1", "NJ ola 2", "PA ola 1", "PA ola 2", "dif. NJ", "dif. PA", "DD")),
+        c(4.6130, 5.0821, 4.6536, 4.6188, .4692, -.0348, .5040), c(t(sal[, 1:2]), sal[, 3], dd_sal), 4)
+agregar(paste("T8", c("NJ ola 1", "NJ ola 2")), c(17.275, 17.562), emp["NJ", 1:2], 3)
+agregar(paste("T8", c("PA ola 1", "PA ola 2", "dif. NJ", "dif. PA", "DD")),
+        c(20.1136, 18.0984, .2868, -2.0151, 2.3020), c(emp["PA", 1:2], emp[, 3], dd_emp), 4)
+# Tablas 9 a 12
+modelo <- function(tab, res, vars, b, se, r2) {
+  for (j in 1:2) {
+    y <- c("Salarios", "Empleo")[j]
+    agregar(paste(tab, y, vars), b[[j]], res[[y]]$b[vars], 4)
+    agregar(paste(tab, y, "EE", vars), se[[j]], res[[y]]$se[vars], 4)
+    agregar(paste(tab, y, "R2"), r2[j], res[[y]]$r2, 4)
+  }
+}
+modelo("T9", t9, c("TREAT", "POST", "TREAT:POST", "(Intercept)"),
+  list(c(-.0407, -.0348, .5040, 4.6536), c(-2.8382, -2.0152, 2.3020, 20.1136)),
+  list(c(.0486, .0623, .0659, .0442), c(1.5805, 1.7782, 1.9202, 1.4903)), c(.4028, .0080))
+v10 <- c("TREAT2", "POST", "TREAT2:POST", "(Intercept)")
+modelo("T10", t10, v10,
+  list(c(-.6510, -.0041, .6159, 5.1132), c(-2.2295, -2.2500, 3.3014, 18.9886)),
+  list(c(.0275, .0295, .0334, .0235), c(1.2839, 1.4879, 1.7020, 1.1414)), c(.7759, .0076))
+modelo("T11", t11, v10,
+  list(c(-.6317, -.2652, .3536, 5.0652), c(-.8933, -3.8478, 2.8129, 20.6957)),
+  list(c(.0459, .0603, .0895, .0321), c(3.4551, 3.3293, 3.9387, 3.0358)), c(.4255, .0145))
+modelo("T12", t12, c("TREAT", "TREAT2", "TREAT:TREAT2", "POST", "TREAT:POST", "TREAT2:POST", "TREAT:TREAT2:POST", "(Intercept)"),
+  list(c(.0480, -.6317, -.0192, -.2652, .2611, .3536, .2623, 5.0652),
+       c(-1.7070, -.8933, -1.3362, -3.8478, 1.5978, 2.8129, .4884, 20.6957)),
+  list(c(.0395, .0455, .0532, .0598, .0667, .0886, .0947, .0317),
+       c(3.2169, 3.4220, 3.6559, 3.2973, 3.6187, 3.9010, 4.2575, 3.0067)), c(.7221, .0146))
+# Tabla 13
+v13 <- c("avexpr", "lat_abst")
+agregar(paste("T13 MC2E", v13), c(.996, -.647), mc2e$b[v13], 3)
+agregar(paste("T13 MC2E EE", v13), c(.216, 1.303), mc2e$se[v13], 3)
+vp <- c("logem4", "lat_abst")
+agregar(paste("T13 primera etapa", vp), c(-.510, 2.001), pe$b[vp], 3)
+agregar(paste("T13 primera etapa EE", vp), c(.141, 1.337), pe$se[vp], 3)
+agregar(paste("T13 MCO", v13), c(.468, 1.577), mco$b[v13], 3)
+agregar(paste("T13 MCO EE", v13), c(.064, .710), mco$se[v13], 3)
+
+ctl <- do.call(rbind, filas)
+ctl$igual <- abs(ctl$pdf - ctl$r) <= 0.5 * 10^-ctl$d + 1e-9
+c(comparadas = nrow(ctl), coinciden = sum(ctl$igual), no_coinciden = sum(!ctl$igual))
+dif <- ctl[!ctl$igual, ]
+kable(data.frame(Cifra = dif$Cifra, PDF = mapply(num, dif$pdf, dif$d), R = mapply(num, dif$r, dif$d),
+                 `R con 6 decimales` = num(dif$r, 6), check.names = FALSE), align = "lccc", row.names = FALSE)
+```
+
+::: {.disc .impr #d38}
+**D38.** Además de la tabla 4 (versión del paquete, [D10](#d10)) y del error estándar de la tabla 6 (`r num(falso$se[1])` frente a 3,601, probablemente por la misma causa), las diferencias restantes son de **una unidad en el último decimal** (tablas 8 y 10 a 13): redondeos o transcripciones del PDF, sin efecto sobre las conclusiones.
+:::
+
+```{r sesion}
+sapply(c("haven", "rdrobust", "rddensity", "ggplot2", "knitr"), function(p) as.character(packageVersion(p)))
+R.version.string
+```
