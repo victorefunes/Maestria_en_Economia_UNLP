@@ -1,0 +1,712 @@
+---
+title: "Trabajo Práctico N° 2 — Réplica en R"
+subtitle: "Maestría en Economía UNLP - Economía de la Distribución. Respuestas originales: Juan Menduiña"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+    self_contained: true
+    code_folding: hide
+---
+
+```{css, echo=FALSE}
+mark { background: #ffe27a; padding: 0 2px; }
+.disc { border-left: 6px solid; border-radius: 4px; padding: 10px 14px; margin: 14px 0; font-size: 0.95em; }
+.disc p:last-child { margin-bottom: 0; }
+.error { border-color: #c0392b; background: #fdecea; }
+.impr  { border-color: #d68910; background: #fef5e7; }
+.metodo{ border-color: #2874a6; background: #eaf2f8; }
+.enunciado { font-style: italic; color: #444; }
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 8, fig.height = 5, dpi = 120)
+library(haven); library(dplyr); library(knitr)
+
+num <- function(x, d = 0) formatC(x, format = "f", digits = d, big.mark = ".", decimal.mark = ",")
+pct <- function(x, d = 1) paste0(num(100 * x, d), "%")
+```
+
+# Cómo leer este documento {-}
+
+El texto de cada ejercicio es el del PDF *Trabajo Práctico N° 2 (R)*. Las tablas, las figuras y los números de los recuadros se calculan en R a partir de `Datos/usu_individual_t119.dta`. Lo <mark>resaltado</mark> es una frase o un número con alguna discrepancia, explicada en el recuadro correspondiente:
+
+::: {.disc .error}
+**Error**: la afirmación contradice los datos o el cálculo es incorrecto.
+:::
+
+::: {.disc .impr}
+**Imprecisión**: redacción, rótulo o formato que puede inducir a error.
+:::
+
+::: {.disc .metodo}
+**Observación metodológica**: el resultado depende de una decisión discutible o no documentada.
+:::
+
+**Resultado de la réplica.** Las figuras y casi todas las cifras del PDF se reproducen en R. Las excepciones son una celda de la tabla 3 ([D17](#d17)) y las diferencias pequeñas en las tablas por decil que provoca el orden aleatorio de los empates ([D3](#d3)). Hay errores de cálculo que cambian resultados: la curva de Pen por aglomerado ([D10](#d10)), el ponderador del índice de Atkinson ([D20](#d20)) y la transferencia simulada ([D22](#d22)).
+
+| N° | Ej. | Tipo | Discrepancia |
+|----|-----|------|--------------|
+| [D1](#d1) | Intro | Error | La EPH no es representativa a nivel nacional |
+| [D2](#d2) | Intro | Imprecisión | Las 47.789 observaciones son posteriores a los filtros, que operan por hogar |
+| [D3](#d3) | 1 | Metodológica | Los deciles dependen del orden aleatorio de los empates |
+| [D4](#d4) | 1 | Metodológica | Las columnas de fuentes de ingreso no suman 100% |
+| [D5](#d5) | 1 | Imprecisión | Totales redondeados en la tabla 1 |
+| [D6](#d6) | 2 | Error | Bajo el salario mínimo está cerca del 59% de la población, no del 50% |
+| [D7](#d7) | 2 | Imprecisión | Bajo $90.000 está el 99,7%, no "más del 90%" |
+| [D8](#d8) | 2 | Error | Lectura incorrecta del cruce de curvas de Lorenz |
+| [D9](#d9) | 2 | Imprecisión | La dominancia CABA–Formosa no vale para *cualquier* línea de pobreza |
+| [D10](#d10) | 2 | Error | Las curvas de Pen por aglomerado usan la posición en el ranking nacional |
+| [D11](#d11) | 3 | Imprecisión | No se comparan individuos con y sin transferencias |
+| [D12](#d12) | 3 | Error | Las diferencias entre curvas de Lorenz no desaparecen en el decil 8 |
+| [D13](#d13) | 3 | Imprecisión | El promedio oculta que las transferencias pesan mucho en los deciles bajos |
+| [D14](#d14) | 3 | Metodológica | El *do-file* grafica una curva de concentración, no de Lorenz |
+| [D15](#d15) | 4 | Metodológica | Otra lectura de "Gini para los deciles": datos agrupados |
+| [D16](#d16) | 4 | Error | Las tablas 3 y 4 definen de forma distinta los deciles del ITF |
+| [D17](#d17) | 4 | Error | Gini de mujeres, decil 8: 0,320 no se reproduce |
+| [D18](#d18) | 4 | Error | En mujeres, el decil 10 no es de los más desiguales |
+| [D19](#d19) | 4 | Error | En los deciles 9 y 10 el Gini de mujeres es menor que el de hombres |
+| [D20](#d20) | 5 | Error | Atkinson ponderado con `pondera` en lugar de `pondih` |
+| [D21](#d21) | 5 | Error | Por deciles, Atkinson con IPCF no es menor que con ITF |
+| [D22](#d22) | 6 | Error | La transferencia no agota la recaudación |
+| [D23](#d23) | 6 | Imprecisión | Atkinson se informa solo para ε = 0,5 |
+| [D24](#d24) | 6 | Imprecisión | Tres diferencias de Atkinson se restaron con cifras ya redondeadas |
+
+# Datos y funciones
+
+```{r datos}
+base <- read_dta("Datos/usu_individual_t119.dta") |> zap_labels()
+names(base) <- tolower(names(base))
+
+d <- base |>
+  mutate(dec_indec = suppressWarnings(as.numeric(deccfr))) |>
+  filter(!is.na(dec_indec), dec_indec >= 1, dec_indec <= 10, !nro_hogar %in% c(51, 71)) |>
+  group_by(codusu, nro_hogar) |>
+  mutate(miembros = n(),
+         p21pc  = sum(p21) / n(),
+         secpc  = sum(tot_p12) / n(),
+         nlpc   = sum(t_vi) / n(),
+         trpc   = sum(v5_m) / n()) |>
+  ungroup() |>
+  mutate(ipcf2 = ipcf - trpc, hombre = ch04 == 1)
+
+c(base_individual = nrow(base), muestra = nrow(d), poblacion = sum(d$pondih))
+```
+
+```{r funciones}
+# Deciles como en el do-file: suma acumulada de pondih sobre la base ordenada
+deciles <- function(x, w, orden = order(x)) {
+  cw <- cumsum(w[orden]); paso <- sum(w) / 10; k <- integer(length(x))
+  for (i in 1:10) k[orden][cw > paso * (i - 1) & cw <= paso * i] <- i
+  k
+}
+# Réplica de comando_gini.do y comando_atk.do
+gini <- function(y, w) {
+  k <- w > 0 & y > 0; y <- y[k]; w <- w[k]; o <- order(y); y <- y[o]; w <- w[o]
+  N <- sum(w); mu <- sum(w * y) / N; i <- cumsum(w) - (w - 1) / 2
+  1 + 1 / N - 2 / (mu * N^2) * sum(w * y * (N - i + 1))
+}
+atk <- function(y, w, e) {
+  mu <- weighted.mean(y, w)
+  if (e == 1) 1 - exp(weighted.mean(log(y / mu), w))
+  else 1 - weighted.mean((y / mu)^(1 - e), w)^(1 / (1 - e))
+}
+# Curva de Lorenz (o de concentración, si se ordena por otra variable)
+lorenz <- function(y, w, clave = y) {
+  o <- order(clave)
+  data.frame(p = c(0, cumsum(w[o]) / sum(w)), L = c(0, cumsum((w * y)[o]) / sum(w * y)))
+}
+Lp <- function(curva, p) approx(curva$p, curva$L, p, ties = "ordered")$y
+# Función de distribución y población acumulada
+cdf <- function(x, w) { o <- order(x); data.frame(x = x[o], F = cumsum(w[o]) / sum(w), N = cumsum(w[o])) }
+bajo <- function(x, w, z) sum(w[x < z]) / sum(w)
+cuantil <- function(x, w, p) { c0 <- cdf(x, w); sapply(p, function(q) c0$x[which(c0$F >= q)[1]]) }
+
+# Gráfico de líneas con leyenda inferior
+lineas <- function(series, xlab, ylab, col, lty = rep(1, length(series)),
+                   vert = NULL, diagonal = FALSE) {
+  par(mar = c(if (length(series) > 1 || diagonal) 7 else 4.5, 4.5, 1, 1), las = 1)
+  plot(NA, xlim = range(sapply(series, function(s) range(s[[1]]))),
+       ylim = range(sapply(series, function(s) range(s[[2]]))), xlab = xlab, ylab = ylab)
+  grid()
+  if (!is.null(vert)) abline(v = vert, col = "#90353b")
+  for (i in seq_along(series)) lines(series[[i]][[1]], series[[i]][[2]], col = col[i], lty = lty[i], lwd = 1.5)
+  nombres <- names(series)
+  if (diagonal) { lines(c(0, 1), c(0, 1)); nombres <- c(nombres, "LPI"); col <- c(col, "black"); lty <- c(lty, 1) }
+  if (length(nombres) > 1)
+    legend("bottom", inset = c(0, -0.42), legend = nombres, col = col, lty = lty, lwd = 2,
+           horiz = TRUE, xpd = TRUE, bty = "n")
+}
+```
+
+```{r deciles}
+d$decil  <- deciles(d$ipcf, d$pondih)   # deciles de IPCF
+d$decitf <- deciles(d$itf, d$pondih)    # deciles de ITF (sort_itf.do)
+
+# Sensibilidad al orden de los empates: 500 órdenes aleatorios
+set.seed(2019)
+sim <- replicate(500, {
+  k <- deciles(d$ipcf, d$pondih, order(d$ipcf, runif(nrow(d))))
+  sapply(1:10, function(i) {
+    s <- which(k == i); w <- d$pondih[s]; S <- sum(w * d$ipcf[s])
+    h <- s[d$hombre[s]]; f <- s[!d$hombre[s]]
+    c(frec = sum(w), media = S / sum(w), S = S,
+      sh_p21 = 100 * sum(w * d$p21pc[s]) / S, sh_sec = 100 * sum(w * d$secpc[s]) / S,
+      sh_nl = 100 * sum(w * d$nlpc[s]) / S,
+      g_ipcf = gini(d$ipcf[s], w), g_itf = gini(d$itf[s], w),
+      g_h = gini(d$p21[h], d$pondiio[h]), g_m = gini(d$p21[f], d$pondiio[f]))
+  })
+})
+sim["S", , ] <- sweep(sim["S", , ], 2, colSums(sim["S", , ]), "/") * 100   # share del decil
+minimo <- apply(sim, 1:2, min); maximo <- apply(sim, 1:2, max)
+# Celdas publicadas que caen fuera del rango simulado (con tolerancia de redondeo)
+fuera <- function(publicado, filas, tol)
+  which(publicado < t(minimo[filas, ]) - tol | publicado > t(maximo[filas, ]) + tol, arr.ind = TRUE)
+```
+
+# Introducción {-}
+
+Para los cálculos de este trabajo, se consideró la base de microdatos de la EPH del primer trimestre de 2019 elaborada por el INDEC, <mark>la cual es representativa a nivel nacional</mark> <mark>y comprende 47.789 observaciones</mark>.^[Texto original: "Se omiten aquellas observaciones que no presentan ingresos positivos, que no han dado respuesta sobre sus niveles de ingresos o que pertenecen a hogares secundarios".]
+
+::: {.disc .error #d1}
+**D1.** La EPH continua es una encuesta **urbana** (31 aglomerados). No es representativa del total nacional: "Argentina" y "total país" deben leerse como "total de aglomerados urbanos relevados" (`r num(sum(d$pondih))` personas expandidas).
+:::
+
+::: {.disc .impr #d2}
+**D2.** La base individual tiene **`r num(nrow(base))`** observaciones; `r num(nrow(d))` es la muestra **después** de los filtros. El filtro de ingresos se aplica por **hogar** (`deccfr`): quedan `r num(sum(d$p47t == 0))` personas con ingreso individual nulo.
+:::
+
+# Ejercicio 1
+
+::: {.enunciado}
+En primer lugar, identificar deciles de ingreso per cápita familiar (IPCF) con igual número de personas. Luego, calcular (a) el ingreso promedio de cada decil, (b) el cociente de deciles extremos, (c) la participación de cada decil en el ingreso total y (d) la participación de los ingresos por ocupación principal (p21) en el IPCF de cada decil. Contestar: ¿Por qué no deben utilizarse las variables de deciles generadas por el INDEC para resolver este punto?
+:::
+
+En la tabla 1, se presentan deciles del ingreso per cápita familiar (IPCF) para Argentina. Las filas indican los valores por decil, mientras que las columnas (1)-(4) indican decil, número de individuos en cada decil, IPCF promedio de cada decil y sumatoria del IPCF de cada decil, respectivamente, y las columnas (5)-(7) indican sumatorias de diferentes fuentes de ingreso.
+
+A partir de una simple inspección de los datos, resulta evidente la desigualdad en la distribución del ingreso en Argentina. Para cuantificar el nivel de desigualdad, es posible, a partir de la información contenida en la tabla 1, construir un índice de desigualdad sencillo, denominado cociente de ingresos de deciles extremos. Como su nombre lo indica, se calcula dividiendo el ingreso promedio del decil superior por el ingreso promedio del decil inferior. Al calcular este índice, se tiene un valor de 19,89, que expresa que el ingreso promedio del decil 10 (más rico) es, aproximadamente, 20 veces mayor que el ingreso promedio del decil 1 (más pobre). No obstante, este valor varía ante cambios en el nivel de desagregación; dicho de otra forma, el resultado del índice cambia si, en lugar de deciles, se consideran quintiles o percentiles, manteniendo constante la distribución del ingreso. Además, este índice cumple el principio de las transferencias de Dalton-Pigou sólo en sentido débil, lo cual significa que el índice cae si hay una transferencia igualadora que le quita ingresos al decil 10 y los asigna a otro decil, pero permanece contante ante transferencias igualadoras que ocurren en deciles no involucrados en el cálculo (por ejemplo, si hay una transferencia igualadora entre los deciles 4 y 5).
+
+```{r tabla1}
+t1 <- d |> group_by(decil) |>
+  summarise(Frecuencia = sum(pondih), Media = weighted.mean(ipcf, pondih),
+            SIPCF = sum(pondih * ipcf), SP = sum(pondih * p21pc),
+            SS = sum(pondih * secpc), SN = sum(pondih * nlpc))
+total <- data.frame(decil = "Total", Frecuencia = sum(t1$Frecuencia),
+                    Media = weighted.mean(d$ipcf, d$pondih), SIPCF = sum(t1$SIPCF),
+                    SP = sum(t1$SP), SS = sum(t1$SS), SN = sum(t1$SN))
+kable(bind_rows(mutate(t1, decil = as.character(decil)), total) |>
+        mutate(Frecuencia = num(Frecuencia), Media = num(Media, 2),
+               across(SIPCF:SN, ~num(.x / 1e6))),
+      col.names = c("Decil", "Frecuencia", "Media IPCF", "Suma IPCF", "Suma IOPPC",
+                    "Suma IOSPC", "Suma INLPC"), align = "r",
+      caption = "Tabla 1. Deciles de las diferentes fuentes de ingreso. Sumas en millones de pesos.")
+
+pdf1 <- cbind(
+  frec  = c(2812013, 2812244, 2811940, 2812305, 2812091, 2810958, 2812630, 2812254, 2812992, 2812200),
+  media = c(2221.32, 3999.44, 5435.61, 7042.65, 8729.08, 10641.76, 13240.86, 16617.38, 22974.36, 44180.78))
+fuera1 <- nrow(fuera(pdf1, c("frec", "media"), 0.006))
+cociente <- t1$Media[10] / t1$Media[1]
+```
+
+Cociente de deciles extremos en R: **`r num(cociente, 2)`** (PDF: 19,89).
+
+::: {.disc .metodo #d3}
+**D3.** Muchas personas comparten el mismo IPCF en los límites entre deciles. El *do-file* ordena solo por `ipcf` y Stata desempata al azar, de modo que las frecuencias y las medias cambian en cada ejecución. Por ejemplo, la frecuencia del decil 4 es `r num(t1$Frecuencia[4])` aquí y 2.812.305 en el PDF, y entre 500 órdenes aleatorios va de `r num(minimo["frec", 4])` a `r num(maximo["frec", 4])`. Celdas del PDF (frecuencia y media) fuera del rango simulado: **`r fuera1`**. Para que sea reproducible conviene desempatar con una variable fija (por ejemplo `sort ipcf codusu nro_hogar componente`).
+:::
+
+::: {.disc .impr #d5}
+**D5.** La tabla 1 del PDF informa 28.100.000 como total de frecuencia (es `r num(total$Frecuencia)`) y redondea las sumas a tres cifras significativas (por eso, por ejemplo, el total de IPCF figura como 380.000 y es `r num(total$SIPCF / 1e6)` millones).
+:::
+
+De manera alternativa al cálculo del índice sencillo presentado anteriormente, es posible estimar la participación del ingreso proveniente de varias fuentes de ingreso en el ingreso total de cada decil. En la tabla 2, la columna (1) indica la participación de cada decil en el ingreso total y las columnas (2), (3) y (4) indican la participación de los ingresos per cápita por ocupación principal, la participación de los ingresos per cápita de otras ocupaciones y la participación de los ingresos per cápita no laborales en el IPCF de cada decil, respectivamente.
+
+En la columna (1), se puede observar que el primer decil acumula sólo el 1,64% del ingreso total y que la mitad de los individuos de ingresos más bajos acumulan el 20,29% del ingreso total, mientras que el último decil acumula el 32,71%. Al igual que el índice presentado anteriormente, este índice no cumple con el principio de las transferencias de Dalton-Pigou en sentido estricto y centra el análisis en lo que sucede en una parte de la distribución. No obstante, tanto el cociente de deciles extremos como el share en el ingreso total de deciles extremos son índices de fácil comprensión.
+
+En las columnas (2) a (4), se puede observar que la participación del ingreso de la ocupación principal en el ingreso total de cada decil ronda entre el 55,51% y el 71,1%, lo cual resulta poco sorpresivo, ya que, en las economías en desarrollo, la mayor parte de los ingresos de los hogares corresponden a ingresos laborales; que la participación del ingreso de ocupaciones secundarias en el ingreso total de cada decil es pequeña, no superior al 5% y un poco más importante en los últimos deciles; y, por último, que la participación del ingreso no laboral en el ingreso total de cada decil ronda entre el 21,58% y el 31,69% para todos los deciles, excepto para el primero, en el que esta fuente de ingreso representa el 40,73% del ingreso acumulado de este decil.
+
+```{r tabla2}
+# Componentes del ingreso principal que no están en p21, tot_p12 ni t_vi
+d$resto <- d$p47t - d$p21 - d$tot_p12 - d$t_vi
+d <- d |> group_by(codusu, nro_hogar) |> mutate(restopc = sum(resto) / n()) |> ungroup()
+t2 <- d |> group_by(decil) |>
+  summarise(S = sum(pondih * ipcf), p21 = 100 * sum(pondih * p21pc) / S,
+            sec = 100 * sum(pondih * secpc) / S, nl = 100 * sum(pondih * nlpc) / S,
+            resto = 100 * sum(pondih * restopc) / S) |>
+  mutate(S = 100 * S / sum(S), suma3 = p21 + sec + nl)
+tot2 <- 100 * c(sum(d$pondih * d$p21pc), sum(d$pondih * d$secpc), sum(d$pondih * d$nlpc),
+                sum(d$pondih * d$restopc)) / sum(d$pondih * d$ipcf)
+kable(bind_rows(
+  mutate(t2, decil = as.character(decil)),
+  data.frame(decil = "Total", S = 100, p21 = tot2[1], sec = tot2[2], nl = tot2[3],
+             resto = tot2[4], suma3 = sum(tot2[1:3]))) |>
+    mutate(across(S:suma3, ~num(.x, 2))) |> relocate(resto, .after = suma3),
+  col.names = c("Decil", "Share decil (%)", "IOPPC (%)", "IOSPC (%)", "INLPC (%)",
+                "Suma (2)+(3)+(4)", "Parte omitida (%)"), align = "r",
+  caption = "Tabla 2. Participación de cada decil y de las fuentes de ingreso. Las dos últimas columnas se agregan en la réplica.")
+
+pdf2 <- cbind(
+  S      = c(1.64, 2.96, 4.02, 5.21, 6.46, 7.88, 9.81, 12.30, 17.01, 32.71),
+  sh_p21 = c(55.51, 66.15, 70.36, 71.10, 60.50, 66.58, 62.08, 64.25, 62.78, 57.25),
+  sh_sec = c(3.09, 2.95, 3.32, 3.41, 2.30, 3.95, 3.03, 3.74, 4.20, 4.95),
+  sh_nl  = c(40.73, 29.33, 23.82, 21.58, 31.69, 23.93, 29.50, 24.12, 25.11, 27.89))
+fuera2 <- nrow(fuera(pdf2, c("S", "sh_p21", "sh_sec", "sh_nl"), 0.0051))
+v <- d$resto != 0
+explica <- mean(d$resto[v] == with(d[v, ], pp08j1 + pp08j2 + pp08j3))
+```
+
+Control: celdas del PDF fuera del rango simulado: **`r fuera2`**.
+
+::: {.disc .metodo #d4}
+**D4.** Las tres fuentes **no suman 100%**: en el total suman `r num(sum(tot2[1:3]), 2)`%, y el faltante llega a `r num(max(t2$resto), 1)`% en el decil 10. La identidad `p47t = p21 + tot_p12 + t_vi` falla en `r num(sum(v))` personas, y en el `r pct(explica, 0)` de ellas la diferencia es exactamente **aguinaldo + bonificaciones no habituales + retroactivos** (`pp08j1`, `pp08j2`, `pp08j3`), que `p21` no incluye. El texto no menciona este componente.
+:::
+
+Por último, se puede mencionar que no deben utilizarse las variables de deciles generadas por el INDEC porque se encuentran a nivel hogar y no a nivel individuo.
+
+```{r indec}
+ind <- d |> group_by(dec_indec) |>
+  summarise(Personas = sum(pondih), Hogares = sum(pondih / miembros))
+kable(ind |> mutate(across(-dec_indec, num)), col.names = c("deccfr", "Personas", "Hogares"),
+      align = "r", caption = "Deciles del INDEC (agregado en la réplica).")
+```
+
+Sin discrepancia: los deciles `deccfr` tienen aproximadamente la misma cantidad de **hogares** (unos `r num(mean(ind$Hogares))`) pero entre `r num(min(ind$Personas))` y `r num(max(ind$Personas))` personas.
+
+# Ejercicio 2
+
+::: {.enunciado}
+Presentar la curva de Lorenz, la función de distribución y la curva de Pen del ingreso per cápita familiar para el total del país. Presentar las mismas curvas de forma superpuesta para los aglomerados “Ciudad de Buenos Aires” y “Formosa”.
+:::
+
+En la figura 1, se presenta la curva de Lorenz para Argentina, donde se puede observar que el 80% más pobre de la población percibe el 50% de los ingresos totales, mientras que el 20% más rico percibe el otro 50% de estos ingresos.
+
+```{r fig1}
+L <- lorenz(d$ipcf, d$pondih)
+lineas(list("Curva de Lorenz" = L), "p", "L(p)", "red", diagonal = TRUE)
+```
+
+**Figura 1.** Curva de Lorenz del IPCF. En R, L(0,8) = `r num(Lp(L, .8), 3)`.
+
+Asimismo, al considerar la función de distribución para Argentina, que se presenta en la figura 2, se puede observar que, <mark>aproximadamente, el 50% de la población de Argentina percibe ingresos menores que el salario mínimo (\$11.500)</mark>,^[El salario mínimo en Argentina desde el 01/12/2018 al 28/02/2019 fue de \$11.300, mientras que desde el 01/03/2019 al 31/05/2019 fue de \$11.900, por lo que, considerando el primer trimestre de 2019, se tiene un salario mínimo promedio de \$11.500.] que se representa por la línea vertical en la figura. Adicionalmente, también se puede afirmar que <mark>más del 90% de la población percibe ingresos menores a \$90.000</mark> aproximadamente, lo cual refuerza los resultados obtenidos en la curva de Lorenz presentada previamente. Dado que, a partir de esta figura, es dificil percibir diferencias debido al efecto de los ingresos en la parte superior de la distribución, en la figura 3, se presenta esta misma función pero expresando los ingresos en logaritmo, en la cual se puede observar mejor la trayectoria de la participación de la población con respecto a los ingresos.
+
+```{r fig2}
+F0 <- cdf(d$ipcf, d$pondih)
+lineas(list(IPCF = list(F0$x / 1000, F0$F)), "IPCF (Miles de pesos)", "Share de la población", "black", vert = 11.5)
+```
+
+**Figura 2.** Función de distribución del IPCF.
+
+```{r fig3}
+lineas(list(IPCF = list(log(F0$x), F0$F)), "Logaritmo del IPCF", "Share de la población", "black", vert = 9.35)
+```
+
+**Figura 3.** Función de distribución del IPCF (log).
+
+::: {.disc .error #d6}
+**D6.** La proporción con IPCF menor a \$11.500 es **`r pct(bajo(d$ipcf, d$pondih, 11500))`**, no 50%. La propia figura 3 cruza la línea vertical cerca de 0,6, y la tabla 1 muestra que el decil 6 (media \$`r num(t1$Media[6])`) está todavía por debajo del salario mínimo.
+:::
+
+::: {.disc .impr #d7}
+**D7.** Bajo \$90.000 está el **`r pct(bajo(d$ipcf, d$pondih, 90000))`** de la población. "Más del 90%" es cierto pero muy poco informativo; el 90% se alcanza en torno a \$`r num(cuantil(d$ipcf, d$pondih, .9))`.
+:::
+
+Por último, en la figura 4, se presenta la curva de Pen para Argentina, donde se puede observar, casi en su totalidad, una línea horizontal, a diferencia del último tramo, en donde los ingresos muy elevados de una fracción pequeña de la población hacen que, visualmente, la curva tenga esta forma. No obstante, al igual que los gráficos presentados anteriormente, esta curva ratifica la desigualdad en Argentina. Para tener un panorama más claro, como se hizo anteriormente, en la figura 5, se presenta esta misma curva pero expresando los ingresos en logaritmo, en la cual se observa que, entre los puntos de quiebre (aproximadamente, 500 mil y 28 millones individuos), existe una mayor paridad de los ingresos.
+
+```{r fig4}
+lineas(list(IPCF = list(F0$N / 1e6, F0$x / 1000)), "Millones de habitantes", "IPCF (Miles de pesos)", "black")
+```
+
+**Figura 4.** Curva de Pen del IPCF.
+
+```{r fig5}
+lineas(list(IPCF = list(F0$N / 1e6, log(F0$x))), "Millones de habitantes", "Logaritmo del IPCF", "black", vert = c(.5, 28))
+```
+
+**Figura 5.** Curva de Pen del IPCF (log).
+
+En la figura 6, se presentan las curvas de Lorenz para CABA y para Formosa, donde se puede observar que Formosa domina a CABA hasta alrededor de la primera mitad del soporte, en donde la dominancia se invierte y CABA pasa a dominar a Formosa hasta casi el final del soporte. <mark>Esto expresa que, para las individuos de menores ingresos, existe una mayor desigualdad en CABA que en Formosa y que, para los individuos de mayores ingresos, esto se invierte y existe una mayor desigualdad en Formosa que en CABA.</mark>
+
+```{r fig6}
+ab <- filter(d, aglomerado == 32); fo <- filter(d, aglomerado == 15)
+La <- lorenz(ab$ipcf, ab$pondih); Lf <- lorenz(fo$ipcf, fo$pondih)
+lineas(list("Ciudad de Buenos Aires" = La, "Formosa" = Lf), "p", "L(p)", c("red", "blue"), c(1, 2), diagonal = TRUE)
+```
+
+**Figura 6.** Curva de Lorenz del IPCF para CABA y Formosa.
+
+```{r ej2-indices}
+p <- seq(.001, .999, .001); dif <- Lp(La, p) - Lp(Lf, p)
+cruce <- p[which(diff(sign(dif)) != 0)]
+indices <- function(x) c(gini(x$ipcf, x$pondih), sapply(c(.5, 1, 2), function(e) atk(x$ipcf, x$pondih, e)))
+ti <- data.frame(Indice = c("Gini", "Atkinson (0,5)", "Atkinson (1)", "Atkinson (2)"),
+                 CABA = indices(ab), Formosa = indices(fo))
+kable(ti |> mutate(across(-Indice, ~num(.x, 3))), align = "lrr", col.names = c("Índice", "CABA", "Formosa"),
+      caption = "Índices de desigualdad por aglomerado (agregado en la réplica).")
+```
+
+::: {.disc .error #d8}
+**D8.** Las curvas se cruzan en p ≈ `r num(cruce[1], 2)`. Cuando dos curvas de Lorenz se cruzan **no se puede ordenar** la desigualdad de las dos distribuciones: índices distintos pueden dar rankings distintos. No se puede deducir que un aglomerado es más desigual "para los de menores ingresos" y el otro "para los de mayores ingresos", porque L(p) es una participación **acumulada** desde el primer individuo y se compara con la media de cada aglomerado. En efecto, el Gini es algo mayor en `r if (ti$Formosa[1] > ti$CABA[1]) "Formosa" else "CABA"`, mientras que los índices de Atkinson son mayores en CABA.
+:::
+
+Asimismo, al considerar las funciones de distribución para CABA y para Formosa, que se presentan en la figura 7, se puede observar que, aproximadamente, el 25% de la población de CABA y el 75% de Formosa percibe ingresos menores que el salario mínimo (\$11.500), que se representa por la línea vertical en la figura, lo cual expresa que, <mark>ante cualquier línea de pobreza que se pueda establecer</mark>, en Formosa, habría una mayor proporción de individuos en situación de pobreza que en CABA. Adicionalmente, en Formosa, no existen individuos que perciban ingresos mayores a \$100.000 aproximadamente, mientras que, en CABA, hay individuos que perciben ingresos mayores a \$200.000.
+
+```{r fig7}
+Fa <- cdf(ab$ipcf, ab$pondih); Ff <- cdf(fo$ipcf, fo$pondih)
+lineas(list("Ciudad de Buenos Aires" = list(Fa$x / 1000, Fa$F), "Formosa" = list(Ff$x / 1000, Ff$F)),
+       "IPCF (Miles de pesos)", "Share de la población", c("black", "red"), vert = 11.5)
+```
+
+**Figura 7.** Función de distribución del IPCF para CABA y Formosa. En R: `r pct(bajo(ab$ipcf, ab$pondih, 11500))` (CABA) y `r pct(bajo(fo$ipcf, fo$pondih, 11500))` (Formosa) bajo \$11.500; máximos de \$`r num(max(ab$ipcf))` y \$`r num(max(fo$ipcf))`.
+
+::: {.disc .impr #d9}
+**D9.** No vale para **cualquier** línea. El IPCF mínimo es \$`r num(min(ab$ipcf))` en CABA y \$`r num(min(fo$ipcf))` en Formosa: con una línea entre esos dos valores, la incidencia es `r pct(bajo(ab$ipcf, ab$pondih, min(fo$ipcf)), 2)` en CABA y 0% en Formosa (`r sum(ab$ipcf < min(fo$ipcf))` observaciones). No hay dominancia estocástica de primer orden estricta, aunque sí para cualquier línea relevante, de \$`r num(min(fo$ipcf))` en adelante.
+:::
+
+Por último, en la figura 8, se presentan las curvas de Pen para CABA y para Formosa, donde se puede observar que <mark>las curvas están solapadas con muy ligeras diferencias</mark>, como por ejemplo que, en el caso de Formosa, el ingreso máximo es de \$100.000 aproximadamente, lo cual reafirma lo visto en la función de distribucion presentada previamente.
+
+```{r fig8}
+# Como en el original: eje X = población acumulada en el ranking NACIONAL
+d$nacional <- NA_real_; o <- order(d$ipcf); d$nacional[o] <- cumsum(d$pondih[o])
+orig <- function(a) { s <- d[d$aglomerado == a, ]; s <- s[order(s$nacional), ]; list(s$nacional / 1e6, s$ipcf / 1000) }
+lineas(list("Ciudad de Buenos Aires" = orig(32), "Formosa" = orig(15)),
+       "Millones de habitantes", "IPCF (Miles de pesos)", c("black", "red"))
+```
+
+**Figura 8.** Curva de Pen del IPCF para CABA y Formosa (como en el PDF).
+
+```{r fig8-corregida}
+pp <- seq(.005, .995, .005)
+Qa <- cuantil(ab$ipcf, ab$pondih, pp); Qf <- cuantil(fo$ipcf, fo$pondih, pp)
+lineas(list("Ciudad de Buenos Aires" = list(pp, Qa / 1000), "Formosa" = list(pp, Qf / 1000)),
+       "p (proporción de la población de cada aglomerado)", "IPCF (Miles de pesos)", c("black", "red"))
+```
+
+**Figura 8 bis (agregada).** Curvas de Pen correctas, entre los percentiles 0,5 y 99,5.
+
+::: {.disc .error #d10}
+**D10.** La figura 8 grafica el ingreso de cada aglomerado contra la población acumulada del **total país** (`sumpop` se calculó sobre toda la base). Así, todos los puntos caen sobre la curva de Pen nacional y el solapamiento es **mecánico**: ocurriría con cualquier par de aglomerados. Con cada aglomerado en su propio ranking (figura 8 bis), CABA queda por encima de Formosa en `r pct(mean(Qa > Qf), 0)` de los percentiles evaluados; la mediana es \$`r num(cuantil(ab$ipcf, ab$pondih, .5))` contra \$`r num(cuantil(fo$ipcf, fo$pondih, .5))`. La conclusión del texto es la opuesta a la correcta.
+:::
+
+# Ejercicio 3 (Opcional)
+
+::: {.enunciado}
+Presentar superpuestas las mismas curvas que en el punto (2) para el IPCF y para el IPCF excluyendo ingresos por transferencias correspondientes a “subsidio o ayuda social (en dinero)”.
+:::
+
+Como se puede observar en las figuras 9, 10 y 11, existe muy poca diferencia entre las curvas de Lorenz, la función de distribución y la curva de Pen <mark>de los individuos que cuentan con transferencias correspondientes a subsidio o ayuda social y los que no</mark>. Para el caso de la curva de Lorenz, <mark>las diferencias se dan hasta el decil 8 aproximadamente</mark>. Sin embargo, al observar la base de datos, en promedio, la diferencia por individuo entre ambos IPCF es de \$161,85, lo cual <mark>explica, en gran medida, cuan imperceptibles son estas diferencias</mark>. Para fines de medición de impacto de este tipo de políticas y del bienestar de los individuos, sería muy conveniente contar con variables que registren, específicamente, el origen de las transferencias.
+
+```{r fig9}
+L2 <- lorenz(d$ipcf2, d$pondih)
+lineas(list("IPCF" = L, "IPCF (sin transf.)" = L2), "p", "L(p)", c("red", "blue"), c(1, 2), diagonal = TRUE)
+```
+
+**Figura 9.** Curva de Lorenz del IPCF e IPCF sin transferencias.
+
+```{r fig10}
+F2 <- cdf(d$ipcf2, d$pondih)
+lineas(list("IPCF" = list(F0$x / 1000, F0$F), "IPCF (sin transf.)" = list(F2$x / 1000, F2$F)),
+       "Miles de pesos", "Share de la población", c("black", "red"), vert = 11.5)
+```
+
+**Figura 10.** Función de distribución del IPCF e IPCF sin transferencias.
+
+```{r fig11}
+lineas(list("IPCF" = list(F0$N / 1e6, F0$x / 1000), "IPCF (sin transf.)" = list(F2$N / 1e6, F2$x / 1000)),
+       "Millones de habitantes", "Miles de pesos", c("black", "red"))
+```
+
+**Figura 11.** Curva de Pen del IPCF e IPCF sin transferencias.
+
+```{r ej3}
+q <- seq(.1, .9, .1)
+C2 <- lorenz(d$ipcf2, d$pondih, clave = d$ipcf)
+kable(data.frame(p = num(q, 1), a = num(Lp(L, q), 4), b = num(Lp(L2, q), 4),
+                 c = num(100 * (Lp(L, q) - Lp(L2, q)), 2), e = num(Lp(C2, q), 4)), align = "r",
+      col.names = c("p", "Lorenz IPCF", "Lorenz sin transf.", "Diferencia (puntos)", "Concentración (do-file)"),
+      caption = "Curvas por decil (agregado en la réplica).")
+te <- d |> group_by(decil) |>
+  summarise(media = weighted.mean(trpc, pondih), peso = sum(pondih * trpc) / sum(pondih * ipcf),
+            cob = weighted.mean(trpc > 0, pondih))
+kable(te |> mutate(media = num(media), peso = pct(peso), cob = pct(cob)), align = "r",
+      col.names = c("Decil de IPCF", "Transferencia media ($)", "Peso en el IPCF", "Personas en hogares que reciben"),
+      caption = "Incidencia de la transferencia (agregado en la réplica).")
+```
+
+La transferencia media en R es \$`r num(weighted.mean(d$trpc, d$pondih), 2)` (PDF: \$161,85, igual salvo redondeo).
+
+::: {.disc .impr #d11}
+**D11.** No se comparan dos grupos de individuos. Son **las mismas personas**, toda la población, medidas con dos conceptos de ingreso: con y sin la transferencia.
+:::
+
+::: {.disc .error #d12}
+**D12.** La brecha entre curvas de Lorenz **no termina en el decil 8**: es de `r num(100 * (Lp(L, .8) - Lp(L2, .8)), 2)` puntos en p = 0,8 y `r num(100 * (Lp(L, .9) - Lp(L2, .9)), 2)` en p = 0,9, un tamaño similar al de p = 0,1 (`r num(100 * (Lp(L, .1) - Lp(L2, .1)), 2)`). Es máxima en la mitad de la distribución. Se vuelve cero solo en p = 1.
+:::
+
+::: {.disc .impr #d13}
+**D13.** El promedio general oculta la concentración: en el decil 1 la transferencia es el **`r pct(te$peso[1])`** del IPCF (llega a `r pct(te$cob[1], 0)` de las personas) y sin ella la participación de ese decil cae `r pct(1 - Lp(L2, .1) / Lp(L, .1), 0)`. El Gini pasa de `r num(gini(d$ipcf2, d$pondih), 3)` sin transferencias a `r num(gini(d$ipcf, d$pondih), 3)` con ellas. Las curvas se ven juntas por la escala del gráfico.
+:::
+
+::: {.disc .metodo #d14}
+**D14.** El *do-file* acumula `ipcf2` con la base ordenada por `ipcf` y no reordena: eso es una **curva de concentración**, no la curva de Lorenz de `ipcf2` (última columna de la primera tabla). La figura guardada en `Figuras/Figura 9.gph` sí es la de Lorenz (ver [Verificación](#verificación-contra-las-figuras-de-stata)), así que el *do-file* no reproduce exactamente lo guardado. La diferencia es visible solo en la parte baja. Además, `r sum(d$ipcf2 < 1e-6)` observaciones quedan con `ipcf2` nulo o apenas negativo por redondeo.
+:::
+
+# Ejercicio 4
+
+::: {.enunciado}
+Computar el coeficiente de Gini para (a) los deciles del punto (1), (b) el ingreso per cápita familiar (c) el ingreso total familiar y (d) el ingreso de la ocupación principal para hombres y para mujeres por separado.
+:::
+
+En la tabla 3, se presentan estimaciones del índice de Gini para Argentina, las cuales se realizaron para el agregado (última fila) y por deciles a partir de dos fuentes de ingreso: el Ingreso Per Cápita Familiar (IPCF) y el Ingreso Total Familiar (ITF). En las columnas (4) y (5), se presentan estimaciones del nivel de desigualdad para hombres y para mujeres a partir del Ingreso de la Ocupación Principal (IOP).
+
+Por un lado, se puede observar que, para el agregado, el nivel de desigualdad calculado a través del índice de Gini, considerando el IPCF, es de 0,444 y, considerando el ITF, es de 0,388. Esta diferencia se debe a la estructura de ponderaciones empleada en el Gini, ya que, en su cálculo, este índice pondera el nivel de ingreso de cada individuo por la posición relativa en la distribución. Esta distancia en términos de ingreso entre individuos es mayor cuando se considera el IPCF que cuando se considera el ITF, lo cual está relacionado con el tamaño de los hogares, ya que, generalmente, los de menores ingresos son más grandes que los de mayores ingresos, por lo que las particiones del ingreso, como se hace en el cálculo del IPCF, dan origen a mayores distancias entre los individuos de menores y de mayores ingresos. Por lo tanto, a nivel agregado, las posiciones relativas en términos de ingreso entre individuos son menores cuando se considera el ITF que cuando se considera el IPCF, por lo que se concluye que el nivel de desigualdad calculado a través del índice de Gini varía dependiendo de la variable de ingreso que se emplee para su estimación.
+
+```{r tabla3}
+grupo <- function(i, var = d$decil) if (i == 0) d else d[var == i, ]
+t3 <- bind_rows(lapply(c(1:10, 0), function(i) {
+  x <- grupo(i); z <- grupo(i, d$decitf)
+  data.frame(Decil = if (i == 0) "Total" else as.character(i),
+             IPCF = gini(x$ipcf, x$pondih), ITF = gini(x$itf, x$pondih),
+             H = gini(x$p21[x$hombre], x$pondiio[x$hombre]),
+             M = gini(x$p21[!x$hombre], x$pondiio[!x$hombre]),
+             ITF_decitf = gini(z$itf, z$pondih))
+}))
+kable(t3 |> mutate(across(-Decil, ~num(.x, 3))), align = "r",
+      col.names = c("Decil", "IPCF", "ITF", "IOP Hombres", "IOP Mujeres", "ITF por deciles de ITF"),
+      caption = "Tabla 3. Índice de Gini. La última columna se agrega en la réplica.")
+
+pdf3 <- cbind(
+  g_ipcf = c(.188, .063, .043, .042, .031, .035, .037, .046, .059, .204),
+  g_itf  = c(.311, .214, .214, .234, .260, .232, .246, .230, .248, .317),
+  g_h    = c(.326, .300, .299, .287, .298, .296, .270, .283, .272, .336),
+  g_m    = c(.356, .371, .347, .348, .354, .325, .306, .320, .261, .295))
+f3 <- fuera(pdf3, colnames(pdf3), 0.001)
+```
+
+Las medias por tamaño de hogar respaldan la explicación del texto: van de `r num(weighted.mean(d$miembros[d$decil == 1], d$pondih[d$decil == 1]), 1)` miembros en el decil 1 a `r num(weighted.mean(d$miembros[d$decil == 10], d$pondih[d$decil == 10]), 1)` en el decil 10.
+
+::: {.disc .metodo #d15}
+**D15.** "Gini para los deciles del punto (1)" se resolvió como el Gini **dentro** de cada decil. Otra lectura habitual es el Gini sobre **datos agrupados** (cada persona recibe la media de su decil), que mide cuánta desigualdad capturan los deciles. Ese Gini es **`r num(gini(t1$Media[d$decil], d$pondih), 3)`**, frente a `r num(t3$IPCF[11], 3)` con los datos individuales (para el ITF, con deciles de ITF: `r num(gini(t3_media_itf <- ave(d$pondih * d$itf, d$decitf, FUN = sum) / ave(d$pondih, d$decitf, FUN = sum), d$pondih), 3)` frente a `r num(t3$ITF[11], 3)`).
+:::
+
+::: {.disc .error #d16}
+**D16.** La columna ITF de la tabla 3 calcula el Gini del ITF dentro de deciles de **IPCF**, mientras que la tabla 4 usa deciles de **ITF** (`sort_itf.do`). Las dos tablas no son comparables. Los valores altos del ITF por decil se deben a esa mezcla: dentro de un decil de IPCF conviven hogares de tamaños muy distintos. Con deciles de ITF (última columna) el Gini del ITF es **menor** que el del IPCF en `r sum(t3$ITF_decitf[1:10] < t3$IPCF[1:10])` de los 10 deciles, lo contrario de lo que concluye el texto más abajo. Además, el *do-file* publicado no contiene los comandos que generan las columnas IPCF y ITF por decil.
+:::
+
+::: {.disc .error #d17}
+**D17.** El PDF informa **0,320** para mujeres en el decil 8. R obtiene `r num(t3$M[8], 3)`, y entre 500 órdenes de los empates el valor va de `r num(minimo["g_m", 8], 3)` a `r num(maximo["g_m", 8], 3)`. Probablemente sea una errata por 0,330. Celdas fuera del rango simulado con tolerancia de 0,001: **`r nrow(f3)`**.
+:::
+
+Por otro lado, <mark>por deciles, el nivel de desigualdad es menor calculado a partir del IPCF que calculado a partir del ITF, lo cual se debe al mismo razonamiento expuesto anteriormente</mark>, considerando que, en este caso, cada decil contiene individuos muy parecidos entre sí. Por lo tanto, a nivel de deciles, las posiciones relativas en términos de ingreso entre individuos son menores cuando se considera el IPCF que cuando se considera el ITF. Sin embargo, se puede notar que <mark>los deciles extremos presentan un mayor nivel de desigualdad, medido con cualquier fuente de ingreso</mark>.
+
+Por último, <mark>tanto para el agregado como por deciles, el nivel de desigualdad es mayor para las mujeres que para los hombres</mark>, lo cual puede corresponderse con las diferencias que existen entre las mujeres que se encuentran en el mercado laboral con empleos que tienen horarios más flexibles y, por lo general, menores salarios frente a quienes ocupan empleos que tienen horarios menos flexibles y mayores salarios. Según el Ministerio de Trabajo, Empleo y Seguridad Social (MTEySS), en 2018, alrededor del 30% de las mujeres se encuentran en el mercado laboral informal.^[Según “Mujeres en el mercado de trabajo Argentino” (2018), publicación del Ministerio de Trabajo, Empleo y Seguridad Social.]
+
+```{r ej4-rankings}
+orden_m <- order(-t3$M[1:10]); pos10 <- which(orden_m == 10)
+menor <- which(t3$M[1:10] < t3$H[1:10])
+robusto <- sapply(menor, function(i) mean(sim["g_m", i, ] < sim["g_h", i, ]))
+```
+
+::: {.disc .error #d18}
+**D18.** En mujeres no se cumple: el decil 10 (`r num(t3$M[10], 3)`) ocupa el puesto `r pos10` de 10 de mayor a menor desigualdad. Los deciles femeninos más desiguales son el `r orden_m[1]` (`r num(t3$M[orden_m[1]], 3)`) y el `r orden_m[2]` (`r num(t3$M[orden_m[2]], 3)`).
+:::
+
+::: {.disc .error #d19}
+**D19.** En los deciles **`r paste(menor, collapse = " y ")`** el Gini de las mujeres es **menor** que el de los hombres (`r paste(sprintf("%s contra %s", num(t3$M[menor], 3), num(t3$H[menor], 3)), collapse = "; ")`). El resultado se mantiene en el `r pct(min(robusto), 0)` de los órdenes simulados. La afirmación vale para el agregado y los deciles restantes.
+:::
+
+# Ejercicio 5
+
+::: {.enunciado}
+Computar el índice de Atkinson con parámetro de aversión a la desigualdad 0, 0.5, 1 y 2 para (a) los deciles del punto (1), (b) el ingreso per cápita familiar y (c) el ingreso total familiar.
+:::
+
+El índice de Atkinson está basado en la teoría del bienestar. Tiene la característica de asignar diferentes pesos a las variaciones en el nivel de ingreso acontecidas en diferentes partes de la distribución. A diferencia del índice de Gini, que pondera por la diferencia en la posición relativa entre individuos, en este índice, se pondera por la diferencia en la utilidad marginal social entre individuos. Esto significa que, si se tiene preferencia por la igualdad en algún nivel ($\varepsilon > 0$), un peso adicional en manos de un individuo de ingreso inferior es, socialmente, más útil que en manos de algún individuo de ingreso superior. Cuán, socialmente, útil dependerá de la función de bienestar evaluadora planteada, es decir, del parámetro de aversión a la desigualdad ($\varepsilon$) considerado. Por último, es pertinente resaltar que el índice de Atkinson cumple con el principio de las transferencias de Dalton-Pigou (la cumple en sentido estricto si se asume una función de bienestar estrictamente cóncava), invarianza a la escala e invarianza a la réplica.
+
+En la tabla 4, se presentan estimaciones del índice de Atkinson para Argentina, considerando diferentes niveles de aversión a la desigualdad ($\varepsilon$). En el panel A, se registran los resultados del índice calculado a partir del IPCF y, en el panel B, los resultados calculados a partir del ITF. Por un lado, se puede observar que, cuando la función de bienestar es idéntica a la de un utilitarista $\varepsilon = 0$, la desigualdad es 0, ya que es irrelevante en manos de quién está el ingreso; en contraste, a medida que la función evaluadora se va pareciendo más a una rawlsiana (por ejemplo, $\varepsilon = 2$), el índice de Atkinson va en aumento. Por otro lado, al igual que sucede con el índice de Gini, el índice de Atkinson, <mark>a nivel agregado (a nivel de deciles), es mayor (menor) cuando se considera el IPCF que cuando se considera el ITF</mark>.
+
+Por último, considerando el IPCF, bajo un $\varepsilon = 0{,}5$, <mark>la desigualdad es mayor y muy superior en el decil 10 en relación al resto de los deciles</mark>, mientras que el decil 1 también tiene un Atkinson elevado, superior al del resto de los deciles. A medida que se incrementa el valor de $\varepsilon$, se observa un incremento en el Atkinson de los deciles extremos en una mayor cuantía que en el resto de los deciles, lo cual denota una mayor desigualdad en los conjuntos extremos; con un $\varepsilon = 2$, el primer decil es, incluso, más desigual que el último. Al considerar el ITF, estos comportamientos se mantienen.
+
+```{r tabla4}
+eps <- c(0, .5, 1, 2)
+tabla_atk <- function(peso) t(sapply(c(1:10, 0), function(i) {
+  x <- grupo(i); z <- grupo(i, d$decitf)
+  c(sapply(eps, function(e) atk(x$ipcf, x[[peso]], e)), sapply(eps, function(e) atk(z$itf, z[[peso]], e)))
+}))
+A_pdf <- tabla_atk("pondera"); A_ok <- tabla_atk("pondih")
+mostrar_atk <- function(A, titulo) kable(
+  data.frame(Decil = c(1:10, "Total"), matrix(num(round(A, 10) + 0, 3), 11)), align = "r",
+  col.names = c("Decil", paste("IPCF ε =", c("0", "0,5", "1", "2")), paste("ITF ε =", c("0", "0,5", "1", "2"))),
+  caption = titulo)
+mostrar_atk(A_pdf, "Tabla 4. Índice de Atkinson, como en el PDF (ponderador pondera).")
+
+pdf4 <- matrix(c(
+  .038,.086,.254, .040,.094,.299,  .003,.006,.012, .002,.004,.008,
+  .001,.003,.006, .001,.002,.005,  .001,.003,.005, .001,.002,.003,
+  .001,.001,.003, .001,.001,.003,  .001,.002,.004, .001,.002,.003,
+  .001,.002,.004, .001,.001,.003,  .002,.003,.006, .001,.002,.004,
+  .003,.005,.011, .002,.004,.008,  .062,.099,.145, .053,.087,.130,
+  .173,.313,.552, .131,.246,.481), ncol = 6, byrow = TRUE)
+dif4 <- max(abs(A_pdf[, c(2:4, 6:8)] - pdf4))
+```
+
+Control: la mayor diferencia con la tabla 4 del PDF es `r num(dif4, 4)` (redondeo y empates).
+
+```{r tabla4-corregida}
+mostrar_atk(A_ok, "Tabla 4 bis (agregada). Índice de Atkinson con pondih.")
+```
+
+::: {.disc .error #d20}
+**D20.** `ipcf` e `itf` deben ponderarse con **`pondih`**, que corrige la no respuesta de ingresos (así lo indica el diseño de registro de la EPH y así se hacen los deciles y el Gini en este mismo trabajo). El ejercicio 5 usa **`pondera`**, sin corrección. Con `pondih`, el Atkinson total del IPCF es `r paste(num(A_ok[11, 2:4], 3), collapse = " / ")` en vez de `r paste(num(A_pdf[11, 2:4], 3), collapse = " / ")`, y el del decil 10 con ε = 0,5 baja de **`r num(A_pdf[10, 2], 3)` a `r num(A_ok[10, 2], 3)`**: queda casi igual al del decil 1 (`r num(A_ok[1, 2], 3)`), de modo que ya no es "muy superior".
+:::
+
+```{r ej5-comparacion}
+mayor_ipcf <- sapply(2:4, function(j) sum(A_pdf[1:10, j] > A_pdf[1:10, j + 4]))
+```
+
+::: {.disc .error #d21}
+**D21.** A nivel de deciles es al revés: el Atkinson del **IPCF es mayor** que el del ITF en al menos `r min(mayor_ipcf)` de los 10 deciles para cada ε (0,5, 1 y 2) (la excepción clara es el decil 1). La frase traslada al índice de Atkinson el patrón de la tabla 3, que proviene de usar otros deciles ([D16](#d16)). La parte referida al agregado es correcta.
+:::
+
+# Ejercicio 6
+
+::: {.enunciado}
+Simular la introducción de un impuesto proporcional al IPCF con tasa de 25% que financia transferencias iguales a todos los individuos. Presentar la curva de Lorenz, los índices de desigualdad de Gini y Atkinson, comparando las situaciones antes y después de la política fiscal simulada.
+:::
+
+En la figura 12, se presenta la curva de Lorenz del IPCF antes y después de introducir un impuesto proporcional del 25% que financia transferencias iguales a todos los individuos. Como es de esperarse, la curva de Lorenz después del impuesto y las transferencias se encuentra más cercana a la línea de perfecta igualdad, lo cual significa una reducción en la desigualdad del IPCF entre los individuos. ¿Cuál es la magnitud de esta caída en la desigualdad? Esta reducción puede corroborarse en la tabla 5, en donde se presentan los resultados del índice de Gini y los del índice de Atkinson, antes y después de esta política fiscal, conjuntamente con el cómputo de la diferencia entre ambos casos. Se puede observar que, después del impuesto y la redistribución, se tiene lo siguiente: a nivel agregado, <mark>el Gini y el Atkinson son 0,342 y 0,102, respectivamente, lo cual implica una caída de 0,102 puntos para el caso del Gini y de 0,071 puntos</mark> para el caso del Atkinson; a nivel de deciles, cualquiera sea el índice que se considere, el primer decil es el que experimenta una mayor caída en el nivel de desigualdad.
+
+```{r fig12}
+t_pdf <- mean(0.25 * d$ipcf)                          # media SIN ponderar (do-file)
+t_ok  <- weighted.mean(0.25 * d$ipcf, d$pondih)       # presupuesto equilibrado
+d$nue_pdf <- 0.75 * d$ipcf + t_pdf
+d$nue_ok  <- 0.75 * d$ipcf + t_ok
+Ln <- lorenz(d$nue_pdf, d$pondih); Lok <- lorenz(d$nue_ok, d$pondih)
+lineas(list("Antes de transferencia" = L, "Después de transferencia" = Ln), "p", "L(p)",
+       c("red", "blue"), c(1, 2), diagonal = TRUE)
+```
+
+**Figura 12.** Curva de Lorenz antes y después de la política fiscal simulada (como en el PDF).
+
+```{r tabla5}
+tabla5 <- function(var, peso) bind_rows(lapply(c(1:10, 0), function(i) {
+  x <- grupo(i)
+  data.frame(Decil = if (i == 0) "Total" else as.character(i),
+             G0 = gini(x$ipcf, x$pondih), G1 = gini(x[[var]], x$pondih),
+             A0 = atk(x$ipcf, x[[peso]], .5), A1 = atk(x[[var]], x[[peso]], .5))
+})) |> mutate(GD = G0 - G1, AD = A0 - A1) |> select(Decil, G0, G1, GD, A0, A1, AD)
+t5 <- tabla5("nue_pdf", "pondera"); t5ok <- tabla5("nue_ok", "pondih")
+mostrar5 <- function(t, titulo) kable(t |> mutate(across(-Decil, ~num(.x, 3))), align = "r",
+  col.names = c("Decil", "Gini antes", "Gini después", "Dif.", "Atk. antes", "Atk. después", "Dif."),
+  caption = titulo)
+mostrar5(t5, "Tabla 5. Gini y Atkinson (ε = 0,5) antes y después, como en el PDF.")
+mostrar5(t5ok, "Tabla 5 bis (agregada). Con transferencia equilibrada y ponderador pondih.")
+```
+
+::: {.disc .error #d22}
+**D22.** La transferencia se calculó con `summarize imp` **sin ponderadores**: \$`r num(t_pdf, 2)` por persona. La recaudación por persona, ponderada, es **\$`r num(t_ok, 2)`**. El programa simulado no devuelve \$`r num(t_ok - t_pdf, 2)` por persona (unos `r num((t_ok - t_pdf) * sum(d$pondih) / 1e6)` millones de pesos en total) y el ingreso medio cae de \$`r num(weighted.mean(d$ipcf, d$pondih), 2)` a \$`r num(weighted.mean(d$nue_pdf, d$pondih), 2)`. Con presupuesto equilibrado:
+
+* Gini después: **`r num(t5ok$G1[11], 3)`** (caída `r num(t5ok$GD[11], 3)`), igual a 0,75 × `r num(t5ok$G0[11], 4)`; el PDF dice `r num(t5$G1[11], 3)`.
+* Atkinson (0,5) después: **`r num(t5ok$A1[11], 3)`** con `pondih` (caída `r num(t5ok$AD[11], 3)`), o `r num(atk(d$nue_ok, d$pondera, .5), 3)` si se mantiene `pondera`; el PDF dice `r num(t5$A1[11], 3)`.
+
+La conclusión cualitativa se mantiene (el decil 1 tiene la mayor caída), pero la redistribución está **subestimada**.
+:::
+
+```{r ej6-eps}
+t6 <- data.frame(eps = c("0", "0,5", "1", "2"),
+  antes = sapply(eps, function(e) atk(d$ipcf, d$pondih, e)),
+  despues = sapply(eps, function(e) atk(d$nue_ok, d$pondih, e)))
+kable(t6 |> mutate(dif = antes - despues, across(-eps, ~num(.x, 3))), align = "r",
+      col.names = c("ε", "Antes", "Después", "Diferencia"),
+      caption = "Atkinson total para todos los ε, con la simulación corregida (agregado en la réplica).")
+```
+
+::: {.disc .impr #d23}
+**D23.** El enunciado pide los índices de Atkinson; el PDF informa solo **ε = 0,5**, y lo aclara únicamente en la nota de la tabla 5, no en el texto. La tabla anterior agrega los demás valores.
+:::
+
+```{r ej6-redondeo}
+pdf_dif <- c(.034, .002, .001, .000, .001, .001, .000, .001, .001, .008, .071)
+distintas <- which(abs(round(t5$AD, 3) - pdf_dif) > 1e-8)
+```
+
+::: {.disc .impr #d24}
+**D24.** En la columna de diferencias de Atkinson de la tabla 5, los deciles **`r paste(t5$Decil[distintas], collapse = ", ")`** no coinciden: el PDF informa `r paste(num(pdf_dif[distintas], 3), collapse = "; ")` y el cálculo sin redondeo previo da `r paste(num(t5$AD[distintas], 4), collapse = "; ")`, es decir `r paste(num(t5$AD[distintas], 3), collapse = "; ")`. El PDF restó los valores ya redondeados a tres decimales.
+:::
+
+# Verificación contra las figuras de Stata
+
+Los archivos `.gph` guardan todas las observaciones graficadas por Stata. El bloque siguiente las compara con los cálculos en R. Para las curvas de Lorenz se informa la diferencia vertical máxima. Para las funciones de distribución y las curvas de Pen, cuánto se aleja cada punto del intervalo que corresponde a su ingreso (dentro de un empate, el orden es arbitrario).
+
+```{r verificacion}
+leer_gph <- function(archivo) {
+  b <- readBin(archivo, "raw", file.size(archivo))
+  ini <- grepRaw("sersetreadwrite", b, all = TRUE, fixed = TRUE)
+  fin <- grepRaw("<EndSersetData>", b, all = TRUE, fixed = TRUE)
+  cab <- grepRaw("<BeginSerset>", b, all = TRUE, fixed = TRUE)
+  lapply(seq_along(ini), function(k) {
+    texto <- rawToChar(b[cab[k]:(ini[k] - 1)])
+    nom <- regmatches(texto, gregexpr('[.]name = `"[^"]*"', texto, useBytes = TRUE))[[1]]
+    nom <- substr(nom, 11, nchar(nom, "bytes") - 1)
+    i <- ini[k]
+    nv <- readBin(b[i + 18:21], "integer", size = 4, endian = "little")
+    n  <- readBin(b[i + 22:25], "integer", size = 4, endian = "little")
+    tipo <- as.integer(b[i + 25 + seq_len(nv)])
+    tam <- unname(c("255" = 8, "254" = 4, "253" = 4, "252" = 2, "251" = 1)[as.character(tipo)])
+    m <- matrix(b[(fin[k] - 2 - n * sum(tam)):(fin[k] - 3)], nrow = sum(tam))
+    desde <- cumsum(c(0, tam))
+    # Las variables de estas figuras son numéricas de 4 u 8 bytes
+    cols <- lapply(seq_len(nv), function(j) {
+      r <- as.vector(m[desde[j] + seq_len(tam[j]), ])
+      if (tipo[j] >= 254) readBin(r, "double", n, size = tam[j], endian = "little")
+      else readBin(r, "integer", n, size = tam[j], endian = "little")
+    })
+    setNames(cols, make.unique(nom))
+  })
+}
+ruta <- function(i) sprintf("Figuras/Figura %d.gph", i)
+dif_L <- function(curva, p, L) max(abs(Lp(curva, pmin(p, 1)) - L))
+# Distancia al intervalo [P(X < x), P(X <= x)]
+dif_F <- function(x, share, valores, w, tol = 0.01) {
+  o <- order(valores); v <- valores[o]; ac <- c(0, cumsum(w[o])) / sum(w)
+  inf <- ac[findInterval(x - tol, v, left.open = TRUE) + 1]; sup <- ac[findInterval(x + tol, v) + 1]
+  max(pmax(inf - share, share - sup, 0))
+}
+
+if (all(file.exists(ruta(1:12)))) {
+  g <- lapply(1:12, function(i) leer_gph(ruta(i)))
+  N <- sum(d$pondih); a32 <- d$aglomerado == 32
+  res <- c(
+    "1"  = with(g[[1]][[1]], dif_L(L, shrpop, shrinc)),
+    "2"  = with(g[[2]][[1]], dif_F(ipcf, shrpop, d$ipcf, d$pondih)),
+    "3"  = with(g[[3]][[1]], dif_F(lipcf, shrpop, log(d$ipcf), d$pondih, 1e-5)),
+    "4"  = with(g[[4]][[1]], dif_F(ipcf, numero / N, d$ipcf, d$pondih)),
+    "5"  = with(g[[5]][[1]], dif_F(lipcf, numero / N, log(d$ipcf), d$pondih, 1e-5)),
+    "6"  = max(with(g[[6]][[1]], dif_L(La, shrpop, shrinc)), with(g[[6]][[2]], dif_L(Lf, shrpop, shrinc))),
+    "7"  = max(with(g[[7]][[1]], dif_F(ipcf, shrpop, ab$ipcf, ab$pondih)),
+               with(g[[7]][[2]], dif_F(ipcf, shrpop, fo$ipcf, fo$pondih))),
+    "8"  = max(sapply(g[[8]][1:2], function(s) dif_F(s$ipcf, s$numero / N, d$ipcf, d$pondih))),
+    "9"  = max(with(g[[9]][[1]], dif_L(L, shrpop1, shrinc1)), with(g[[9]][[2]], dif_L(L2, shrpop2, shrinc2))),
+    "10" = with(g[[10]][[1]], max(dif_F(ipcf, shrpop1, d$ipcf, d$pondih), dif_F(ipcf2, shrpop2, d$ipcf2, d$pondih))),
+    "11" = with(g[[11]][[1]], max(dif_F(ipcf, sumpop1 / N, d$ipcf, d$pondih), dif_F(ipcf2, sumpop2 / N, d$ipcf2, d$pondih))),
+    "12" = with(g[[12]][[1]], max(dif_L(L, shrpop, shrinc), dif_L(Ln, shrpop_nue_ing, shrinc_nue_ing))))
+  alt9  <- with(g[[9]][[2]], dif_L(C2, shrpop2, shrinc2))
+  alt12 <- with(g[[12]][[1]], dif_L(Lok, shrpop_nue_ing, shrinc_nue_ing))
+  salida <- kable(data.frame(Figura = names(res), Dif = format(res, scientific = TRUE, digits = 2)),
+        row.names = FALSE, align = "lr", col.names = c("Figura", "Máxima diferencia R - Stata (en proporciones)"))
+} else {
+  alt9 <- alt12 <- NA; res <- NA
+  salida <- "No se encontraron los archivos .gph; se omite la verificación."
+}
+salida
+```
+
+Controles adicionales:
+
+* **Figura 8:** los puntos de CABA y Formosa coinciden con la posición en el ranking **nacional**, lo que confirma [D10](#d10).
+* **Figura 9:** si se compara la curva guardada con la curva de concentración del *do-file*, la diferencia es `r format(alt9, scientific = TRUE, digits = 2)`, mayor que con la curva de Lorenz ([D14](#d14)).
+* **Figura 12:** si se compara con la simulación equilibrada, la diferencia es `r format(alt12, scientific = TRUE, digits = 2)`: la figura guardada corresponde a la transferencia sin ponderar ([D22](#d22)).
+
+```{r sesion}
+sessionInfo()
+```

@@ -1,0 +1,546 @@
+---
+title: "Trabajo Práctico N° 6 — Réplica en R"
+subtitle: "Maestría en Economía UNLP - Economía de la Distribución. Respuestas originales: Juan Menduiña"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+    self_contained: true
+    code_folding: hide
+---
+
+```{css, echo=FALSE}
+mark { background: #ffe27a; padding: 0 2px; }
+.disc { border-left: 6px solid; border-radius: 4px; padding: 10px 14px; margin: 14px 0; font-size: 0.95em; }
+.disc p:last-child { margin-bottom: 0; }
+.error { border-color: #c0392b; background: #fdecea; }
+.impr  { border-color: #d68910; background: #fef5e7; }
+.metodo{ border-color: #2874a6; background: #eaf2f8; }
+.enunciado { font-style: italic; color: #444; }
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 8, fig.height = 5, dpi = 120)
+library(knitr)
+
+num <- function(x, d = 0) formatC(x, format = "f", digits = d, big.mark = ".", decimal.mark = ",")
+porc <- function(x, dig = 0) paste0(num(100 * x, dig), "%")
+```
+
+# Cómo leer este documento {-}
+
+El texto de cada ejercicio es el del PDF *Trabajo Práctico N° 6 (R)*. Las tablas, las figuras y los números de los recuadros se calculan en R. Lo <mark>resaltado</mark> es una frase o un número con alguna discrepancia, explicada en el recuadro correspondiente:
+
+::: {.disc .error}
+**Error**: la afirmación contradice los datos o la teoría, el cálculo es incorrecto o falta una respuesta pedida.
+:::
+
+::: {.disc .impr}
+**Imprecisión**: redacción, rótulo o formato que puede inducir a error.
+:::
+
+::: {.disc .metodo}
+**Observación metodológica**: el resultado depende de una decisión discutible o no documentada.
+:::
+
+**Qué se pudo replicar.** El trabajo es una simulación y el *do-file* no fija la semilla. Aun así:
+
+* **Ejercicio 1:** los archivos `.gph` guardan los 1.000 valores simulados de los períodos 1, 5, 10, 11, 15 y 20. Con ellos, las tablas 1 a 3 se replican **exactamente** en esos períodos, y también las figuras 1 a 6. Los demás períodos no son recuperables; se comparan con simulaciones.
+* **Ejercicio 2:** se reconstruyó en R el generador aleatorio de Stata. La **tabla 4 se replica exactamente**. Las figuras 7 a 9 no provienen de esa misma extracción, y la figura 9 usa otro parámetro ([D10](#d10)).
+
+| N° | Ej. | Tipo | Discrepancia |
+|----|-----|------|--------------|
+| [D1](#d1) | 1 y 2 | Metodológica | El *do-file* no fija la semilla y no reproduce el PDF |
+| [D2](#d2) | 1.a | Error | La media no aumenta progresivamente |
+| [D3](#d3) | 1.b | Error | La distribución no tiende a su situación inicial |
+| [D4](#d4) | 1.b | Metodológica | Se interpretan diferencias que son ruido de muestreo |
+| [D5](#d5) | 1.c | Imprecisión | "Para cualquier nivel de significatividad" |
+| [D6](#d6) | 1.c | Error | La distribución no se vuelve cada vez más normal |
+| [D7](#d7) | 1.c | Metodológica | Se omite lo central del caso explosivo |
+| [D8](#d8) | 2 | Error | La distribución resultante no es log-normal |
+| [D9](#d9) | 2 | Error | La interpretación pedida en (ii) y (v) está incompleta |
+| [D10](#d10) | 2 | Error | La figura 9 se generó con otro desvío de y2 |
+| [D11](#d11) | 2 | Imprecisión | Las figuras 7 a 9 y la tabla 4 no corresponden a los mismos datos |
+| [D12](#d12) | 2 | Imprecisión | La correlación es la de y1 e y2, no la del resultado de la selección |
+| [D13](#d13) | 2 | Metodológica | Con una sola extracción no se separa el efecto de ρ del azar |
+
+# Datos y funciones
+
+```{r gph}
+# Lee los datos guardados dentro de un gráfico de Stata
+leer_gph <- function(archivo) {
+  b <- readBin(archivo, "raw", file.size(archivo))
+  ini <- grepRaw("sersetreadwrite", b, all = TRUE, fixed = TRUE)
+  fin <- grepRaw("<EndSersetData>", b, all = TRUE, fixed = TRUE)
+  lapply(seq_along(ini), function(k) {
+    i <- ini[k]
+    nv <- readBin(b[i + 18:21], "integer", size = 4, endian = "little")
+    n  <- readBin(b[i + 22:25], "integer", size = 4, endian = "little")
+    tam <- unname(c("255" = 8, "254" = 4)[as.character(as.integer(b[i + 25 + seq_len(nv)]))])
+    mat <- matrix(b[(fin[k] - 2 - n * sum(tam)):(fin[k] - 3)], nrow = sum(tam)); desde <- cumsum(c(0, tam))
+    lapply(seq_len(nv), function(j) {
+      v <- readBin(as.vector(mat[desde[j] + seq_len(tam[j]), ]), "double", n, size = tam[j], endian = "little")
+      v[v > 1.7e38] <- NA; v })
+  })
+}
+f2 <- leer_gph("Figuras/Figura 2.gph"); f4 <- leer_gph("Figuras/Figura 4.gph"); f6 <- leer_gph("Figuras/Figura 6.gph")
+# En cada serie: densidad, grilla y la variable simulada
+datosA <- list("1" = f2[[1]][[3]], "5" = f2[[2]][[3]], "10" = f2[[3]][[3]])
+datosB <- list("11" = f4[[1]][[3]], "15" = f4[[2]][[3]], "20" = f4[[3]][[3]])
+datosC <- list("11" = f6[[1]][[3]], "15" = f6[[2]][[3]], "20" = f6[[3]][[3]])
+x10 <- datosA[["10"]]
+# Los tres incisos son una misma simulación: los shocks implícitos del período 11 están en (-5, 5)
+rbind("1.b" = range(datosB[["11"]] - 0.2 * x10), "1.c" = range(datosC[["11"]] - 1.5 * x10))
+```
+
+```{r funciones}
+# sktest de Stata (con el ajuste por defecto de Royston)
+sktest <- function(x) {
+  n <- length(x); m <- mean(x); mom <- function(r) mean((x - m)^r)
+  g1 <- mom(3) / mom(2)^1.5; b2 <- mom(4) / mom(2)^2
+  Y  <- g1 * sqrt((n + 1) * (n + 3) / (6 * (n - 2)))
+  B  <- 3 * (n^2 + 27*n - 70) * (n+1) * (n+3) / ((n-2) * (n+5) * (n+7) * (n+9))
+  W2 <- -1 + sqrt(2 * (B - 1)); z1 <- asinh(Y / sqrt(2 / (W2 - 1))) / sqrt(log(sqrt(W2)))
+  E  <- 3 * (n - 1) / (n + 1); V <- 24 * n * (n-2) * (n-3) / ((n+1)^2 * (n+3) * (n+5))
+  xs <- (b2 - E) / sqrt(V)
+  sb <- 6 * (n^2 - 5*n + 2) / ((n+7) * (n+9)) * sqrt(6 * (n+3) * (n+5) / (n * (n-2) * (n-3)))
+  A  <- 6 + 8 / sb * (2 / sb + sqrt(1 + 4 / sb^2))
+  t3 <- (1 - 2/A) / (1 + xs * sqrt(2 / (A - 4)))
+  z2 <- ((1 - 2/(9*A)) - sign(t3) * abs(t3)^(1/3)) / sqrt(2 / (9*A))
+  Z <- -qnorm(exp(-(z1^2 + z2^2) / 2)); ln <- log(n); corte <- .55 * n^.2 - .21
+  a1 <- (-5 + 3.46 * ln) * exp(-1.37 * ln); b1 <- 1 + (.854 - .148 * ln) * exp(-.55 * ln)
+  d <- 2.13 / (1 - 2.37 * ln)
+  Za <- if (Z < -1) Z else if (Z < corte) a1 + b1 * Z else (a1 - d * corte) + (d + b1) * Z
+  pnorm(-Za)
+}
+resumen <- function(x) c(media = mean(x), desvio = sd(x), p = sktest(x))
+# kdensity de Stata: Epanechnikov y ancho de banda por defecto
+ancho <- function(x) 0.9 * min(sd(x), diff(quantile(x, c(.25, .75), type = 2, names = FALSE)) / 1.349) / length(x)^0.2
+kd <- function(x, puntos = 300, h = ancho(x)) {
+  g <- seq(min(x), max(x), length.out = puntos)
+  list(x = g, y = vapply(g, function(v) { z <- (v - x) / h; k <- abs(z) < sqrt(5)
+       sum(.75 * (1 - z[k]^2 / 5) / sqrt(5)) / (length(x) * h) }, numeric(1)))
+}
+colores <- c("black", "red", "blue")
+panel <- function(datos) {            # figuras individuales con densidad normal
+  par(mfrow = c(1, 3), mar = c(5.5, 4, 2, 1), las = 1)
+  for (n in names(datos)) { x <- datos[[n]]; k <- kd(x, 50); nx <- dnorm(k$x, mean(x), sd(x))
+    plot(k$x, k$y, type = "l", ylim = range(0, k$y, nx), xlab = "Logaritmo del ingreso", ylab = "",
+         main = paste("Período", n)); lines(k$x, nx, col = "red")
+    mtext(paste("ancho de banda =", format(round(ancho(x), 4), nsmall = 4)), side = 1, line = 4, cex = .65) }
+}
+conjunta <- function(datos) {
+  ks <- lapply(datos, kd); par(mar = c(7, 4.5, 1, 1), las = 1)
+  plot(NA, xlim = range(sapply(ks, function(k) range(k$x))), ylim = c(0, max(sapply(ks, function(k) max(k$y)))),
+       xlab = "Logaritmo del ingreso", ylab = "Densidad"); grid()
+  for (i in 1:3) lines(ks[[i]]$x, ks[[i]]$y, col = colores[i], lwd = 1.5)
+  legend("bottom", inset = c(0, -0.42), legend = paste("Período", names(datos)), col = colores, lwd = 2,
+         horiz = TRUE, xpd = TRUE, bty = "n")
+}
+```
+
+## Generador aleatorio de Stata
+
+Stata usa por defecto el Mersenne Twister de 64 bits con semilla 123456789. Esta es una implementación en R puro.
+
+```{r mt64}
+hex64 <- function(h) rev(strtoi(substring(h, c(1, 5, 9, 13), c(4, 8, 12, 16)), 16L))
+xor64 <- function(a, b) matrix(bitwXor(a, b), ncol = 4)
+and64 <- function(a, m) matrix(bitwAnd(a, rep(m, each = nrow(a))), ncol = 4)
+shr64 <- function(a, k) { q <- k %/% 16; r <- k %% 16; out <- matrix(0L, nrow(a), 4)
+  for (j in 1:4) { s <- j + q
+    if (s <= 4) out[, j] <- bitwShiftR(a[, s], r)
+    if (r > 0 && s + 1 <= 4) out[, j] <- bitwOr(out[, j], bitwAnd(bitwShiftL(a[, s + 1], 16 - r), 65535L)) }
+  out }
+shl64 <- function(a, k) { q <- k %/% 16; r <- k %% 16; out <- matrix(0L, nrow(a), 4)
+  for (j in 1:4) { s <- j - q
+    if (s >= 1) out[, j] <- bitwAnd(bitwShiftL(a[, s], r), 65535L)
+    if (r > 0 && s - 1 >= 1) out[, j] <- bitwOr(out[, j], bitwShiftR(a[, s - 1], 16 - r)) }
+  out }
+runiform_stata <- function(n, semilla = 123456789) {
+  NN <- 312; MM <- 156
+  UM <- hex64("FFFFFFFF80000000"); LM <- hex64("000000007FFFFFFF"); A <- hex64("B5026F5AA96619E9")
+  FAC <- hex64("5851F42D4C957F2D"); mt <- matrix(0L, NN, 4)
+  mt[1, ] <- as.integer(c(semilla %% 65536, (semilla %/% 65536) %% 65536, 0, 0))
+  for (i in 2:NN) {
+    v <- mt[i - 1, , drop = FALSE]; v <- xor64(v, shr64(v, 62)); p <- numeric(4)
+    for (a in 1:4) for (b in 1:(5 - a)) p[a + b - 1] <- p[a + b - 1] + as.numeric(v[a]) * FAC[b]
+    p[1] <- p[1] + (i - 1)
+    for (j in 1:4) { acarreo <- p[j] %/% 65536; p[j] <- p[j] %% 65536; if (j < 4) p[j + 1] <- p[j + 1] + acarreo }
+    mt[i, ] <- as.integer(p)
+  }
+  paso <- function(dest, sig, lej) {
+    x <- xor64(and64(mt[dest, , drop = FALSE], UM), and64(mt[sig, , drop = FALSE], LM))
+    mag <- matrix(as.integer(outer(bitwAnd(x[, 1], 1L), A)), ncol = 4)
+    xor64(xor64(mt[lej, , drop = FALSE], shr64(x, 1)), mag)
+  }
+  bloques <- ceiling(n / NN); salida <- numeric(bloques * NN)
+  for (blq in seq_len(bloques)) {
+    i <- 1:(NN - MM);            mt[i, ] <- paso(i, i + 1, i + MM)
+    i <- (NN - MM + 1):(NN - 1); mt[i, ] <- paso(i, i + 1, i + MM - NN)
+    mt[NN, ] <- paso(NN, 1, MM)
+    x <- mt
+    x <- xor64(x, and64(shr64(x, 29), hex64("5555555555555555")))
+    x <- xor64(x, and64(shl64(x, 17), hex64("71D67FFFEDA60000")))
+    x <- xor64(x, and64(shl64(x, 37), hex64("FFF7EEE000000000")))
+    x <- xor64(x, shr64(x, 43)); y <- shr64(x, 11)
+    salida[(blq - 1) * NN + 1:NN] <- (y[, 1] + y[, 2] * 65536 + y[, 3] * 65536^2 + y[, 4] * 65536^3) / 2^53
+  }
+  salida[seq_len(n)]
+}
+U <- runiform_stata(39000)
+round(U[1:5], 7)   # Stata con la semilla por defecto: .3488717 .2668857 .1366463 .0285569 .8689333
+simple <- function(z) readBin(writeBin(z, raw(), size = 4), "double", length(z), size = 4)  # tipo float
+```
+
+```{r simulaciones}
+# 1) El do-file ejecutado en una sesión nueva de Stata
+bloque <- function(k) U[(k - 1) * 1000 + 1:1000]
+cadena <- function(inicio, rho, k0) { x <- inicio
+  t(sapply(0:9, function(j) { x <<- simple(rho * x + bloque(k0 + j) * 10 - 5); resumen(x) })) }
+x0 <- simple(rep(log(1000), 1000))
+nuevaA <- cadena(x0, 1, 1)
+x10n <- x0; for (j in 1:10) x10n <- simple(x10n + bloque(j) * 10 - 5)
+nuevaB <- cadena(x10n, 0.2, 11); nuevaC <- cadena(x10n, 1.5, 21)
+
+# 2) Monte Carlo sin condicionar (para evaluar afirmaciones): b y c parten del período 10 guardado
+set.seed(2019)
+montecarlo <- function(inicio, rho, S = 2000) replicate(S, { x <- inicio
+  t(sapply(1:10, function(j) { x <<- rho * x + runif(1000, -5, 5); resumen(x) })) })
+mcA <- montecarlo(rep(log(1000), 1000), 1); mcB <- montecarlo(x10, 0.2); mcC <- montecarlo(x10, 1.5)
+# Para cada período no guardado: simulación a partir del último período guardado anterior
+condicional <- function(inicio, rho, datos, periodos, S = 2000) replicate(S, { x <- inicio
+  t(sapply(periodos, function(p) { guardado <- datos[[as.character(p)]]
+    x <<- if (is.null(guardado)) rho * x + runif(1000, -5, 5) else guardado
+    if (is.null(guardado)) resumen(x) else c(media = NA, desvio = NA, p = NA) })) })
+coA <- condicional(rep(log(1000), 1000), 1, datosA, 1:10)
+coB <- condicional(x10, 0.2, datosB, 11:20); coC <- condicional(x10, 1.5, datosC, 11:20)
+rango <- function(mc, j, v, d = 2) { if (all(is.na(mc[j, v, ]))) return("—")
+  q <- quantile(mc[j, v, ], c(.025, .975)); paste0("[", num(q[1], d), "; ", num(q[2], d), "]") }
+
+# Tabla comparativa: PDF, datos guardados, rango Monte Carlo y sesión nueva
+tabla <- function(pdf, datos, mc, nueva, periodos, titulo) {
+  exacto <- sapply(periodos, function(p) { x <- datos[[as.character(p)]]
+    if (is.null(x)) "—" else { r <- resumen(x); paste(num(r[1], 2), "/", num(r[2], 2), "/", num(r[3], 3)) } })
+  kable(data.frame(Periodo = periodos,
+    PDF = paste(num(pdf[, 1], 2), "/", num(pdf[, 2], 2), "/", num(pdf[, 3], 3)), Exacto = exacto,
+    MCm = sapply(1:10, function(j) rango(mc, j, "media")), MCs = sapply(1:10, function(j) rango(mc, j, "desvio")),
+    Nueva = paste(num(nueva[, 1], 2), "/", num(nueva[, 2], 2), "/", num(nueva[, 3], 3))),
+    align = "lccccc", caption = titulo,
+    col.names = c("Período", "PDF: media / desvío / p", "Datos guardados", "Simulado 95%: media",
+                  "Simulado 95%: desvío", "Sesión nueva de Stata"))
+}
+# Valores publicados de períodos no guardados que caen fuera del intervalo simulado del 99%
+fuera <- function(pdf, mc) sum(sapply(1:10, function(j) sum(sapply(1:2, function(v) {
+  s <- mc[j, v, ]; if (all(is.na(s))) 0 else pdf[j, v] < quantile(s, .005) - .005 || pdf[j, v] > quantile(s, .995) + .005 }))))
+control <- function(pdf, datos, periodos) max(sapply(names(datos), function(p) {
+  r <- resumen(datos[[p]]); i <- match(as.integer(p), periodos)
+  max(abs(r[1:2] - pdf[i, 1:2]) / .01, abs(r[3] - pdf[i, 3]) / .001) }))
+```
+
+# Ejercicio 1.a
+
+::: {.enunciado}
+Generar una distribución del ingreso inicial de 1000 individuos con el mismo ingreso de \$1000. Luego, suponer que el logaritmo del ingreso evoluciona como un “random walk” durante 10 períodos; utilizar shocks con distribución uniforme en el intervalo (-5,5). Para todos los períodos, mostrar el test de normalidad del logaritmo del ingreso, y el valor de la media y el desvío estándar. Para los períodos 1, 5 y 10, mostrar una estimación no paramétrica de la distribución.
+:::
+
+En la tabla 1, se presenta la media, el desvío estándar y el p-valor del test de normalidad del logaritmo del ingreso para los períodos 1 a 10 considerando un proceso de acumulación “random walk” (coeficiente autorregresivo igual a uno) y partiendo de la distribución del período 0, en tanto que, en las figuras 1 y 2, se presentan estimaciones no paramétricas de la distribución del logaritmo del ingreso para los períodos 1, 5 y 10, graficadas individual y conjuntamente, respectivamente.
+
+Por un lado, se puede observar que <mark>tanto la media como la volatilidad aumentan progresivamente del período 1 al 10</mark>. Por otro lado, no se rechaza la hipótesis de normalidad de la distribución del logaritmo del ingreso para un nivel de significatividad del 1% a partir del período 5. En conclusión, este proceso de acumulación particular en el tiempo tiene el efecto de hacer tender la distribución del logaritmo del ingreso a una distribución normal, tal como se muestra gráficamente, con una varianza creciente en el tiempo.
+
+```{r tabla1}
+pdfA <- cbind(c(6.89,6.92,7.11,7.19,7.36,7.38,7.43,7.38,7.39,7.28),
+              c(2.86,3.97,4.92,5.85,6.51,7.03,7.48,8.16,8.85,9.43),
+              c(0,0,0,.001,.273,.647,.197,.896,.854,.959))
+tabla(pdfA, datosA, coA, nuevaA, 1:10, "Tabla 1. Logaritmo del ingreso, períodos 1 a 10 (media / desvío / p-valor).")
+cA <- control(pdfA, datosA, 1:10)
+monotona <- mean(apply(mcA[, "media", ], 2, function(m) all(diff(m) > 0)))
+sigma2 <- 100 / 12
+```
+
+Control: en los períodos con datos guardados, la diferencia máxima con el PDF es de `r num(cA, 2)` unidades del último decimal publicado (redondeo). En los demás, la columna "Simulado" parte del último período guardado anterior; valores publicados fuera del intervalo de 99%: `r fuera(pdfA, coA)`.
+
+::: {.disc .metodo #d1}
+**D1.** El *do-file* no contiene `set seed`. Cada ejecución depende del estado del generador en la sesión: corrido desde una sesión nueva de Stata, la media del período 10 sería `r num(nuevaA[10, 1], 2)` y el desvío `r num(nuevaA[10, 2], 2)` (PDF: 7,28 y 9,43). Esto vale para los dos ejercicios. Bastaba fijar una semilla al comienzo.
+:::
+
+::: {.disc .error #d2}
+**D2.** La media **no** aumenta progresivamente: baja del período 7 al 8 (`r num(pdfA[7, 1], 2)` a `r num(pdfA[8, 1], 2)`) y del 9 al 10 (`r num(pdfA[9, 1], 2)` a `r num(pdfA[10, 1], 2)`). Además, no debe aumentar: los shocks tienen media cero, así que $E[\ln y_t] = \ln 1000$ (`r num(log(1000), 2)`) en **todos** los períodos. Las variaciones son ruido de muestreo; en el Monte Carlo la media crece en los diez períodos solo en el `r porc(monotona, 1)` de los casos. El desvío sí crece, como predice la teoría, $\sigma\sqrt{t}$: de `r num(sqrt(sigma2), 2)` en $t=1$ a `r num(sqrt(10 * sigma2), 2)` en $t=10$.
+:::
+
+```{r fig1, fig.width=10, fig.height=4}
+panel(datosA)
+```
+
+**Figura 1.** Densidad kernel del logaritmo del ingreso (períodos 1, 5 y 10, individualmente).
+
+```{r fig2}
+conjunta(datosA)
+```
+
+**Figura 2.** Densidad kernel (períodos 1, 5 y 10, conjuntamente).
+
+# Ejercicio 1.b
+
+::: {.enunciado}
+A partir de la última distribución del inciso 1a, repetir el ejercicio pero suponiendo que el proceso de acumulación toma la forma $y_t = 0{,}2\,y_{t-1} + e_t$.
+:::
+
+En la tabla 2, se presenta la media, el desvío estándar y el p-valor del test de normalidad del logaritmo del ingreso para los períodos 11 a 20 considerando este nuevo proceso de acumulación con un coeficiente autorregresivo menor a uno y partiendo de la distribución del período 10, en tanto que, en las figuras 3 y 4, se presentan estimaciones no paramétricas de la distribución del logaritmo del ingreso para los períodos 11, 15 y 20, graficadas individual y conjuntamente, respectivamente.
+
+Por un lado, se puede observar que la media oscila entre -0,19 (período 15) y 1,57 (período 11), mientras que <mark>el período 11 resulta ser el más volátil y el período 14 el menos volátil</mark>. Por otro lado, se rechaza la hipótesis de normalidad de la distribución del logaritmo del ingreso para cualquier nivel de significatividad en todos los períodos. En conclusión, <mark>este proceso de acumulación particular en el tiempo tiene el efecto de hacer tender la distribución del logaritmo del ingreso a su situación inicial</mark>, por lo cual se aparta considerablemente de una distribución normal, tal como se muestra gráficamente.
+
+```{r tabla2}
+pdfB <- cbind(c(1.57,.31,.06,-.04,-.19,-.06,-.13,.05,.11,.00),
+              c(3.48,3.04,3.00,2.87,2.89,2.94,2.95,2.95,2.88,2.92), rep(0, 10))
+tabla(pdfB, datosB, coB, nuevaB, 11:20, "Tabla 2. Logaritmo del ingreso, períodos 11 a 20 con ρ = 0,2.")
+cB <- control(pdfB, datosB, 11:20)
+estac <- sqrt(sigma2 / (1 - 0.2^2))
+min14 <- mean(apply(mcB[2:10, "desvio", ], 2, which.min) + 1 == 4)
+max11 <- mean(apply(mcB[, "desvio", ], 2, which.max) == 1)
+```
+
+Control: diferencia máxima en los períodos guardados: `r num(cB, 2)` unidades del último decimal. Valores de los demás períodos fuera del intervalo simulado de 99%: `r fuera(pdfB, coB)`.
+
+```{r fig3, fig.width=10, fig.height=4}
+panel(datosB)
+```
+
+**Figura 3.** Densidad kernel (períodos 11, 15 y 20, individualmente).
+
+```{r fig4}
+conjunta(datosB)
+```
+
+**Figura 4.** Densidad kernel (períodos 11, 15 y 20, conjuntamente).
+
+::: {.disc .error #d3}
+**D3.** La situación inicial era la **igualdad perfecta**: todos con $\ln y$ = `r num(log(1000), 2)` y desvío cero. El proceso no vuelve allí. Con $|\rho|<1$ converge a una distribución **estacionaria** con media 0 y desvío $\sigma/\sqrt{1-\rho^2}$ (`r num(estac, 2)`), que es lo que muestra la tabla a partir del período 12. Se produce reversión a la media (cero, no el ingreso inicial) y se conserva la desigualdad que generan los shocks. La forma se parece a la de la figura 1 en el período 1 porque con ρ chico domina el último shock uniforme.
+:::
+
+::: {.disc .metodo #d4}
+**D4.** A partir del período 12 el proceso ya es prácticamente estacionario, así que las diferencias entre períodos son azar. Que el período 11 sea el más volátil es sistemático (ocurre en el `r porc(max11)` de las simulaciones, porque aún arrastra la dispersión del período 10), pero que el **14** sea el menos volátil no lo es (`r porc(min14)` de las simulaciones, entre nueve períodos equivalentes).
+:::
+
+# Ejercicio 1.c
+
+::: {.enunciado}
+A partir de la última distribución del inciso 1a, repetir el ejercicio pero suponiendo que el proceso de acumulación toma la forma $y_t = 1{,}5\,y_{t-1} + e_t$.
+:::
+
+En la tabla 3, se presenta la media, el desvío estándar y el p-valor del test de normalidad del logaritmo del ingreso para los períodos 11 a 20 considerando este nuevo proceso de acumulación con un coeficiente autorregresivo mayor a uno y partiendo de la distribución del período 10, en tanto que, en las figuras 5 y 6, se presentan estimaciones no paramétricas de la distribución del logaritmo del ingreso para los períodos 11, 15 y 20, graficadas individual y conjuntamente, respectivamente.
+
+Por un lado, se puede observar que tanto la media como la volatilidad aumentan progresivamente del período 11 al 20. Por otro lado, <mark>no se rechaza la hipótesis de normalidad de la distribución del logaritmo del ingreso para cualquier nivel de significatividad</mark> en todos los períodos. En conclusión, este proceso de acumulación particular en el tiempo tiene el efecto de <mark>hacer tender la distribución del logaritmo del ingreso aún más a una distribución normal</mark>, tal como se muestra gráficamente, con una varianza que sigue creciendo en el tiempo.
+
+```{r tabla3}
+pdfC <- cbind(c(10.97,16.63,24.71,37.12,55.66,83.36,125.04,187.45,281.34,422.03),
+              c(14.59,22.29,33.42,50.25,75.28,112.95,169.31,253.72,380.57,570.76),
+              c(.772,.902,.909,.893,.888,.912,.926,.930,.935,.936))
+tabla(pdfC, datosC, coC, nuevaC, 11:20, "Tabla 3. Logaritmo del ingreso, períodos 11 a 20 con ρ = 1,5.")
+cC <- control(pdfC, datosC, 11:20)
+forma <- sapply(datosC, function(x) { z <- (x - mean(x)) / sd(x); c(asimetria = mean(z^3), curtosis = mean(z^4)) })
+r1520 <- cor(datosC[["15"]], datosC[["20"]], method = "spearman")
+r510 <- cor(datosA[["5"]], datosA[["10"]], method = "spearman")
+```
+
+Control: diferencia máxima en los períodos guardados: `r num(cC, 2)` unidades del último decimal. Valores de los demás períodos fuera del intervalo simulado de 99%: `r fuera(pdfC, coC)`.
+
+```{r fig5, fig.width=10, fig.height=4}
+panel(datosC)
+```
+
+**Figura 5.** Densidad kernel (períodos 11, 15 y 20, individualmente).
+
+```{r fig6}
+conjunta(datosC)
+```
+
+**Figura 6.** Densidad kernel (períodos 11, 15 y 20, conjuntamente).
+
+::: {.disc .impr #d5}
+**D5.** No rechazar "para **cualquier** nivel de significatividad" no es posible: con un nivel mayor que el p-valor se rechaza. Los p-valores van de `r num(min(pdfC[, 3]), 3)` a `r num(max(pdfC[, 3]), 3)`: no se rechaza a los niveles **habituales** (1%, 5%, 10%).
+:::
+
+```{r ej1c-forma}
+kable(data.frame(Periodo = names(datosC), t(apply(forma, 2, num, d = 3))), row.names = FALSE, align = "lrr",
+      col.names = c("Período", "Asimetría", "Curtosis"), caption = "Forma de la distribución estandarizada (agregado).")
+par(mar = c(4.5, 4.5, 1, 1), las = 1)
+z <- function(x) (x - mean(x)) / sd(x)
+plot(z(datosC[["15"]]), z(datosC[["20"]]), pch = 16, cex = .6, col = "#1a476f",
+     xlab = "Período 15 (estandarizado)", ylab = "Período 20 (estandarizado)"); abline(0, 1, col = "red"); grid()
+```
+
+**Gráfico agregado.** Posición de cada individuo en los períodos 15 y 20.
+
+::: {.disc .error #d6}
+**D6.** La distribución no se vuelve "aún más normal". Al estandarizar, $y_t/1{,}5^{t}$ converge a una variable fija (el período 10 más una suma de shocks cada vez más pequeños), de modo que la **forma deja de cambiar**: la asimetría y la curtosis son casi iguales en 15 y 20. El período 10 ya era aproximadamente normal (p = `r num(sktest(x10), 3)`), y el alza de los p-valores posteriores al 12 es mínima e irregular (`r num(pdfC[4, 3], 3)` y `r num(pdfC[5, 3], 3)` bajan respecto de `r num(pdfC[3, 3], 3)`).
+:::
+
+::: {.disc .metodo #d7}
+**D7.** El texto omite lo distintivo del caso $\rho>1$, que las notas de cátedra describen como un sistema explosivo que converge a máxima desigualdad:
+
+* La **movilidad desaparece**: la correlación de rangos entre los períodos 15 y 20 es `r num(r1520, 4)` (en el paseo aleatorio, entre 5 y 10, es `r num(r510, 2)`). Quién es rico o pobre queda determinado.
+* Las magnitudes dejan de tener sentido económico: en el período 20 el logaritmo del ingreso va de `r num(min(datosC[["20"]]))` a `r num(max(datosC[["20"]]))`.
+* La media crece porque la del período 10 es positiva (`r num(mean(x10), 2)`); con media negativa, decrecería.
+:::
+
+# Ejercicio 2
+
+::: {.enunciado}
+El segundo ejercicio tiene por objetivo ilustrar el funcionamiento del modelo de selección de Roy. (i) Generar una distribución normal bivariada de dos variables (y1, y2) con 500 observaciones, con medias cero y desvíos σ1 = 0,1, σ2 = 2 y correlación ρ = 0. Graficar con métodos no paramétricos la distribución no condicionada de y1 e y2. (ii) Generar el valor de y de cada individuo de acuerdo al mecanismo de selección de Roy. Graficar la distribución resultante e interpretar. (iii) Computar el coeficiente de variación de y. (iv) Repetir con ρ = 0,8 y ρ = −0,8. (v) Interpretar.
+:::
+
+```{r roy}
+rhos <- c(0, 0.8, -0.8)
+# Extracciones 36.001 a 39.000 de la secuencia por defecto de Stata (reproducen la tabla 4)
+roy_stata <- function(j) {
+  zu <- qnorm(U[36000 + (j - 1) * 1000 + 1:1000])
+  y1 <- simple(zu[1:500] * 0.1); y2p <- simple(zu[501:1000] * 2)
+  y2 <- simple((2 * y1 / 0.1) * rhos[j] + y2p * sqrt(1 - rhos[j]^2))
+  data.frame(y1 = y1, y2 = y2, y = pmax(y1, y2))
+}
+R <- lapply(1:3, roy_stata)
+t4 <- data.frame(cv = sapply(R, function(r) sd(r$y) / mean(r$y)), r = sapply(R, function(r) cor(r$y1, r$y2)))
+pdf4 <- data.frame(cv = c(1.533, 1.561, 1.465), r = c(0.025, 0.778, -0.793))
+dif4 <- max(abs(round(t4, 3) - pdf4))
+fig_roy <- function(r) {
+  par(mfrow = c(2, 2), mar = c(4, 4, 2, 1), las = 1)
+  for (v in c("y1", "y2", "y")) { k <- kd(r[[v]], 50)
+    plot(k$x, k$y, type = "l", col = "#1a476f", xlab = v, ylab = "Densidad", main = v); grid() }
+  plot(r$y2, r$y1, pch = 16, cex = .6, col = "#1a476f", xlab = "y2", ylab = "y1", main = "y1 contra y2")
+  abline(lm(y1 ~ y2, r), col = "#90353b")
+}
+```
+
+Se procede a generar una distribución normal bivariada con 500 observaciones, con el objetivo de graficar, mediante métodos no paramétricos, tanto la distribución no condicionada de ambas variables como la distribución resultante del mecanismo de selección de Roy, para diferentes valores de correlación entre ambas variables.
+
+En la figura 7, se presenta el caso en donde el coeficiente de correlación es 0. Se puede observar que, aunque la distribución de ambas variables, $y_1$ e $y_2$, sigue la configuración de una distribución normal, debido al mecanismo de selección de Roy, los individuos eligen emplearse en los sectores en donde sus habilidades comparativas son mayores y, de esta manera, <mark>la distribución del ingreso regida bajo este patrón sigue una configuración log normal</mark>. Por otra parte, el coeficiente de variación de $y$ es 1,533 y el <mark>coeficiente de correlación de las distribuciones $y_1$ e $y_2$ (resultante del mecanismo de selección de Roy)</mark> es 0,025 (ver tabla 4), por lo que la distribución de habilidades no está correlacionada linealmente, es decir, no existe relación lineal individual entre la distribución de la habilidad 1 y la distribución de la habilidad 2.
+
+```{r fig7, fig.width=9, fig.height=7}
+fig_roy(R[[1]])
+```
+
+**Figura 7 (réplica).** ρ = 0.
+
+Seguidamente, en la figura 8, se presenta el caso en donde el coeficiente de correlación es 0,8. El coeficiente de variación de $y$ es 1,561 y coeficiente de correlación de las distribuciones $y_1$ e $y_2$ es 0,778 (ver tabla 4), por lo que, en este caso, las distribuciones de habilidades están correlacionadas lineal y positivamente, es decir, individuos que son hábiles en la distribución de la habilidad 1 también lo son en la distribución de la habilidad 2.
+
+```{r fig8, fig.width=9, fig.height=7}
+fig_roy(R[[2]])
+```
+
+**Figura 8 (réplica).** ρ = 0,8.
+
+Finalmente, en la figura 9, se presenta el caso en donde el coeficiente de correlación es -0,8. El coeficiente de variación de $y$ es 1,465 y el coeficiente de correlación de las distribuciones $y_1$ e $y_2$ es -0,793 (ver tabla 4), por lo que, en este caso, la distribución de habilidades está correlacionada lineal y negativamente, es decir, cuanto mayor es la habilidad del individuo en la distribución de la habilidad 1, menor es su habilidad en la distribución de la habilidad 2, y viceversa.
+
+```{r fig9, fig.width=9, fig.height=7}
+fig_roy(R[[3]])
+```
+
+**Figura 9 (réplica, con σ2 = 2).** ρ = −0,8.
+
+En la tabla 4, se presenta el coeficiente de variación de $y$ y el coeficiente de correlación las distribuciones $y_1$ e $y_2$ para los tres casos planteados.
+
+```{r tabla4}
+kable(data.frame(rho = c("ρ = 0", "ρ = 0,8", "ρ = −0,8"), a = num(t4$cv, 3), b = num(t4$r, 3)), align = "lrr",
+      col.names = c("Correlación entre y1 e y2", "Coeficiente de variación de y", "Correlación y1, y2"),
+      caption = "Tabla 4. Calculada en R.")
+neg <- sapply(R, function(r) mean(r$y < 0)); sec2 <- sapply(R, function(r) mean(r$y2 > r$y1))
+```
+
+Control: la diferencia máxima con la tabla 4 del PDF a tres decimales es **`r num(dif4, 3)`**.
+
+::: {.disc .error #d8}
+**D8.** Una variable log-normal es siempre **positiva**. Aquí $y = \max(y_1, y_2)$ toma valores negativos en el `r porc(neg[1])` de los casos con ρ = 0, el `r porc(neg[2])` con ρ = 0,8 y el `r porc(neg[3])` con ρ = −0,8 (las propias figuras 7 a 9 lo muestran). El máximo de dos normales no es log-normal ni normal: es una distribución **asimétrica a la derecha**. Si $y$ se interpretara como logaritmo del ingreso, el ingreso $e^y$ tampoco sería log-normal, porque para eso $y$ debería ser normal.
+:::
+
+```{r ej2-teoria}
+teoria <- function(r) { th <- sqrt(0.1^2 + 2^2 - 2 * r * 0.1 * 2); E <- th / sqrt(2 * pi)
+  V <- (0.1^2 + 2^2) / 2 - E^2
+  c(E = E, sd = sqrt(V), cv = sqrt(V) / E, neg = 0.25 + asin(r) / (2 * pi)) }
+te <- t(sapply(rhos, teoria))
+set.seed(2019)
+mcR <- lapply(rhos, function(r) replicate(5000, { y1 <- rnorm(500) * 0.1
+  y2 <- (2 * y1 / 0.1) * r + rnorm(500) * 2 * sqrt(1 - r^2); y <- pmax(y1, y2); sd(y) / mean(y) }))
+ic <- sapply(mcR, quantile, c(.025, .975))
+kable(data.frame(rho = c("0", "0,8", "−0,8"), E = num(te[, "E"], 3), s = num(te[, "sd"], 3), cv = num(te[, "cv"], 3),
+                 ic = paste0("[", num(ic[1, ], 2), "; ", num(ic[2, ], 2), "]"), n = apply(matrix(te[, "neg"]), 1, porc, dig = 1),
+                 s2 = sapply(sec2, porc, dig = 1)), align = "lrrrrrr",
+      col.names = c("ρ", "E[y]", "Desvío", "CV teórico", "CV: 95% con n = 500", "P(y < 0)", "Eligen sector 2"),
+      caption = "Valores teóricos del modelo (agregado en la réplica).")
+```
+
+::: {.disc .error #d9}
+**D9.** El enunciado pide **interpretar** la distribución resultante (ii) y comparar los casos (v). Para (ii) el texto solo ofrece la afirmación errónea sobre la log-normalidad ([D8](#d8)); para (v) describe qué significa cada correlación, pero no dice qué le pasa a la distribución de $y$ al cambiar ρ ni por qué. Elementos que faltaban:
+
+* Como $\sigma_1 = 0{,}1$ es mucho menor que $\sigma_2 = 2$, el sector 1 funciona casi como un **ingreso piso** cercano a cero y el sector 2 aporta la cola derecha. Cerca de la mitad elige cada sector.
+* La selección **eleva el ingreso medio** respecto de cualquiera de los sectores (ambos con media cero) y reduce la dispersión respecto del sector 2.
+* A mayor correlación, **menor** media ($E[y] = \theta/\sqrt{2\pi}$, con $\theta^2 = \sigma_1^2 + \sigma_2^2 - 2\rho\sigma_1\sigma_2$) y mayor coeficiente de variación: de `r num(te[3, "cv"], 2)` (ρ = −0,8) a `r num(te[2, "cv"], 2)` (ρ = 0,8). Con habilidades negativamente correlacionadas, elegir tiene más valor.
+:::
+
+## Figura 9 y parámetros
+
+Los gráficos guardados informan su ancho de banda, que depende de la dispersión de los datos.
+
+```{r anchos}
+png_h <- rbind("Figura 7 (ρ = 0)" = c(0.0252, 0.5391, 0.3078), "Figura 8 (ρ = 0,8)" = c(0.0273, 0.5366, 0.2942),
+               "Figura 9 (ρ = −0,8)" = c(0.0252, 0.7844, 0.4096))
+set.seed(1)
+banda <- function(r, s2, S = 4000) replicate(S, { y1 <- rnorm(500) * 0.1
+  y2 <- (s2 * y1 / 0.1) * r + rnorm(500) * s2 * sqrt(1 - r^2)
+  c(ancho(y1), ancho(y2), ancho(pmax(y1, y2))) })
+lim <- function(m, i) paste0("[", num(min(m[i, ]), 3), "; ", num(max(m[i, ]), 3), "]")
+M2 <- lapply(rhos, banda, s2 = 2); M3 <- banda(-0.8, 3)
+kable(data.frame(Figura = rownames(png_h),
+  y2 = num(png_h[, 2], 4), y2r = sapply(M2, lim, i = 2), y = num(png_h[, 3], 4), yr = sapply(M2, lim, i = 3)),
+  row.names = FALSE, align = "lrrrr", col.names = c("Gráfico guardado", "Ancho de y2", "Rango posible con σ2 = 2",
+  "Ancho de y", "Rango posible con σ2 = 2"), caption = "Anchos de banda de las figuras frente a 4.000 simulaciones.")
+```
+
+Con σ2 = 3 y ρ = −0,8, los rangos son `r lim(M3, 2)` para y2 y `r lim(M3, 3)` para y. El desvío de y2 implícito en el ancho de la figura 9 es cercano a `r num(0.7844 * 500^0.2 / 0.9, 2)`.
+
+```{r png9, out.width="49%", fig.show="hold", echo=FALSE}
+include_graphics(c("Figuras/Figura 9 (b).png", "Figuras/Figura 9 (c).png"))
+```
+
+**Paneles originales de la figura 9** (archivos guardados): y2 llega hasta cerca de −12, algo prácticamente imposible con σ2 = 2.
+
+::: {.disc .error #d10}
+**D10.** Los anchos de banda de y2 (0,7844) e y (0,4096) de la **figura 9** quedan muy fuera de lo que puede producir σ2 = 2, y son compatibles con **σ2 ≈ 3**. La figura 9 se generó con un parámetro distinto del enunciado, y distinto del usado en las figuras 7 y 8 y en la tabla 4.
+:::
+
+::: {.disc .impr #d11}
+**D11.** Los datos que reproducen exactamente la tabla 4 dan anchos de banda de y1, y2 e y distintos de los impresos en las figuras 7 y 8 (por ejemplo, para y1 con ρ = 0: `r num(ancho(R[[1]]$y1), 4)` contra 0,0252; para y: `r num(ancho(R[[1]]$y), 4)` contra 0,3078). Las figuras y la tabla provienen de **ejecuciones distintas**. Además, los gráficos del PDF tienen títulos y ejes en inglés, y los paneles de dispersión no se mencionan en el epígrafe.
+:::
+
+::: {.disc .impr #d12}
+**D12.** La correlación informada es la de las variables $y_1$ e $y_2$ **antes** de la selección: es un dato de entrada (ρ) medido en la muestra, no un resultado del mecanismo de Roy. El epígrafe de la tabla 4 ("de la distribución resultante del mecanismo de selección") solo corresponde al coeficiente de variación.
+:::
+
+::: {.disc .metodo #d13}
+**D13.** Los coeficientes de variación publicados son una sola extracción de 500 observaciones. Su intervalo de muestreo (tabla de valores teóricos) es tan ancho que los tres casos **se superponen**: por ejemplo, con ρ = −0,8 el valor publicado (1,465) está por encima del teórico (`r num(te[3, "cv"], 3)`) y casi igual al teórico de ρ = 0 (`r num(te[1, "cv"], 3)`). Conviene comparar los valores teóricos o promediar muchas simulaciones. Además, el coeficiente de variación es poco informativo para una variable con valores negativos y media cercana a cero.
+:::
+
+# Verificación
+
+```{r verificacion}
+# Densidades y anchos de banda contra los gráficos guardados
+dens <- function(f, datos) max(sapply(1:3, function(k) { g <- f[[k]][[2]]; ok <- !is.na(g)
+  h <- ancho(datos[[k]])
+  yk <- vapply(g[ok], function(v) { z <- (v - datos[[k]]) / h; i <- abs(z) < sqrt(5)
+        sum(.75 * (1 - z[i]^2 / 5) / sqrt(5)) / (1000 * h) }, numeric(1))
+  max(abs(yk - f[[k]][[1]][ok])) }))
+kable(data.frame(Control = c("Figura 2: máxima diferencia en la densidad", "Figura 4: máxima diferencia en la densidad",
+  "Figura 6: máxima diferencia en la densidad", "Figura 1: anchos de banda (períodos 1, 5, 10)",
+  "Figura 3: anchos de banda (períodos 11, 15, 20)", "Figura 5: anchos de banda (períodos 11, 15, 20)"),
+  Valor = c(format(c(dens(f2, datosA), dens(f4, datosB), dens(f6, datosC)), scientific = TRUE, digits = 2),
+    paste(num(sapply(datosA, ancho), 4), collapse = " ; "), paste(num(sapply(datosB, ancho), 4), collapse = " ; "),
+    paste(num(sapply(datosC, ancho), 4), collapse = " ; "))), align = "lr")
+```
+
+Anchos de banda impresos en el PDF: figura 1: 0,6462; 1,4486; 2,0949. Figura 3: 0,7862; 0,6539; 0,6592. Figura 5: 3,2558; 17,0181; 129,0315.
+
+```{r sesion}
+sessionInfo()
+```

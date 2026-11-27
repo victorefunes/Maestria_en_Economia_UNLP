@@ -1,0 +1,659 @@
+---
+title: "Trabajo Práctico N° 5 — Réplica en R"
+subtitle: "Maestría en Economía UNLP - Economía de la Distribución. Respuestas originales: Juan Menduiña"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+    self_contained: true
+    code_folding: hide
+---
+
+```{css, echo=FALSE}
+mark { background: #ffe27a; padding: 0 2px; }
+.disc { border-left: 6px solid; border-radius: 4px; padding: 10px 14px; margin: 14px 0; font-size: 0.95em; }
+.disc p:last-child { margin-bottom: 0; }
+.error { border-color: #c0392b; background: #fdecea; }
+.impr  { border-color: #d68910; background: #fef5e7; }
+.metodo{ border-color: #2874a6; background: #eaf2f8; }
+.enunciado { font-style: italic; color: #444; }
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 8, fig.height = 5, dpi = 120)
+library(haven); library(dplyr); library(knitr)
+
+num <- function(x, d = 0) formatC(x, format = "f", digits = d, big.mark = ".", decimal.mark = ",")
+porc <- function(x, dig = 1) paste0(num(100 * x, dig), "%")
+```
+
+# Cómo leer este documento {-}
+
+El texto de cada ejercicio es el del PDF *Trabajo Práctico N° 5 (R)*. Las tablas, las figuras y los números de los recuadros se calculan en R a partir de las bases de `Datos/`. Lo <mark>resaltado</mark> es una frase o un número con alguna discrepancia, explicada en el recuadro correspondiente:
+
+::: {.disc .error}
+**Error**: la afirmación contradice los datos o el cálculo es incorrecto.
+:::
+
+::: {.disc .impr}
+**Imprecisión**: redacción, rótulo o formato que puede inducir a error.
+:::
+
+::: {.disc .metodo}
+**Observación metodológica**: el resultado depende de una decisión discutible o no documentada.
+:::
+
+**Resultado de la réplica.** Las tablas y figuras del PDF se reproducen en R. El problema principal está en el ejercicio 7: el código de la descomposición de Juhn, Murphy y Pierce usa las características del período equivocado ([D21](#d21)), y los efectos publicados no miden lo que dicen. Además, los ejercicios 5 a 7 usan una muestra distinta de la del ejercicio 4 ([D15](#d15)).
+
+| N° | Ej. | Tipo | Discrepancia |
+|----|-----|------|--------------|
+| [D1](#d1) | Intro | Error | La EPH no es representativa a nivel nacional |
+| [D2](#d2) | Enunciado | Imprecisión | Encabezado "2018" y "seis regiones" con siete |
+| [D3](#d3) | 1 | Error | "Decrecimiento para cualquier percentil" se contradice |
+| [D4](#d4) | 1 | Error | La mejora relativa no se concentra en los ingresos bajos |
+| [D5](#d5) | 1 | Metodológica | Deflactor del Gran Buenos Aires para todo el país |
+| [D6](#d6) | 2 | Error | El *do-file* no deflacta 2017 y no genera la tabla 1 |
+| [D7](#d7) | 2 | Error | No todas las medidas de bienestar caen |
+| [D8](#d8) | 2 | Error | CABA no es la primera en todas las medidas |
+| [D9](#d9) | 2 | Imprecisión | Los niveles de medidas distintas no son comparables |
+| [D10](#d10) | 2 | Imprecisión | Errores de tipeo en la tabla 1 y signo en el código |
+| [D11](#d11) | 3 | Error | En el GBA el bienestar no cae según Lorenz generalizada |
+| [D12](#d12) | 3 | Imprecisión | En 2019 CABA no domina al GBA en el extremo inferior |
+| [D13](#d13) | 3 | Imprecisión | Figuras tituladas "Curva de Lorenz" y con escalas distintas |
+| [D14](#d14) | 4 a 7 | Error | El código 999 de horas se usa como si fueran horas |
+| [D15](#d15) | 5 a 7 | Metodológica | Muestra sin la restricción de 18 a 60 años |
+| [D16](#d16) | 5 y 7 | Imprecisión | Hay dos tablas 4 |
+| [D17](#d17) | 6 | Metodológica | El aumento de los retornos no es estadísticamente significativo |
+| [D18](#d18) | 6 | Error | La figura 7 sale de una submuestra mínima y oculta un valor negativo |
+| [D19](#d19) | 6 | Imprecisión | Leyendas "Retorno / Retorno" sin años |
+| [D20](#d20) | 6 | Imprecisión | Qué se grafica en las figuras 8 y 9 |
+| [D21](#d21) | 7 | Error | El segundo contrafáctico usa las características de 2019 |
+| [D22](#d22) | 7 | Metodológica | El error de aproximar residuos por deciles se imputa a los efectos |
+| [D23](#d23) | 7 | Imprecisión | El texto cambia la convención de signos sin avisar |
+| [D24](#d24) | 7 | Imprecisión | Porcentajes sobre un cambio casi nulo |
+| [D25](#d25) | 7 | Metodológica | El signo del cambio total depende de la muestra |
+
+# Datos y funciones
+
+```{r datos}
+leer <- function(f) {
+  x <- read_dta(f) |> zap_labels(); names(x) <- tolower(names(x))
+  x |> mutate(dec = suppressWarnings(as.numeric(deccfr))) |>
+    filter(!is.na(dec), dec >= 1, dec <= 10, !nro_hogar %in% c(51, 71)) |>
+    mutate(region2 = ifelse(aglomerado %in% c(32, 33), aglomerado, region))
+}
+a17 <- leer("Datos/usu_individual_t117.dta")
+a19 <- leer("Datos/usu_individual_t119.dta")
+DEF <- 197.10 / 103.80           # pesos de 2017 a pesos de 2019 (do-file)
+regiones <- c("32" = "CABA", "33" = "GBA", "40" = "NOA", "41" = "NEA",
+              "42" = "Cuyo", "43" = "Pampeana", "44" = "Patagónica")
+niveles <- c("Primario incompleto", "Primario completo", "Secundario incompleto",
+             "Secundario completo", "Superior incompleto", "Superior completo")
+c(muestra_2017 = nrow(a17), muestra_2019 = nrow(a19))
+```
+
+```{r funciones}
+gini <- function(y, w) {
+  k <- w > 0 & y > 0; y <- y[k]; w <- w[k]; o <- order(y); y <- y[o]; w <- w[o]
+  N <- sum(w); mu <- sum(w * y) / N; i <- cumsum(w) - (w - 1) / 2
+  1 + 1 / N - 2 / (mu * N^2) * sum(w * y * (N - i + 1))
+}
+atk <- function(y, w, e) {
+  mu <- weighted.mean(y, w)
+  if (e == 1) 1 - exp(weighted.mean(log(y / mu), w))
+  else 1 - weighted.mean((y / mu)^(1 - e), w)^(1 / (1 - e))
+}
+theil <- function(y, w) { r <- y / weighted.mean(y, w); weighted.mean(r * log(r), w) }
+# Lorenz generalizada: ingreso acumulado por persona
+glorenz <- function(y, w) { o <- order(y)
+  data.frame(p = c(0, cumsum(w[o]) / sum(w)), L = c(0, cumsum((w * y)[o]) / sum(w))) }
+Lp <- function(curva, p) approx(curva$p, curva$L, p, ties = "ordered")$y
+# Comparación exacta en todos los quiebres: ¿dónde queda B por encima de A?
+violaciones <- function(A, B) {
+  g <- sort(unique(c(A$p, B$p))); g <- g[g > 0]
+  d <- Lp(A, g) - Lp(B, g); mal <- g[d < -1e-9]
+  list(n = length(mal), desde = if (length(mal)) min(mal) else NA, hasta = if (length(mal)) max(mal) else NA)
+}
+
+# Muestra de ingreso laboral horario (educ.do e ilabhr.do)
+horario <- function(x, factor = 1, edades = c(0, Inf), sin999 = FALSE) {
+  x <- filter(x, nivel_ed %in% 1:7)
+  x$edu <- c(1, 2, 3, 4, 5, 6, 1)[x$nivel_ed]
+  x$ilh <- x$p21 / (x$pp3e_tot * 4)
+  x <- x[is.finite(x$ilh) & x$ilh != 0, ]
+  x$ilh <- x$ilh * factor; x$lilh <- log(x$ilh)
+  x$edad <- x$ch06; x$hombre <- as.numeric(x$ch04 == 1)
+  x <- filter(x, edad >= edades[1], edad <= edades[2])
+  if (sin999) x <- filter(x, pp3e_tot != 999)
+  x
+}
+mincer <- function(x) lm(lilh ~ factor(edu, levels = 1:6) + edad + I(edad^2) + hombre,
+                         data = x, weights = pondiio)
+# Errores estándar robustos (como regress [pw=] de Stata)
+ee_robusto <- function(m) {
+  X <- model.matrix(m); w <- weights(m); u <- resid(m)
+  B <- solve(crossprod(X * sqrt(w))); M <- crossprod(X * (w * u))
+  sqrt(diag(B %*% M %*% B) * nrow(X) / (nrow(X) - ncol(X)))
+}
+```
+
+# Introducción {-}
+
+Para los cálculos de este trabajo, se consideraron las bases de microdatos de la EPH del primer trimestre de 2017 y de 2019 elaboradas por el INDEC, <mark>las cuales son representativas a nivel nacional</mark> y comprenden 43.893 y 47.789 observaciones, respectivamente.^[Se omiten aquellas observaciones que no presentan ingresos positivos, que no han dado respuesta sobre sus niveles de ingresos o que pertenecen a hogares secundarios.]
+
+::: {.disc .error #d1}
+**D1.** La EPH continua es una encuesta **urbana** (31 aglomerados). No es representativa del total nacional: "Argentina" y "país" deben leerse como "total de aglomerados urbanos relevados". Las cantidades de observaciones sí coinciden.
+:::
+
+::: {.disc .impr #d2}
+**D2.** El PDF de enunciados está encabezado "Economía de la Distribución **2018**" aunque pide datos de 2017 y 2019, y en el ejercicio 2 dice "**seis** regiones" y enumera **siete**.
+:::
+
+# Ejercicio 1
+
+::: {.enunciado}
+Computar la curva de incidencia del crecimiento para el período comprendido entre el primer trimestre de 2017 y el primer trimestre de 2019.
+:::
+
+En la figura 1, se presenta la curva de incidencia del crecimiento por percentil de ingreso (se utiliza el ingreso per cápita familiar) para evaluar el cambio en la distribución del ingreso ocurrido entre el primer trimestre de 2017 y el de 2019. Se puede observar que, en el período analizado, <mark>hubo un decrecimiento de los ingresos para cualquier percentil de la población</mark>, con la particularidad de que <mark>los individuos de ingresos más bajos han resultado beneficiados en términos proporcionales respecto de los sucesivos percentiles</mark>. Esto es, el crecimiento entre estos dos años ha sido negativo para cualquier nivel de ingreso, exceptuando los casos de los primeros cuatro percentiles.
+
+```{r fig1}
+medias_perc <- function(y, w, orden = order(y)) {
+  shr <- cumsum(w[orden]) / sum(w)
+  k <- integer(length(y)); k[orden] <- pmin(100, pmax(1, ceiling(shr * 100 - 1e-9)))
+  as.numeric(tapply(y * w, k, sum) / tapply(w, k, sum))
+}
+gic <- function(factor = DEF, azar = FALSE, meses = NULL) {
+  o7 <- if (azar) order(a17$ipcf, runif(nrow(a17))) else order(a17$ipcf)
+  o9 <- if (azar) order(a19$ipcf, runif(nrow(a19))) else order(a19$ipcf)
+  (medias_perc(a19$ipcf, a19$pondih, o9) / medias_perc(a17$ipcf * factor, a17$pondih, o7) - 1) * 100
+}
+g <- gic()
+par(mar = c(4.5, 4.5, 1, 1), las = 1)
+plot(1:100, g, type = "l", lwd = 1.5, xlab = "Percentiles del IPCF", ylab = "Variación % promedio del IPCF")
+grid(); abline(h = 0, col = "red", lty = 2)
+```
+
+**Figura 1.** Curva de incidencia del crecimiento (2017-t1 a 2019-t1).
+
+::: {.disc .error #d3}
+**D3.** No hubo caída "para cualquier percentil": los percentiles **`r paste(which(g > 0), collapse = ", ")`** crecieron (hasta `r num(max(g), 1)`%), como reconoce la oración siguiente.
+:::
+
+::: {.disc .error #d4}
+**D4.** La curva tiene forma de **U**. Los mayores perdedores están en los percentiles 11 a 35 (`r num(mean(g[11:35]), 1)`% en promedio) y las pérdidas se **reducen** hacia arriba: `r num(mean(g[36:90]), 1)`% entre el 36 y el 90 y `r num(mean(g[96:100]), 1)`% en el 5% más rico. La parte alta resultó relativamente beneficiada frente a la media-baja.
+:::
+
+::: {.disc .metodo #d5}
+**D5.** Los índices 103,80 y 197,10 son el promedio enero-marzo del IPC del **Gran Buenos Aires** y se aplican a todos los aglomerados, aquí y en los ejercicios que comparan 2017 con 2019. Además la EPH capta ingresos del mes anterior a la entrevista. Ambas decisiones deberían explicitarse (la sensibilidad se cuantifica en la réplica del Trabajo Práctico N° 4).
+:::
+
+# Ejercicio 2
+
+::: {.enunciado}
+Computar las medidas de bienestar agregado de Sen, Kakwani y Atkinson (con ε = 1 y ε = 2) de las siguientes siete regiones que permite identificar la EPH: Partidos del GBA, Ciudad de Buenos Aires, NOA, NEA, Cuyo, Pampeana, y Patagónica. Emplear el ingreso per cápita familiar como proxy de bienestar individual.
+:::
+
+En la tabla 1, se presentan las medidas de bienestar agregado de Sen, Kakwani y Atkinson (con $\varepsilon$ = 1 y $\varepsilon$ = 2) por región para el primer trimestre de 2017 y para el de 2019, empleando el ingreso per cápita familiar como proxy de bienestar individual.
+
+Por un lado, se puede observar que, <mark>realizando una comparación intermedidas</mark>, tanto a nivel país como a nivel regional, para ambos períodos, <mark>el bienestar agregado computado por Atkinson ($\varepsilon$ = 1) resulta ser el mayor, mientras que el computado por Atkinson ($\varepsilon$ = 2) es el menor</mark>. Por otra parte, a nivel de corte transversal, para ambos períodos, <mark>independientemente de la medida de bienestar agregado que se siga, CABA resulta ser la región que registra un mayor bienestar agregado</mark>, mientras que la región del NEA la de menor bienestar agregado. Por último, mediante un análisis interanual, <mark>tanto a nivel país como a nivel regional, todas las medidas de bienestar disminuyen</mark> del primer trimestre de 2017 al primer trimestre de 2019.
+
+```{r tabla1}
+bienestar <- function(y, w) {
+  mu <- weighted.mean(y, w); G <- gini(y, w)
+  c(Sen = mu * (1 - G), Kak = mu / (1 + G), A1 = mu * (1 - atk(y, w, 1)), A2 = mu * (1 - atk(y, w, 2)))
+}
+tabla_w <- function(x, factor) {
+  t <- do.call(rbind, c(lapply(names(regiones), function(r) { k <- x$region2 == as.numeric(r)
+         bienestar(x$ipcf[k] * factor, x$pondih[k]) }), list(bienestar(x$ipcf * factor, x$pondih))))
+  rownames(t) <- c(regiones, "Total"); t
+}
+w17 <- tabla_w(a17, DEF); w19 <- tabla_w(a19, 1); w17n <- tabla_w(a17, 1)
+t1 <- cbind(w17[, 1], w19[, 1], w17[, 2], w19[, 2], w17[, 3], w19[, 3], w17[, 4], w19[, 4])
+kable(matrix(num(t1, 2), 8, dimnames = list(rownames(w17), paste(rep(c("Sen", "Kakwani", "Atk. ε=1", "Atk. ε=2"), each = 2), c(2017, 2019)))),
+      align = "r", caption = "Tabla 1. Medidas de bienestar agregado (pesos de 2019).")
+pdf1 <- matrix(c(
+  15059.58,14120.17,17707.22,16807.0,18349.70,17339.40,11604.77,8239.01,
+  7394.32,6926.10,9020.78,8550.10,9183.54,8741.40,5658.50,5936.35,
+  6591.24,5780.10,7908.46,6944.87,8356.61,7363.36,6308.45,5652.48,
+  6158.61,5454.36,7368.88,6677.10,7759.85,6916.49,5557.98,4891.43,
+  7330.70,6888.80,8722.94,8467.17,9238.97,8705.53,6869.27,6119.10,
+  8535.94,7773.28,10328.10,9489.76,10652.35,9737.56,7181.91,6604.44,
+  11853.71,10111.94,13914.92,11866.0,14867.36,12577.06,10772.95,8915.05,
+  8154.47,7505.17,10040.16,9352.40,10215.95,9480.11,6562.66,6251.42), 8, byrow = TRUE)
+dif1 <- max(abs(t1 / pdf1 - 1))
+```
+
+Control: la mayor diferencia relativa con la tabla 1 del PDF es `r porc(dif1, 4)` (redondeo).
+
+```{r ej2-nominal}
+kable(data.frame(Region = rownames(w17n), a = num(w17n[, 1], 2), b = num(w17[, 1], 2)), row.names = FALSE,
+      align = "lrr", col.names = c("Región", "Sen 2017 según el do-file (nominal)", "Sen 2017 publicado (deflactado)"))
+sube <- which(t1[, c(2, 4, 6, 8)] > t1[, c(1, 3, 5, 7)], arr.ind = TRUE)
+medidas <- c("Sen", "Kakwani", "Atkinson ε=1", "Atkinson ε=2")
+no_caba <- which(t1[1, ] < apply(t1[1:7, ], 2, max))
+```
+
+::: {.disc .error #d6}
+**D6.** El bloque del ejercicio 2 del *do-file* carga la base de 2017 y calcula las medidas **sin deflactar**: produce valores nominales cerca de la mitad de los publicados. La tabla 1 del PDF es la deflactada (la que se replica arriba), pero no sale del código entregado y la tabla no dice que está en pesos constantes de 2019.
+:::
+
+::: {.disc .error #d7}
+**D7.** En el **`r paste(rownames(w17)[sube[, 1]], collapse = ", ")`**, `r paste(medidas[sube[, 2]], collapse = ", ")` **aumenta**: de \$`r num(w17[sube[1, 1], sube[1, 2]], 2)` a \$`r num(w19[sube[1, 1], sube[1, 2]], 2)`. La propia tabla 1 lo muestra.
+:::
+
+::: {.disc .error #d8}
+**D8.** Con Atkinson ε = 2 en **2019**, la Patagónica (\$`r num(w19["Patagónica", 4], 2)`) supera a CABA (\$`r num(w19["CABA", 4], 2)`). CABA es primera en las demás combinaciones; NEA sí es última en todas.
+:::
+
+::: {.disc .impr #d9}
+**D9.** Sen, Kakwani y Atkinson son **funciones de bienestar distintas**: que una arroje un número mayor que otra es una propiedad de sus fórmulas, no un resultado sobre las regiones (por ejemplo, μ/(1+G) es siempre mayor o igual que μ(1−G)). Lo informativo es comparar regiones o años **dentro** de cada medida.
+:::
+
+::: {.disc .impr #d10}
+**D10.** La tabla 1 del PDF tiene números mal tipeados ("6.591,.24", "5.652.48", "8.915.05", "16.807,0"). En el *do-file*, la medida con ε = 2 se calcula con un signo **negativo** (`-media*(1-atk)`); la tabla informa el valor positivo, que es el ingreso equivalente correcto.
+:::
+
+# Ejercicio 3
+
+::: {.enunciado}
+En base a curvas generalizadas de Lorenz, comparar el bienestar entre (a) Partidos del GBA y Ciudad de Buenos Aires y (b) regiones NEA y Patagónica. Emplear el ingreso per cápita familiar como proxy de bienestar individual.
+:::
+
+En las figuras 2 a 5, se presentan las curvas generalizadas de Lorenz a fin de comparar el bienestar entre Partidos del GBA y CABA y entre la región del NEA y la región Patagónica para el primer trimestre de 2017 y para el de 2019, empleando el ingreso per cápita familiar como proxy de bienestar individual.
+
+En primer lugar, haciendo énfasis en las figuras 2 y 3, se puede observar que, <mark>para ambos períodos, CABA tiene un mayor nivel de bienestar que Partidos del GBA</mark>. Y, por otra parte, comparando ambos períodos, <mark>se vislumbra lo comentado previamente en cuanto a la reducción del bienestar agregado</mark> entre el primer y último período considerado (menor distancia vertical entre cada una de las curvas y el eje de abscisas).
+
+En segundo lugar, haciendo énfasis en las figuras 4 y 5, se puede ver que, para ambos períodos, la región Patagónica tiene un mayor nivel de bienestar que la región del NEA. Sin embargo, comparando ambos períodos, se nota una disminución de estas diferencias de bienestar a favor de la región Patagónica (menor distancia vertical entre las curvas); y, además, se vuelve a ver la reducción del bienestar agregado entre períodos (menor distancia vertical entre cada una de las curvas y el eje de abscisas).
+
+```{r gl}
+curva <- function(x, r, factor) { k <- x$region2 == r; glorenz(x$ipcf[k] * factor, x$pondih[k]) }
+G17 <- lapply(setNames(nm = c(32, 33, 41, 44)), function(r) curva(a17, r, DEF))
+G19 <- lapply(setNames(nm = c(32, 33, 41, 44)), function(r) curva(a19, r, 1))
+fig_gl <- function(A, B, nombres) {
+  par(mar = c(7, 5, 1, 1), las = 1)
+  plot(A$p, A$L, type = "l", ylim = range(A$L, B$L), xlab = "p", ylab = ""); title(ylab = "GL(p)", line = 3.8); grid()
+  lines(B$p, B$L, col = "red", lty = 2)
+  legend("bottom", inset = c(0, -0.42), legend = nombres, col = c("black", "red"), lty = c(1, 2),
+         horiz = TRUE, xpd = TRUE, bty = "n", lwd = 2)
+}
+```
+
+```{r fig2}
+fig_gl(G17[["32"]], G17[["33"]], c("CABA", "Partidos GBA"))
+```
+
+**Figura 2.** Curvas generalizadas de Lorenz (a), 2017.
+
+```{r fig3}
+fig_gl(G19[["32"]], G19[["33"]], c("CABA", "Partidos GBA"))
+```
+
+**Figura 3.** Curvas generalizadas de Lorenz (a), 2019.
+
+```{r fig4}
+fig_gl(G17[["41"]], G17[["44"]], c("NEA", "Patagónica"))
+```
+
+**Figura 4.** Curvas generalizadas de Lorenz (b), 2017.
+
+```{r fig5}
+fig_gl(G19[["41"]], G19[["44"]], c("NEA", "Patagónica"))
+```
+
+**Figura 5.** Curvas generalizadas de Lorenz (b), 2019.
+
+```{r ej3-dominancia}
+comp <- list("CABA sobre GBA, 2017" = violaciones(G17[["32"]], G17[["33"]]),
+             "CABA sobre GBA, 2019" = violaciones(G19[["32"]], G19[["33"]]),
+             "Patagónica sobre NEA, 2017" = violaciones(G17[["44"]], G17[["41"]]),
+             "Patagónica sobre NEA, 2019" = violaciones(G19[["44"]], G19[["41"]]),
+             "CABA: 2017 sobre 2019" = violaciones(G17[["32"]], G19[["32"]]),
+             "GBA: 2017 sobre 2019" = violaciones(G17[["33"]], G19[["33"]]),
+             "NEA: 2017 sobre 2019" = violaciones(G17[["41"]], G19[["41"]]),
+             "Patagónica: 2017 sobre 2019" = violaciones(G17[["44"]], G19[["44"]]))
+kable(data.frame(Comparación = names(comp), Puntos = sapply(comp, `[[`, "n"),
+                 Desde = ifelse(is.na(sapply(comp, `[[`, "desde")), "—", num(sapply(comp, `[[`, "desde"), 4)),
+                 Hasta = ifelse(is.na(sapply(comp, `[[`, "hasta")), "—", num(sapply(comp, `[[`, "hasta"), 4))),
+      row.names = FALSE, align = "lrrr",
+      col.names = c("Dominancia evaluada", "Puntos que la incumplen", "p mínimo", "p máximo"),
+      caption = "Comparación exacta de las curvas (agregada en la réplica).")
+q <- seq(.002, .3, .002)
+cambio <- sapply(c("32", "33", "41", "44"), function(r) Lp(G19[[r]], q) - Lp(G17[[r]], q))
+par(mar = c(4.5, 5, 1, 1), las = 1)
+matplot(q, cambio, type = "l", lty = 1, lwd = 1.5, col = c("black", "red", "#1a476f", "#55752f"),
+        xlab = "p (30% inferior)", ylab = "")
+title(ylab = "GL 2019 - GL 2017", line = 3.8); abline(h = 0, col = "grey50")
+legend("bottomleft", legend = c("CABA", "GBA", "NEA", "Patagónica"), col = c("black", "red", "#1a476f", "#55752f"), lwd = 2, bty = "n")
+g33 <- comp[["GBA: 2017 sobre 2019"]]; c19 <- comp[["CABA sobre GBA, 2019"]]
+```
+
+**Gráfico agregado.** Cambio de la curva generalizada en el 30% inferior de cada región.
+
+::: {.disc .error #d11}
+**D11.** En **Partidos del GBA** no hay una caída general del bienestar: la curva de 2019 está **por encima** de la de 2017 hasta p ≈ `r num(g33$hasta, 3)`. Las curvas se cruzan y no se pueden ordenar los dos años, lo que es coherente con el aumento de Atkinson ε = 2 ([D7](#d7)). En CABA también hay un cruce pequeño (p entre `r num(comp[["CABA: 2017 sobre 2019"]]$desde, 3)` y `r num(comp[["CABA: 2017 sobre 2019"]]$hasta, 3)`). En NEA y Patagónica solo ocurre en el extremo inferior (p menor a `r num(max(comp[["NEA: 2017 sobre 2019"]]$hasta, comp[["Patagónica: 2017 sobre 2019"]]$hasta), 4)`).
+:::
+
+::: {.disc .impr #d12}
+**D12.** En 2019 CABA queda **por debajo** del GBA para p entre `r num(c19$desde, 4)` y `r num(c19$hasta, 4)`, por observaciones de ingreso muy bajo en CABA. La afirmación vale desde ese punto en adelante, pero no es dominancia estricta. La Patagónica sí domina al NEA en ambos años.
+:::
+
+::: {.disc .impr #d13}
+**D13.** Las figuras se titulan "Curva de Lorenz" en el *do-file*, aunque son curvas **generalizadas**. La comparación entre años se hace mirando figuras separadas con ejes distintos; conviene superponerlas.
+:::
+
+# Ejercicio 4
+
+::: {.enunciado}
+Dividir a la población en 6 grupos según la máxima educación obtenida. Eliminar individuos con ingreso laboral horario de la ocupación principal nulo. Restringir la muestra a individuos entre 18 y 60 años. Obtener el ingreso laboral horario de la ocupación principal promedio de cada grupo. Interpretar.
+:::
+
+En la tabla 2, se presenta el ingreso laboral horario de la ocupación principal promedio de la población según la máxima educación obtenida para el primer trimestre de 2017 y para el de 2019, restringiendo las muestras a individuos entre 18 y 60 años. Por un lado, se puede observar que, a nivel de corte transversal, para ambos períodos, los individuos perciben un ingreso laboral horario promedio mayor a medida que aumenta su máximo nivel educativo alcanzado. Por otro lado, mediante un análisis interanual, se observa que todos los grupos considerados sufren una variación negativa en el ingreso laboral horario promedio; en particular, el grupo con primario incompleto es el que ha experimentado la mayor disminución en esta variable (21,80%), mientras que el grupo con superior incompleto es el que tuvo la menor caída (9,92%).
+
+```{r tabla2}
+h17 <- horario(a17, DEF); h19 <- horario(a19)                           # todas las edades (ej. 5 a 7)
+m17 <- horario(a17, DEF, c(18, 60)); m19 <- horario(a19, 1, c(18, 60))  # 18 a 60 años
+media_edu <- function(x) sapply(1:6, function(e) weighted.mean(x$ilh[x$edu == e], x$pondiio[x$edu == e]))
+t2 <- data.frame(a = media_edu(m17), b = media_edu(m19)); t2$c <- 100 * (t2$b / t2$a - 1)
+s17 <- media_edu(filter(m17, pp3e_tot != 999)); s19 <- media_edu(filter(m19, pp3e_tot != 999))
+kable(data.frame(Nivel = niveles, a = num(t2$a, 2), b = num(t2$b, 2), c = num(t2$c, 2),
+                 d = num(s17, 2), e = num(s19, 2)), align = "lrrrrr",
+      col.names = c("Nivel educativo", "2017-t1", "2019-t1", "Cambio (%)", "2017 sin 999", "2019 sin 999"),
+      caption = "Tabla 2. Ingreso laboral horario promedio (pesos de 2019). Las dos últimas columnas se agregan en la réplica.")
+n999 <- c(sum(h17$pp3e_tot == 999), sum(h19$pp3e_tot == 999))
+```
+
+La tabla 2 coincide con el PDF.
+
+::: {.disc .error #d14}
+**D14.** `pp3e_tot = 999` es el código de **no respuesta** en horas. Se lo usa como si fueran 999 horas semanales en `r n999[1]` observaciones de 2017 y `r n999[2]` de 2019 (muestra de todas las edades), con un ingreso horario artificialmente bajo. El efecto sobre las medias es pequeño, pero alcanza para cambiar el signo del resultado del ejercicio 7 ([D25](#d25)).
+:::
+
+# Ejercicio 5
+
+::: {.enunciado}
+Computar el índice de desigualdad de Theil de la distribución de los ingresos laborales horarios de la ocupación principal. Descomponer el nivel del índice de Theil en desigualdad intra e intergrupal en función del sexo del trabajador. Repetir el ejercicio en función del nivel educativo.
+:::
+
+En la tabla 3, se presenta el índice de desigualdad de Theil de la distribución de los ingresos laborales horarios de la ocupación principal y se descompone entre desigualdad intra e intergrupal, tanto en función del sexo del trabajador como en función del nivel educativo, para el primer trimestre de 2017 y para el de 2019.
+
+En primer lugar, se puede observar que, en el período analizado, el índice de Theil aumenta, pasando de 0,273 a 0,282. En segundo lugar, para el caso de la descomposición en función del sexo del trabajador, para ambos períodos, casi la totalidad de la variación en la distribución de los ingresos laborales horarios se explica por diferencias en la distribución al interior de cada sexo, más que por diferencias en la distribución entre ambos sexos. Finalmente, para el caso de la descomposición en función del nivel educativo, si bien la variación en la distribución de los ingresos laborales horarios que se explica por diferencias en la distribución entre distintos niveles educativos es baja, es más relevante que en el caso anterior. De todas maneras, al igual que en el caso de la descomposición en función del sexo del trabajador, para la explicación de la variación en la distribución de los ingresos laborales horarios, para ambos períodos, son más relevantes las diferencias en la distribución al interior de cada nivel educativo, más que las diferencias en la distribución entre distintos niveles educativos.
+
+```{r theil}
+descomp <- function(x, var) {
+  mu <- weighted.mean(x$ilh, x$pondiio)
+  g <- t(sapply(split(x, x[[var]]), function(s) c(
+    sh = sum(s$pondiio * s$ilh) / sum(x$pondiio * x$ilh), T = theil(s$ilh, s$pondiio),
+    mu = weighted.mean(s$ilh, s$pondiio))))
+  list(grupos = g, inter = sum(g[, "sh"] * log(g[, "mu"] / mu)), intra = sum(g[, "sh"] * g[, "T"]))
+}
+tabla3 <- function(x7, x9) {
+  f <- function(x) { s <- descomp(x, "hombre"); e <- descomp(x, "edu")
+    c(s$inter, s$intra, e$inter, e$intra, theil(x$ilh, x$pondiio)) }
+  data.frame(Indice = c("Sexo: intergrupal", "Sexo: intragrupal", "Educación: intergrupal",
+                        "Educación: intragrupal", "Theil"), a = f(x7), b = f(x9))
+}
+t3 <- tabla3(h17, h19)
+kable(t3 |> mutate(a = num(a, 3), b = num(b, 3)), align = "lrr", col.names = c("Índice", "2017-t1", "2019-t1"),
+      caption = "Tabla 3. Índice de Theil (como en el PDF: todas las edades).")
+```
+
+En la tabla 4, se presenta la participación en el ingreso y el índice Theil por sexo y para cada nivel educativo, con el objetivo de caracterizar la distribución de los ingresos laborales horarios de la ocupación principal de cada grupo. Por un lado, se puede observar que, en ambos períodos, los hombres tienen una mayor participación en el ingreso y una menor desigualdad medida por el Theil. Por otro lado, por nivel educativo, en ambos períodos, el grupo con primario incompleto resulta ser el más desigual, seguido por el grupo con secundario completo en 2017 y por el grupo con superior completo en 2019.
+
+```{r tabla4}
+tabla4 <- function(x7, x9) {
+  f <- function(x) { s <- descomp(x, "hombre")$grupos[c("1", "0"), ]; e <- descomp(x, "edu")$grupos
+    rbind(s, e)[, c("sh", "T")] }
+  t <- cbind(f(x7), f(x9)); rownames(t) <- c("Hombre", "Mujer", niveles); t
+}
+t4 <- tabla4(h17, h19)
+mostrar4 <- function(t, titulo) kable(matrix(num(t, 3), 8, dimnames = list(rownames(t),
+  c("Share 2017", "Theil 2017", "Share 2019", "Theil 2019"))), align = "r", caption = titulo)
+mostrar4(t4, "Tabla 4. Caracterización de la desigualdad por grupos (como en el PDF).")
+t3m <- tabla3(m17, m19); t4m <- tabla4(m17, m19)
+```
+
+```{r ej5-edad}
+kable(t3m |> mutate(a = num(a, 3), b = num(b, 3)), align = "lrr", col.names = c("Índice", "2017-t1", "2019-t1"),
+      caption = "Tabla 3 bis (agregada). Índice de Theil, 18 a 60 años.")
+mostrar4(t4m, "Tabla 4 bis (agregada). Grupos, 18 a 60 años.")
+mas19 <- niveles[which.max(t4m[3:8, 4])]
+```
+
+::: {.disc .metodo #d15}
+**D15.** El ejercicio 4 pide eliminar ingresos horarios nulos y restringir la muestra a **18 a 60 años**; el 6 y el 7 piden usar las mismas observaciones que el punto anterior. El enunciado del 5 no repite las restricciones, pero el *do-file* mantiene en los ejercicios 5 a 7 solo la primera: incluyen todas las edades (de `r min(h19$edad)` a `r max(h19$edad)` años en 2019). La nota de cátedra sobre la descomposición (`Material teórico/Cicowiez, M. - Descomposición microeconométrica.pdf`) usa 18 a 60. Con esa muestra el Theil es `r num(t3m$a[5], 3)` y `r num(t3m$b[5], 3)` (PDF: 0,273 y 0,282) y en 2019 el grupo más desigual pasa a ser **`r tolower(mas19)`**, no primario incompleto.
+:::
+
+::: {.disc .impr #d16}
+**D16.** El PDF tiene **dos "Tabla 4"**: la de caracterización por grupos y la del Gini del ejercicio 7 (cuya descomposición se numera 5).
+:::
+
+# Ejercicio 6
+
+::: {.enunciado}
+Estimar una ecuación de Mincer de los ingresos laborales horarios de la ocupación principal en función de dummies educativas, sexo, edad y edad al cuadrado. Utilizar las mismas observaciones que en el punto anterior. Analizar, mediante un gráfico, el cambio en los retornos a la educación entre el primer trimestre de 2017 y el primer trimestre de 2019.
+:::
+
+En la figura 6, se presenta el cambio en los retornos a la educación entre el primer trimestre de 2017 y el de 2019, dividiendo a la población según la máxima educación obtenida. Se puede observar que, en el último período, <mark>los retornos a la educación han sufrido un aumento considerable</mark> respecto del primer período, lo cual implica que, para cualquier nivel educativo alcanzado, el aumento proporcional del ingreso laboral horario promedio (céteris páribus) respecto del nivel primario incompleto es mayor. Esto es consistente con el aumento de la desigualdad medida por el índice de Theil entre los períodos analizados (ver tabla 3), teniendo en cuenta que, en promedio, los individuos con mayores ingresos son los que alcanzan un mayor nivel educativo. Seguidamente, en la figura 7, se presenta <mark>la misma estimación anterior para un agente representativo</mark> (hombre con 40 años de edad).
+
+```{r mincer}
+f17 <- mincer(h17); f19 <- mincer(h19)
+beta <- function(m) coef(m)[2:6]
+ret17 <- exp(beta(f17)) - 1; ret19 <- exp(beta(f19)) - 1
+se17 <- ee_robusto(f17)[2:6]; se19 <- ee_robusto(f19)[2:6]
+dif_b <- beta(f19) - beta(f17); t_dif <- dif_b / sqrt(se17^2 + se19^2)
+kable(data.frame(Nivel = niveles[-1], a = num(beta(f17), 4), b = num(se17, 4), c = num(beta(f19), 4),
+                 d = num(se19, 4), e = num(dif_b, 4), f = num(t_dif, 2)), row.names = FALSE, align = "lrrrrrr",
+      col.names = c("Nivel", "Beta 2017", "EE", "Beta 2019", "EE", "Diferencia", "t"),
+      caption = "Coeficientes de educación (base: primario incompleto). Errores robustos.")
+fig_ret <- function(r7, r9) {
+  par(mar = c(7, 4.5, 1, 1), las = 1)
+  matplot(1:5, 100 * cbind(r7, r9), type = "o", pch = 19, lty = 1, lwd = 2, col = c("#0070c0", "red"),
+          xaxt = "n", xlab = "", ylab = "Retorno (%)", ylim = range(0, 100 * c(r7, r9)))
+  axis(1, at = 1:5, labels = c("Prim. comp.", "Sec. inc.", "Sec. comp.", "Sup. inc.", "Sup. comp."))
+  abline(h = 0, col = "grey50"); grid(nx = NA, ny = NULL)
+  legend("bottom", inset = c(0, -0.3), legend = c("2017", "2019"), col = c("#0070c0", "red"), lwd = 2,
+         horiz = TRUE, xpd = TRUE, bty = "n")
+}
+fig_ret(ret17, ret19)
+```
+
+**Figura 6.** Retornos a la educación, exp(β) − 1.
+
+::: {.disc .metodo #d17}
+**D17.** Todos los coeficientes puntuales suben, pero **ninguna** diferencia entre 2019 y 2017 es estadísticamente distinta de cero: los estadísticos t van de `r num(min(t_dif), 2)` a `r num(max(t_dif), 2)`. Con estos datos no puede afirmarse que los retornos hayan aumentado "considerablemente".
+:::
+
+```{r fig7}
+sub40 <- function(x) filter(x, edad == 40, hombre == 1)
+s7 <- sub40(h17); s9 <- sub40(h19)
+r40 <- function(s) lm(lilh ~ factor(edu, levels = 1:6), data = s, weights = pondiio)
+q7 <- r40(s7); q9 <- r40(s9)
+ra17 <- exp(coef(q7)[-1]) - 1; ra19 <- exp(coef(q9)[-1]) - 1
+fig_ret(ra17, ra19)
+n_base <- c(sum(s7$edu == 1), sum(s9$edu == 1))
+```
+
+**Figura 7.** Retornos para hombres de 40 años, con el eje completo.
+
+::: {.disc .error #d18}
+**D18.** La figura 7 **no** es "la misma estimación" evaluada en un agente: es **otra regresión**, solo con los hombres de exactamente 40 años (`r nrow(s7)` observaciones en 2017 y `r nrow(s9)` en 2019), y la categoría base tiene apenas **`r n_base[1]` y `r n_base[2]`** casos. En la ecuación estimada con todos, edad y sexo no interactúan con la educación, así que los retornos de un agente representativo serían **iguales** a los de la figura 6. Además, el eje de la figura del PDF empieza en 0 y **oculta** el retorno negativo de primario completo en 2019 (`r porc(ra19[1])`). El texto no comenta que aquí varios retornos **caen** (secundario completo: de `r porc(ra17[3])` a `r porc(ra19[3])`), contra lo dicho sobre la figura 6.
+:::
+
+::: {.disc .impr #d19}
+**D19.** Las leyendas de las figuras 6 y 7 del PDF dicen "Retorno" y "Retorno": no permiten saber cuál línea es 2017 y cuál 2019.
+:::
+
+Por último, en las figuras 8 y 9, se presenta el <mark>logaritmo del ingreso laboral horario de la ocupación principal promedio predicho</mark> por nivel educativo, considerando el total de los agentes y el agente representativo, respectivamente. En primer lugar, se puede observar que, para ambos casos, para ambos períodos, el ingreso promedio predicho aumenta con el máximo nivel educativo alcanzado. Y, en segundo lugar, tanto para el total de los agentes como para el agente representativo, para cada nivel educativo, el ingreso promedio predicho del primer trimestre de 2019 es menor al del 2017. Esto es consistente con la disminución en el ingreso laboral horario promedio entre los períodos analizados (ver tabla 2).
+
+```{r fig89}
+h17$yhat <- predict(f17, h17); h19$yhat <- predict(f19, h19)
+por_nivel <- function(x, filtro) sapply(1:6, function(e) { k <- x$edu == e & filtro; weighted.mean(x$yhat[k], x$pondiio[k]) })
+pa17 <- por_nivel(h17, TRUE); pa19 <- por_nivel(h19, TRUE)
+ap17 <- por_nivel(h17, h17$edad == 40 & h17$hombre == 1); ap19 <- por_nivel(h19, h19$edad == 40 & h19$hombre == 1)
+fig_pred <- function(a, b) {
+  par(mar = c(7, 4.5, 1, 1), las = 1)
+  matplot(1:6, cbind(a, b), type = "l", lty = 1, lwd = 2, col = c("black", "red"),
+          xlab = "Nivel educativo", ylab = "Log del ingreso horario predicho"); grid()
+  legend("bottom", inset = c(0, -0.4), legend = c("2017", "2019"), col = c("black", "red"), lwd = 2,
+         horiz = TRUE, xpd = TRUE, bty = "n")
+}
+fig_pred(pa17, pa19)
+```
+
+**Figura 8.** Logaritmo predicho promedio, todos los agentes.
+
+```{r fig9}
+fig_pred(ap17, ap19)
+```
+
+**Figura 9.** Predicción para hombres de 40 años (ecuación con todos).
+
+::: {.disc .impr #d20}
+**D20.** Lo graficado es el **promedio del logaritmo predicho**, no el logaritmo del ingreso promedio. En la figura 8 coincide exactamente con el logaritmo observado promedio de cada grupo (propiedad de los mínimos cuadrados), por lo que mezcla retornos con diferencias de edad y sexo entre grupos. La figura 9 define el "agente representativo" con la ecuación completa, y la figura 7 con una submuestra: son dos definiciones distintas.
+:::
+
+# Ejercicio 7
+
+::: {.enunciado}
+Replicar la descomposición de Juhn, Murphy y Pierce (1993) para la distribución de los ingresos laborales horarios de la ocupación principal entre el primer trimestre de 2017 y el primer trimestre de 2019. Utilizar las mismas observaciones que en el punto anterior.
+:::
+
+Finalmente, se efectúa un análisis de distribuciones contrafácticas, con el objetivo de determinar, entre períodos, qué proporción de la variación en el resultado del coeficiente de Gini es atribuible a cambios en las características, a cambios en los parámetros que interaccionan con dichas características y a cambios en el componente inobservable.
+
+En las tablas 4 y 5, se presentan el coeficiente de Gini para la distribución de los ingresos laborales horarios de la ocupación principal para el primer trimestre de 2017 y para el de 2019 y la descomposición de Juhn, Murphy y Pierce (1993), respectivamente. Se puede observar que el coeficiente de Gini disminuye en 0,00038 puntos, pasando de 0,38654 a 0,38616. En particular, este cambio en el indicador de desigualdad se explica por un efecto desigualador de las características de 0,01377 puntos, por un efecto igualador de los parámetros de 0,01063 puntos y por un efecto igualador de los factores inobservables de 0,00352 puntos. Es decir, esta disminución se puede descomponer de la siguiente manera: los cambios en las características, en los parámetros y en el componente inobservable explican el <mark>-3.598,75% (-0,01377 puntos)</mark>, el <mark>2.778,43% (0,01063 puntos)</mark> y el <mark>920,32% (0,00352 puntos)</mark> de la caída total, respectivamente.
+
+La descomposición se define así: con $y_s = X_0\hat\beta_1 + F_0^{-1}(q_0)$ y $y_{s'} = X_0\hat\beta_1 + F_1^{-1}(q_0)$,
+parámetros $= D(y_s) - D(y_0)$; inobservables $= D(y_{s'}) - D(y_s)$; características $= D(y_1) - D(y_{s'})$.
+
+```{r jmp}
+jmp <- function(x0, x1) {
+  m0 <- mincer(x0); m1 <- mincer(x1)
+  u0 <- resid(m0); u1 <- resid(m1); w0 <- x0$pondiio; w1 <- x1$pondiio
+  Xb <- as.vector(model.matrix(m0) %*% coef(m1))           # X de 2017 con parámetros de 2019
+  # Deciles de residuos y su media (comando_gcuan.do)
+  deciles <- function(u, w) { o <- order(u); s <- cumsum(w[o]) / sum(w); k <- integer(length(u))
+    k[o] <- pmin(10, pmax(1, ceiling(s * 10 - 1e-9))); k }
+  k0 <- deciles(u0, w0); k1 <- deciles(u1, w1)
+  a0 <- as.numeric(tapply(u0 * w0, k0, sum) / tapply(w0, k0, sum))
+  a1 <- as.numeric(tapply(u1 * w1, k1, sum) / tapply(w1, k1, sum))
+  D0 <- gini(x0$ilh, w0); D1 <- gini(x1$ilh, w1)
+  Ds <- gini(exp(Xb + a0[k0]), w0)
+  D_do <- gini(exp(fitted(m1) + a1[k1]), w1)               # do-file: X de 2019
+  D_cor <- gini(exp(Xb + a1[k0]), w0)                      # corregido: X de 2017
+  # Exacta: residuos propios y cuantiles de la distribución de residuos de 2019
+  o0 <- order(u0); q0 <- numeric(length(u0)); q0[o0] <- (cumsum(w0[o0]) - w0[o0] / 2) / sum(w0)
+  o1 <- order(u1); F1 <- cumsum(w1[o1]) / sum(w1)
+  uq <- u1[o1][pmin(length(o1), findInterval(q0, F1) + 1)]
+  Es <- gini(exp(Xb + u0), w0); Esp <- gini(exp(Xb + uq), w0)
+  efectos <- rbind(
+    "Como en el do-file"                  = c(D1 - D_do,  Ds - D0, D_do - Ds,  D1 - D0),
+    "Corregido: y_s' con X de 2017"       = c(D1 - D_cor, Ds - D0, D_cor - Ds, D1 - D0),
+    "Exacta, según la fórmula"            = c(D1 - Esp,   Es - D0, Esp - Es,   D1 - D0))
+  colnames(efectos) <- c("Características", "Parámetros", "Inobservables", "Total")
+  list(efectos = efectos, D0 = D0, D1 = D1,
+       error0 = D0 - gini(exp(fitted(m0) + a0[k0]), w0), error1 = D1 - D_do)
+}
+J <- jmp(h17, h19)
+kable(data.frame(a = num(J$D0, 5), b = num(J$D1, 5)), col.names = c("2017-t1", "2019-t1"), align = "rr",
+      caption = "Tabla 4. Índice de Gini.")
+kable(matrix(num(J$efectos, 5), 3, dimnames = dimnames(J$efectos)), align = "r",
+      caption = "Tabla 5. Descomposición: publicada y corregida (las filas 2 y 3 se agregan en la réplica).")
+publicado <- c(0.013769520, -0.010630830, -0.003521310, -0.000382620)    # Ejercicio 7.xlsx
+dif7 <- max(abs(J$efectos[1, ] - publicado))
+```
+
+Control: la primera fila reproduce `Datos/Ejercicio 7.xlsx` con una diferencia máxima de `r format(dif7, scientific = TRUE, digits = 2)`.
+
+::: {.disc .error #d21}
+**D21.** El comentario del *do-file* pide "características t=0; parámetros t=1; residuos t=1" para $y_{s'}$, pero el código carga **`temp_t1`**, es decir, las características de **2019**. Así $y_{s'}$ es solo la distribución de 2019 con cada residuo reemplazado por la media de su decil. En consecuencia:
+
+* El "efecto características" publicado (`r num(J$efectos[1, 1], 5)`) es **exactamente** el error de esa aproximación en 2019 (`r num(J$error1, 5)`). No mide ningún cambio de características.
+* El efecto "inobservables" mezcla el cambio de características con el de residuos.
+
+Corregido el período de $X$, las características pasan a `r num(J$efectos[2, 1], 5)` e inobservables a `r num(J$efectos[2, 3], 5)`.
+:::
+
+::: {.disc .metodo #d22}
+**D22.** Reemplazar cada residuo por la media de su decil reduce el Gini en `r num(J$error0, 4)` (2017) y `r num(J$error1, 4)` (2019), una magnitud igual o mayor que los efectos que se quieren medir. Como $D(y_0)$ y $D(y_1)$ son los observados y los contrafácticos usan la aproximación, ese error se imputa a parámetros y características, incluso después de corregir [D21](#d21). Aplicando la fórmula **sin aproximar**, los efectos son: características `r num(J$efectos[3, 1], 5)`, parámetros **`r num(J$efectos[3, 2], 5)`** e inobservables `r num(J$efectos[3, 3], 5)`. El efecto parámetros pasa de igualador a **desigualador**, coherente con el alza puntual de los retornos del ejercicio 6.
+:::
+
+::: {.disc .impr #d23}
+**D23.** En la última oración los signos están invertidos respecto de la tabla 5 y de la oración anterior: miden la contribución a la **caída** del Gini, de modo que −0,01377 en características significa que ese efecto va **contra** la caída (sube el Gini en 0,01377). La convención no se explica y se presta a confusión.
+:::
+
+::: {.disc .impr #d24}
+**D24.** Expresar los efectos como porcentaje de un cambio total casi nulo (−0,00038) produce cifras como −3.599% o 2.778% que no informan nada. Es preferible dar los puntos de Gini. Además, el total figura como "100,00" sin signo de porcentaje.
+:::
+
+```{r sensibilidad}
+variantes <- list(
+  "Todas las edades (PDF)" = J,
+  "Todas las edades, sin 999" = jmp(horario(a17, DEF, sin999 = TRUE), horario(a19, sin999 = TRUE)),
+  "18 a 60 años" = jmp(m17, m19),
+  "18 a 60 años, sin 999" = jmp(horario(a17, DEF, c(18, 60), TRUE), horario(a19, 1, c(18, 60), TRUE)))
+sens <- do.call(rbind, lapply(names(variantes), function(n) { v <- variantes[[n]]
+  data.frame(Muestra = n, D0 = v$D0, D1 = v$D1, v$efectos[c(2, 3), ], Metodo = c("Corregido", "Exacta")) }))
+kable(sens |> select(Muestra, Metodo, D0, D1, everything()) |> mutate(across(where(is.numeric), ~num(.x, 4))),
+      row.names = FALSE, align = "llrrrrrr",
+      col.names = c("Muestra", "Método", "Gini 2017", "Gini 2019", "Caract.", "Parám.", "Inobs.", "Total"),
+      caption = "Sensibilidad a la muestra (agregado en la réplica).")
+v1860 <- variantes[["18 a 60 años"]]
+```
+
+::: {.disc .metodo #d25}
+**D25.** La conclusión de que el Gini **disminuye** depende de la muestra. Excluyendo solo los códigos 999 ([D14](#d14)) pasa de `r num(variantes[[2]]$D0, 4)` a `r num(variantes[[2]]$D1, 4)` (**sube**), y con 18 a 60 años ([D15](#d15)), de `r num(v1860$D0, 4)` a `r num(v1860$D1, 4)` (**sube**). La nota de cátedra informa 0,3733 y 0,3755, también en alza. Su tabla de referencia (parámetros −0,0088, inobservables −0,0004, características 0,0115) se parece a la fila "Corregido" de 18 a 60 años (`r num(v1860$efectos[2, 2], 4)`, `r num(v1860$efectos[2, 3], 4)`, `r num(v1860$efectos[2, 1], 4)`), aunque no coincide exactamente.
+:::
+
+# Verificación contra las figuras de Stata
+
+```{r verificacion}
+leer_gph <- function(archivo) {
+  b <- readBin(archivo, "raw", file.size(archivo))
+  ini <- grepRaw("sersetreadwrite", b, all = TRUE, fixed = TRUE)
+  fin <- grepRaw("<EndSersetData>", b, all = TRUE, fixed = TRUE)
+  lapply(seq_along(ini), function(k) {
+    i <- ini[k]
+    nv <- readBin(b[i + 18:21], "integer", size = 4, endian = "little")
+    n  <- readBin(b[i + 22:25], "integer", size = 4, endian = "little")
+    tipo <- as.integer(b[i + 25 + seq_len(nv)])
+    tam <- unname(c("255" = 8, "254" = 4, "253" = 4, "252" = 2, "251" = 1)[as.character(tipo)])
+    mat <- matrix(b[(fin[k] - 2 - n * sum(tam)):(fin[k] - 3)], nrow = sum(tam)); desde <- cumsum(c(0, tam))
+    lapply(seq_len(nv), function(j) {
+      r <- as.vector(mat[desde[j] + seq_len(tam[j]), ])
+      if (tipo[j] >= 254) readBin(r, "double", n, size = tam[j], endian = "little")
+      else readBin(r, "integer", n, size = tam[j], endian = "little")
+    })
+  })
+}
+ruta <- function(i) sprintf("Figuras/Figura %d.gph", i)
+if (all(file.exists(ruta(c(1:5, 8, 9))))) {
+  f1 <- leer_gph(ruta(1))[[1]]                      # chg, percentil
+  g_stata <- f1[[1]][order(f1[[2]])]
+  set.seed(1); sim <- replicate(300, gic(azar = TRUE))
+  fuera <- sum(g_stata < apply(sim, 1, min) - .05 | g_stata > apply(sim, 1, max) + .05)
+  gl <- list(list(G17[["32"]], G17[["33"]]), list(G19[["32"]], G19[["33"]]),
+             list(G17[["41"]], G17[["44"]]), list(G19[["41"]], G19[["44"]]))
+  d_gl <- sapply(1:4, function(i) { s <- leer_gph(ruta(i + 1))   # suminc, shrpop
+    max(sapply(1:2, function(j) max(abs(Lp(gl[[i]][[j]], pmin(s[[j]][[2]], 1)) / s[[j]][[1]][length(s[[j]][[1]])] -
+                                        s[[j]][[1]] / s[[j]][[1]][length(s[[j]][[1]])])))) })
+  f8 <- leer_gph(ruta(8))[[1]]; f9 <- leer_gph(ruta(9))[[1]]     # 2017, nivel, 2019
+  d89 <- c(max(abs(c(f8[[1]] - pa17, f8[[3]] - pa19))), max(abs(c(f9[[1]] - ap17, f9[[3]] - ap19))))
+  salida <- kable(data.frame(
+    Control = c("Figura 1: máxima diferencia (puntos porcentuales)",
+                "Figura 1: percentiles fuera del rango de 300 órdenes de empates",
+                paste0("Figura ", 2:5, ": máxima diferencia relativa a la media"),
+                "Figura 8: máxima diferencia", "Figura 9: máxima diferencia"),
+    Valor = c(num(max(abs(g - g_stata)), 3), fuera, format(c(d_gl, d89), scientific = TRUE, digits = 2))),
+    align = "lr")
+} else { g_stata <- NA; salida <- "No se encontraron los archivos .gph; se omite la verificación." }
+salida
+```
+
+En la figura 1 las diferencias provienen del orden aleatorio de los ingresos empatados. En la versión guardada por Stata, los percentiles con variación positiva son `r paste(which(g_stata > 0), collapse = ", ")`.
+
+```{r sesion}
+sessionInfo()
+```

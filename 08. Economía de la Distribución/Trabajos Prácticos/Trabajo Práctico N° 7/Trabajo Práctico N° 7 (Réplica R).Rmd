@@ -1,0 +1,400 @@
+---
+title: "Trabajo Práctico N° 7 — Réplica en R"
+subtitle: "Maestría en Economía UNLP - Economía de la Distribución. Respuestas originales: Juan Menduiña"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+    self_contained: true
+    code_folding: hide
+---
+
+```{css, echo=FALSE}
+mark { background: #ffe27a; padding: 0 2px; }
+.disc { border-left: 6px solid; border-radius: 4px; padding: 10px 14px; margin: 14px 0; font-size: 0.95em; }
+.disc p:last-child { margin-bottom: 0; }
+.error { border-color: #c0392b; background: #fdecea; }
+.impr  { border-color: #d68910; background: #fef5e7; }
+.metodo{ border-color: #2874a6; background: #eaf2f8; }
+.enunciado { font-style: italic; color: #444; }
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 8, fig.height = 5, dpi = 120)
+library(haven); library(dplyr); library(knitr); library(readxl)
+
+num <- function(x, d = 0) formatC(x, format = "f", digits = d, big.mark = ".", decimal.mark = ",")
+porc <- function(x, dig = 1) paste0(num(100 * x, dig), "%")
+```
+
+# Cómo leer este documento {-}
+
+El texto de cada ejercicio es el del PDF *Trabajo Práctico N° 7 (R)*. Las tablas, las figuras y los números de los recuadros se calculan en R a partir de las bases de `Datos/`. Lo <mark>resaltado</mark> es una frase o un número con alguna discrepancia, explicada en el recuadro correspondiente:
+
+::: {.disc .error}
+**Error**: la afirmación contradice los datos o el cálculo es incorrecto.
+:::
+
+::: {.disc .impr}
+**Imprecisión**: redacción, rótulo o formato que puede inducir a error.
+:::
+
+::: {.disc .metodo}
+**Observación metodológica**: el resultado depende de una decisión discutible o no documentada.
+:::
+
+**Resultado de la réplica.** Con la base unificada (`personas-hogares-gastos-ingresos.dta`) se reproducen las tablas, la curva de Engel y las figuras, salvo el ruido de los empates en la tabla 1. Esa base **no** puede reconstruirse con el archivo de gastos `.dta` de la carpeta, que está truncado ([D2](#d2)). En el ejercicio 5 se usa una variable de ingreso distinta de la pedida ([D12](#d12)).
+
+| N° | Ej. | Tipo | Discrepancia |
+|----|-----|------|--------------|
+| [D1](#d1) | Intro | Error | La ENGHo 2012/13 no es representativa a nivel nacional |
+| [D2](#d2) | Datos | Error | `ENGHo - Gastos.dta` está truncado en el límite de filas de Excel |
+| [D3](#d3) | 1 | Imprecisión | Participaciones de los deciles 1 y 10 corridas en 0,01 |
+| [D4](#d4) | 1 y 2 | Imprecisión | "Volatilidad" absoluta y "observaciones" expandidas |
+| [D5](#d5) | 1 | Metodológica | Los deciles dependen del orden de los empates |
+| [D6](#d6) | 2 | Error | El consumo medio total es 1.710,24, no 1.719,24 |
+| [D7](#d7) | 2 y 3 | Metodológica | El consumo incluye montos negativos por venta de bienes usados |
+| [D8](#d8) | 3 | Error | El salto del percentil 75 lo genera un solo hogar con dato imposible |
+| [D9](#d9) | 3 | Imprecisión | Se habla de ingreso y consumo totales; son per cápita |
+| [D10](#d10) | 4 | Metodológica | El impuesto a los cigarrillos incluye cigarros y tabaco |
+| [D11](#d11) | 4 y 5 | Imprecisión | Signo equivocado en la fórmula del índice de concentración |
+| [D12](#d12) | 5 | Error | Se usa el ingreso laboral total sin imputaciones, no el de la ocupación principal |
+| [D13](#d13) | 5 | Error | La curva de concentración no está siempre debajo de la de Lorenz |
+
+# Datos y funciones
+
+```{r datos}
+d <- read_dta("Datos/personas-hogares-gastos-ingresos.dta") |> zap_labels()
+w <- d$pondera
+hog <- d[!duplicated(d$clave), ]
+c(personas = nrow(d), hogares = nrow(hog), poblacion_expandida = sum(w))
+```
+
+```{r funciones}
+# Cuantiles como en comando_gcuan.do (ordena y acumula ponderadores)
+cuantiles <- function(x, w, n, orden = order(x)) {
+  s <- cumsum(w[orden]) / sum(w); k <- integer(length(x))
+  k[orden] <- pmin(n, pmax(1, ceiling(s * n - 1e-9))); k
+}
+desvio <- function(x, w) { m <- weighted.mean(x, w); n <- length(x)
+  sqrt(sum(w * (x - m)^2) / sum(w) * n / (n - 1)) }
+gini <- function(y, w) {
+  k <- w > 0 & y > 0; y <- y[k]; w <- w[k]; o <- order(y); y <- y[o]; w <- w[o]
+  N <- sum(w); mu <- sum(w * y) / N; i <- cumsum(w) - (w - 1) / 2
+  1 + 1 / N - 2 / (mu * N^2) * sum(w * y * (N - i + 1))
+}
+# Índice de concentración de t ordenando por ingreso (fórmula del do-file)
+concentracion <- function(t, w, orden, signo = -1) {
+  t <- t[orden]; w <- w[orden]; N <- sum(w); mu <- sum(w * t) / N; i <- (2 * cumsum(w) - w + 1) / 2
+  1 + signo / N - 2 / (mu * N^2) * sum(w * t * (N - i + 1))
+}
+curva <- function(y, w, orden) data.frame(p = c(0, cumsum(w[orden]) / sum(w)),
+                                          L = c(0, cumsum((w * y)[orden]) / sum(w * y)))
+Lp <- function(cv, p) approx(cv$p, cv$L, p, ties = "ordered")$y
+```
+
+# Introducción {-}
+
+Para los cálculos de este trabajo, se consideró la base de microdatos de la ENGHo 2012-2013 elaborada por el INDEC, <mark>la cual es representativa a nivel nacional</mark> y comprende 71.413 observaciones.^[Se omiten aquellas observaciones que pertenecen a hogares con ingreso per cápita familiar y/o consumo per cápita familiar menor o igual a cero.]
+
+::: {.disc .error #d1}
+**D1.** Según el resumen metodológico incluido en `Datos/`, la ENGHo 2012/13 cubre las **localidades de 5.000 y más habitantes**, el 86,7% de la población (36.138.213 personas). Excluye la población rural y las localidades chicas. La cantidad de observaciones (`r num(nrow(d))`) es correcta.
+:::
+
+```{r gastos}
+# Gasto en cigarrillos y tabaco según tres fuentes
+columnas <- names(read.delim("Datos/ENGHo - Gastos.txt", sep = "|", nrows = 1, check.names = FALSE))
+tipos <- ifelse(tolower(columnas) %in% c("clave", "articulo", "monto"), "character", "NULL")
+txt <- read.delim("Datos/ENGHo - Gastos.txt", sep = "|", colClasses = tipos, check.names = FALSE)
+names(txt) <- tolower(names(txt))
+txt <- data.frame(lapply(txt, function(v) as.numeric(sub(",", ".", v, fixed = TRUE))))
+dta <- read_dta("Datos/ENGHo - Gastos.dta", col_select = c(clave, articulo, monto)) |> zap_labels()
+por_hogar <- function(g, codigos = c(911101, 911102)) {
+  g <- g[g$articulo %in% codigos, ]; t <- tapply(g$monto, g$clave, sum, na.rm = TRUE)
+  coalesce(as.numeric(t[as.character(d$clave)]), 0)
+}
+cig_base <- coalesce(d$monto, 0); cig_txt <- por_hogar(txt); cig_dta <- por_hogar(dta)
+coincide_txt <- mean(abs(cig_base - cig_txt) < .01); coincide_dta <- mean(abs(cig_base - cig_dta) < .01)
+n_hog <- function(v) length(unique(d$clave[v > 0]))
+```
+
+::: {.disc .error #d2}
+**D2.** El archivo `ENGHo - Gastos.dta` tiene **`r num(nrow(dta))`** filas, exactamente el máximo de una hoja de Excel sin el encabezado. El archivo de texto original tiene **`r num(nrow(txt))`**: faltan `r num(nrow(txt) - nrow(dta))` registros. La base unificada coincide con el texto en el `r porc(coincide_txt)` de las personas y con el `.dta` truncado solo en el `r porc(coincide_dta)` (`r num(n_hog(cig_base))` hogares con gasto en tabaco contra `r num(n_hog(cig_dta))`). Si se ejecuta `prepara_bases.do` con los archivos entregados, el ejercicio 4 cambia ([D10](#d10)). El `.dta` debe generarse desde el `.txt`.
+:::
+
+# Ejercicio 1
+
+::: {.enunciado}
+Identificar deciles de ingreso per cápita familiar con igual número de personas. Luego, calcular (a) el ingreso promedio de cada decil, (b) el cociente de deciles extremos, y (c) la participación de cada decil en el ingreso total.
+:::
+
+En la tabla 1, se presentan deciles de ingreso per cápita familiar con igual número de personas. Por un lado, se puede observar que el ingreso promedio del decil 1 es igual a \$367,85 y el del decil 10 es igual a \$6.389,49, mientras que <mark>el decil 2 resulta ser el de menor volatilidad</mark> y el decil 10 el de mayor volatilidad. Por otro lado, el cociente de deciles extremos es 17,37. Por último, en cuanto a la participación de cada decil en el ingreso total, se puede ver que el decil 1 y el decil 10 perciben <mark>1,79% y 31,17%</mark> de éste, respectivamente.
+
+```{r tabla1}
+tabla_dec <- function(x, orden = order(x)) {
+  k <- cuantiles(x, w, 10, orden)
+  t <- t(sapply(1:10, function(i) { s <- k == i
+    c(Media = weighted.mean(x[s], w[s]), Desvio = desvio(x[s], w[s]), Obs = sum(w[s]), Suma = sum(x[s] * w[s])) }))
+  t <- rbind(t, c(weighted.mean(x, w), desvio(x, w), sum(w), sum(x * w)))
+  t <- as.data.frame(t); t$Part <- 100 * t$Suma / sum(x * w); t$CV <- t$Desvio / t$Media; t
+}
+mostrar_dec <- function(t, titulo) kable(data.frame(Decil = c(1:10, "Total"), num(t$Media, 2), num(t$Desvio, 2),
+    num(t$Obs), num(t$Suma), num(t$Part, 2), num(t$CV, 3)), align = "r", caption = titulo,
+  col.names = c("Decil", "Media", "Desvío estándar", "Observaciones (expandidas)", "Suma", "Participación (%)",
+                "Coef. de variación"))
+T1 <- tabla_dec(d$ipcf)
+mostrar_dec(T1, "Tabla 1. Deciles del IPCF (la última columna se agrega en la réplica).")
+pdf1 <- data.frame(Media = c(367.85,641.64,869.75,1118.33,1396.72,1696.31,2033.94,2552.70,3424.13,6389.49),
+  Suma = c(1328777088,2316375552,3143268352,4039637504,5045201920,6126339584,7349099008,9219551232,12370851840,23082723328),
+  Part = c(1.79,3.13,4.25,5.46,6.82,8.28,9.93,12.46,16.71,31.17))
+part_pdf <- 100 * pdf1$Suma / 74021825408
+set.seed(1)
+sim <- replicate(300, { t <- tabla_dec(d$ipcf, order(d$ipcf, runif(nrow(d)))); t$Media[1:10] })
+lim <- apply(sim, 1, range)
+fuera1 <- sum(pdf1$Media < lim[1, ] - .006 | pdf1$Media > lim[2, ] + .006)
+```
+
+Cociente de deciles extremos en R: **`r num(T1$Media[10] / T1$Media[1], 2)`**.
+
+::: {.disc .impr #d3}
+**D3.** Con las sumas que informa la propia tabla del PDF, las participaciones de los deciles 1 y 10 son **`r num(part_pdf[1], 2)`%** y **`r num(part_pdf[10], 2)`%**, no 1,79% y 31,17%. Las otras ocho coinciden al redondear. Las dos cifras parecen ajustadas para que la columna sume 100 (con el redondeo normal suma `r num(sum(round(part_pdf, 2)), 2)`).
+:::
+
+::: {.disc .impr #d4}
+**D4.** El decil 2 tiene el menor desvío **absoluto**, pero el desvío crece con el nivel de ingreso. En términos relativos (coeficiente de variación) el más homogéneo es el decil **`r which.min(T1$CV[1:10])`** (`r num(min(T1$CV[1:10]), 3)`, contra `r num(T1$CV[2], 3)` del decil 2). Además, "Observaciones" es la **población expandida**, no la cantidad de casos, en las tablas 1 y 2.
+:::
+
+::: {.disc .metodo #d5}
+**D5.** Hay ingresos empatados en los límites de los deciles y Stata los ordena al azar, por lo que las medias varían en cada ejecución (la del decil 10, entre `r num(lim[1, 10], 2)` y `r num(lim[2, 10], 2)` en 300 órdenes; el PDF dice 6.389,49 y arriba se obtiene `r num(T1$Media[10], 2)`). Medias del PDF fuera del rango simulado: **`r fuera1`**.
+:::
+
+# Ejercicio 2
+
+::: {.enunciado}
+Identificar deciles de consumo per cápita familiar con igual número de personas. Luego, calcular (a) el consumo promedio de cada decil, (b) el cociente de deciles extremos, y (c) la participación de cada decil en el consumo total.
+:::
+
+En la tabla 2, se presentan deciles de consumo per cápita familiar con igual número de personas. Por un lado, se puede observar que el consumo promedio del decil 1 es igual a \$296,52 y el del decil 10 es igual a \$5.564,57, mientras que <mark>el decil 2 resulta ser el de menor volatilidad</mark> y el decil 10 el de mayor volatilidad. Por otro lado, el cociente de deciles extremos es 18,77. Por último, en cuanto a la participación de cada decil en el consumo total, se puede ver que el decil 1 y el decil 10 consumen 1,73% y 32,55% del total, respectivamente.
+
+```{r tabla2}
+T2 <- tabla_dec(d$cpcf)
+mostrar_dec(T2, "Tabla 2. Deciles del CPCF. En el PDF, la media total figura como 1.719,24.")
+pdf2 <- c(296.52,518.57,704.85,885.15,1090.49,1330.61,1647.79,2128.61,2933.99,5564.57)
+dif2 <- max(abs(T2$Media[1:10] - pdf2))
+```
+
+Control: la mayor diferencia en las medias por decil con el PDF es `r num(dif2, 3)`. Cociente de deciles extremos: **`r num(T2$Media[10] / T2$Media[1], 2)`**. Coeficiente de variación mínimo: decil `r which.min(T2$CV[1:10])` ([D4](#d4)).
+
+::: {.disc .error #d6}
+**D6.** El consumo medio total es **\$`r num(T2$Media[11], 2)`**, no \$1.719,24: es la suma de la propia tabla (61.779.097.600) dividida por la población (36.123.062), que da `r num(61779097600 / 36123062, 2)`. Es un error de tipeo (dígitos cambiados).
+:::
+
+```{r negativos}
+gc <- paste0("gc_", 1:9)
+neg <- sapply(gc, function(v) sum(hog[[v]] < 0))
+hog_neg <- sum(rowSums(hog[, gc] < 0) > 0)
+raros <- hog[hog$gc_1 > hog$gastot, ]
+```
+
+::: {.disc .metodo #d7}
+**D7.** El gasto de consumo descuenta las **ventas** de bienes usados: `r hog_neg` hogares tienen algún rubro **negativo** (`r neg["gc_6"]` en transporte y comunicaciones). En `r nrow(raros)` hogares el gasto en alimentos supera al gasto total, lo que da participaciones mayores que 100%. Esto afecta los deciles de consumo bajos y, sobre todo, la curva de Engel ([D8](#d8)). El trabajo no lo menciona.
+:::
+
+# Ejercicio 3
+
+::: {.enunciado}
+Estimar la curva de Engel por percentiles de ingreso y consumo per cápita familiar.
+:::
+
+En la figura 1, se presentan estimaciones de la curva de Engel por percentiles de ingreso y de consumo per cápita familiar. Por un lado, se puede observar que, en ambos casos, como era de esperar, <mark>a medida que aumenta el ingreso total o el consumo total</mark>, la participación del gasto de consumo en alimentos y bebidas en el gasto total de consumo del hogar disminuye, es decir, los percentiles más altos tienen una menor participación del gasto de consumo alimentos y bebidas en el gasto total de consumo.
+
+```{r engel}
+# Un registro por hogar (tag), tomado en el orden en que queda la base tras ordenar
+oi <- order(d$ipcf); oc <- oi[order(d$cpcf[oi])]
+primero <- oc[!duplicated(d$clave[oc])]
+share <- d$gc_1 / d$gastot
+engel <- function(x, orden, excluir = integer(0)) {
+  p <- cuantiles(x, w, 100, orden); s0 <- primero[!d$clave[primero] %in% excluir]
+  sapply(1:100, function(q) { s <- s0[p[s0] == q]; weighted.mean(share[s], w[s]) })
+}
+Ei <- engel(d$ipcf, oi); Ec <- engel(d$cpcf, oc)
+graf_engel <- function(a, b) {
+  par(mar = c(7, 4.5, 1, 1), las = 1)
+  matplot(1:100, cbind(a, b), type = "l", lty = 1, lwd = 2, col = c("red", "#0070c0"), ylim = c(0, 0.8),
+          xlab = "Percentiles", ylab = "Share Food"); grid()
+  legend("bottom", inset = c(0, -0.42), legend = c("IPCF", "CPCF"), col = c("red", "#0070c0"), lwd = 2,
+         horiz = TRUE, xpd = TRUE, bty = "n")
+}
+graf_engel(Ei, Ec)
+xl <- suppressMessages(read_excel("Datos/Ejercicio 3.xlsx", col_names = FALSE)) |> as.data.frame()
+dif3 <- max(abs(Ei - as.numeric(xl[-1, 2])), abs(Ec - as.numeric(xl[-1, 3])))
+```
+
+**Figura 1.** Curva de Engel por percentiles de IPCF y CPCF.
+
+Control: la diferencia máxima con los 200 valores de `Ejercicio 3.xlsx` es `r format(dif3, scientific = TRUE, digits = 2)`.
+
+```{r engel-atipico}
+p_i <- cuantiles(d$ipcf, w, 100, oi)
+en75 <- primero[p_i[primero] == 75]
+culpable <- en75[which.max(w[en75] * share[en75])]
+h <- hog[hog$clave == d$clave[culpable], ]
+Ei2 <- engel(d$ipcf, oi, raros$clave); Ec2 <- engel(d$cpcf, oc, raros$clave)
+graf_engel(Ei2, Ec2)
+```
+
+**Gráfico agregado.** Curva de Engel sin los `r nrow(raros)` hogares en que el gasto en alimentos supera al gasto total.
+
+::: {.disc .error #d8}
+**D8.** El pico del percentil 75 de ingreso (`r porc(Ei[75])`, entre vecinos de `r porc(Ei[74])` y `r porc(Ei[76])`) **no es un comportamiento de consumo**. Lo produce un solo hogar (clave `r h$clave`, con factor de expansión `r num(h$expan)`) que declara \$`r num(h$gc_1, 2)` en alimentos y un gasto **total** de \$`r num(h$gastot, 2)`, porque descuenta \$`r num(-h$gc_6, 2)` en transporte: su "participación" es **`r porc(h$gc_1 / h$gastot, 0)`**. Sin los hogares con participación mayor que 100%, el percentil 75 queda en `r porc(Ei2[75])` y el percentil 1 de consumo pasa de `r porc(Ec[1])` a `r porc(Ec2[1])`.
+:::
+
+::: {.disc .impr #d9}
+**D9.** El eje son percentiles de ingreso y consumo **per cápita**, no totales. La relación decreciente es una tendencia: la curva no baja en todos los percentiles.
+:::
+
+# Ejercicio 4
+
+::: {.enunciado}
+Computar la distribución de la carga tributaria del impuesto a los cigarrillos suponiendo una traslación total de la carga a los consumidores. Presentar la curva de concentración de impuestos. Calcular el índice de Kakwani.
+:::
+
+En la figura 2, se presenta la curva de concentración de impuestos, considerando un impuesto a los cigarrillos y suponiendo una tasa uniforme del 15% y una traslación total de la carga a los consumidores. Esta representación gráfica es útil para observar el grado de focalización de la carga tributaria, ya que indica el porcentaje de ésta que recae sobre el p% de menores ingresos de la población (Gasparini et al., 2013). Por un lado, se puede observar que la curva de concentración se encuentra por encima de la curva de Lorenz, por lo que se puede afirmar que el impuesto es regresivo. Y, por otro lado, para identificar el grado de regresividad del impuesto, es posible comparar la distancia entre la curva de concentración del impuesto y la curva de Lorenz, como propone el índice de progresividad de Kakwani. Este índice es igual a la diferencia entre el Índice de Concentración de la Carga Impositiva (ICCI) y el coeficiente de Gini. En este caso, el índice de Kakwani es negativo e igual a -0,294 (ver tabla 3), lo cual corrobora que el impuesto es regresivo.
+
+```{r ej4}
+G <- gini(d$ipcf, w); L <- curva(d$ipcf, w, oi)
+impuesto <- function(t) { cv <- curva(t, w, oi); C <- concentracion(t, w, oi)
+  pp <- L$p[L$p > 0 & L$p < 1 - 1e-12]; dif <- Lp(cv, pp) - Lp(L, pp)
+  list(cv = cv, C = C, K = C - G, p = pp, dif = dif) }
+graf_conc <- function(cv) {
+  par(mar = c(7, 4.5, 1, 1), las = 1)
+  plot(L$p, L$L, type = "l", xlab = "p", ylab = "L(p)"); grid(); lines(cv$p, cv$L, col = "red", lty = 2, lwd = 1.5)
+  legend("bottom", inset = c(0, -0.42), legend = c("Curva de Lorenz", "Curva de concentración del impuesto"),
+         col = c("black", "red"), lty = c(1, 2), lwd = 2, horiz = TRUE, xpd = TRUE, bty = "n")
+}
+cig <- impuesto(0.15 * cig_base / d$cantmiem)
+graf_conc(cig$cv)
+```
+
+**Figura 2.** Curva de concentración de un impuesto a los cigarrillos.
+
+La curva queda por encima de la de Lorenz en el `r porc(mean(cig$dif > 0))` de los puntos: la conclusión de regresividad es correcta. La tasa de 15% no altera el índice, porque es uniforme.
+
+```{r ej4-sens}
+sens4 <- list("Base unificada: cigarrillos, cigarros y tabaco (PDF)" = cig,
+              "Solo cigarrillos (artículo 911101)" = impuesto(por_hogar(txt, 911101) / d$cantmiem),
+              "Con el Gastos.dta truncado" = impuesto(cig_dta / d$cantmiem))
+kable(data.frame(Caso = names(sens4), C = num(sapply(sens4, `[[`, "C"), 3), K = num(sapply(sens4, `[[`, "K"), 3)),
+      row.names = FALSE, align = "lrr", col.names = c("Cálculo", "ICCI", "Kakwani"),
+      caption = "Sensibilidad del ejercicio 4 (agregado en la réplica).")
+```
+
+::: {.disc .metodo #d10}
+**D10.** La base suma los artículos 911101 (cigarrillos) **y** 911102 (cigarros, cigarritos y tabaco). El efecto es mínimo (Kakwani `r num(sens4[[2]]$K, 3)` solo con cigarrillos), pero el enunciado pide cigarrillos. Mucho más importante es la fuente: con el `.dta` truncado el índice sería **`r num(sens4[[3]]$K, 3)`** en lugar de `r num(cig$K, 3)` ([D2](#d2)).
+:::
+
+```{r ej4-formula}
+tx <- 0.15 * cig_base / d$cantmiem
+dif_signo <- concentracion(tx, w, oi, +1) - concentracion(tx, w, oi, -1)
+```
+
+::: {.disc .impr #d11}
+**D11.** El *do-file* calcula el índice de concentración como $1 - \frac{1}{N} - \dots$; la fórmula (la misma que usa `comando_gini.do`) es $1 + \frac{1}{N} - \dots$. Con una población expandida de `r num(sum(w))` el efecto es `r format(dif_signo, scientific = TRUE, digits = 2)`, irrelevante aquí, pero no en muestras chicas sin ponderar.
+:::
+
+# Ejercicio 5
+
+::: {.enunciado}
+Computar la distribución de la carga tributaria de un impuesto al trabajo asalariado suponiendo una tasa uniforme y una traslación total de la carga a los trabajadores asalariados formales. Presentar la curva de concentración de impuestos. Calcular el índice de Kakwani. Ayuda: (b) considerar sólo la ocupación principal para determinar si un trabajador es asalariado formal y su ingreso laboral.
+:::
+
+En la figura 3, se presenta la curva de concentración de impuestos, considerando un impuesto al trabajo asalariado y suponiendo una tasa uniforme del 25% y una traslación total de la carga a los trabajadores asalariados formales. Por un lado, se puede observar que <mark>la curva de concentración se encuentra por debajo de la curva de Lorenz</mark>, por lo que se puede afirmar que el impuesto es progresivo. Y, por otro lado, en este caso, el índice de Kakwani es positivo igual a 0,067 (ver tabla 3), lo cual corrobora que el impuesto es progresivo.
+
+```{r ej5}
+formal <- d$catocup %in% 1 & d$cp30 %in% 1       # asalariado con descuento jubilatorio
+base_imp <- function(var) { y <- ifelse(formal, coalesce(d[[var]], 0), 0)
+  0.25 * ave(y, d$clave, FUN = sum) / d$cantmiem }
+lab <- impuesto(base_imp("inglabt")); pal <- impuesto(base_imp("ingocpal"))
+graf_conc(lab$cv)
+```
+
+**Figura 3.** Curva de concentración de un impuesto al trabajo asalariado (como en el PDF).
+
+```{r tabla3}
+kable(data.frame(Impuesto = c("Cigarrillo", "Trabajo asalariado"), ICCI = num(c(cig$C, lab$C), 3),
+                 Gini = num(G, 3), Kakwani = num(c(cig$K, lab$K), 3)), align = "lrrr",
+      caption = "Tabla 3. Índice de concentración de la carga impositiva, Gini y Kakwani.")
+dif_t3 <- max(abs(round(c(cig$C, G, cig$K, lab$C, G, lab$K), 3) - c(.131, .425, -.294, .492, .425, .067)))
+f <- d[formal, ]
+cero <- sum(f$inglabt == 0 & f$ingocpal > 0)
+distinto <- mean(abs(f$inglabt - f$ingocpal) > .5)
+```
+
+Control: la diferencia máxima con la tabla 3 del PDF es `r num(dif_t3, 3)`.
+
+```{r ej5-corregido}
+graf_conc(pal$cv)
+```
+
+**Figura 3 bis (agregada).** Con el ingreso de la ocupación principal.
+
+```{r ej5-corregido-tabla}
+kable(data.frame(Variable = c("inglabt (PDF)", "ingocpal (pedida)"),
+                 Personas = c(num(sum(w[formal & d$inglabt > 0])), num(sum(w[formal & d$ingocpal > 0]))),
+                 ICCI = num(c(lab$C, pal$C), 3), Kakwani = num(c(lab$K, pal$K), 3)), align = "lrrr",
+      col.names = c("Base imponible", "Asalariados formales que pagan (expandidos)", "ICCI", "Kakwani"),
+      caption = "Ejercicio 5 con la ocupación principal (agregado en la réplica).")
+arriba <- function(x) x$p[x$dif > 1e-12]
+# Desde qué p la curva queda por encima de forma permanente, y primer cruce en la parte alta
+permanente <- function(x) { debajo <- x$p[x$dif < -1e-12]; min(x$p[x$p > max(debajo)]) }
+primero_alto <- function(x) min(x$p[x$dif > 1e-12 & x$p > .5])
+```
+
+::: {.disc .error #d12}
+**D12.** La ayuda del enunciado pide el ingreso laboral de la **ocupación principal**, que es `ingocpal`. El *do-file* usa `inglabt`, el ingreso laboral **total**, que además de sumar otras ocupaciones **no incluye los montos imputados** (quedan aparte, en `inglabt_imp`). Resultado: **`r num(cero)`** asalariados formales con ingreso en su ocupación principal figuran con ingreso cero y no pagan impuesto, y las dos variables difieren en el `r porc(distinto)` de los asalariados formales. Con `ingocpal`, el índice de Kakwani es **`r num(pal$K, 3)`**, no `r num(lab$K, 3)`.
+:::
+
+::: {.disc .error #d13}
+**D13.** La curva de concentración **cruza** la de Lorenz: la primera vez que queda por encima es en p ≈ `r num(primero_alto(lab), 3)` y desde p ≈ `r num(permanente(lab), 3)` queda arriba de forma permanente (con `ingocpal` también la cruza, desde p ≈ `r num(primero_alto(pal), 3)`, además de en el extremo inferior). El impuesto no es progresivo en sentido de dominancia: el grupo de mayores ingresos (alrededor del 1 al 2% superior) paga una proporción del impuesto **menor** que su proporción del ingreso. El índice de Kakwani positivo resume una progresividad **en promedio**.
+:::
+
+# Verificación contra las figuras de Stata
+
+```{r verificacion}
+leer_gph <- function(archivo) {
+  b <- readBin(archivo, "raw", file.size(archivo))
+  i <- grepRaw("sersetreadwrite", b, fixed = TRUE); fin <- grepRaw("<EndSersetData>", b, fixed = TRUE)
+  cab <- rawToChar(b[grepRaw("<BeginSerset>", b, fixed = TRUE):(i - 1)])
+  nom <- regmatches(cab, gregexpr('[.]name = `"[^"]*"', cab, useBytes = TRUE))[[1]]
+  nom <- substr(nom, 11, nchar(nom, "bytes") - 1)
+  nv <- readBin(b[i + 18:21], "integer", size = 4, endian = "little")
+  n  <- readBin(b[i + 22:25], "integer", size = 4, endian = "little")
+  tam <- unname(c("255" = 8, "254" = 4)[as.character(as.integer(b[i + 25 + seq_len(nv)]))])
+  mat <- matrix(b[(fin - 2 - n * sum(tam)):(fin - 3)], nrow = sum(tam)); desde <- cumsum(c(0, tam))
+  setNames(lapply(seq_len(nv), function(j)
+    readBin(as.vector(mat[desde[j] + seq_len(tam[j]), ]), "double", n, size = tam[j], endian = "little")), nom)
+}
+ruta <- sprintf("Figuras/Figura %d.gph", 2:3)
+if (all(file.exists(ruta))) {
+  # Al final de cada grupo de ingresos empatados el acumulado no depende del orden
+  corte <- which(!duplicated(d$ipcf[oi], fromLast = TRUE)) + 1
+  res <- sapply(1:2, function(k) { s <- leer_gph(ruta[k]); cv <- list(cig, lab)[[k]]$cv
+    o <- order(s$shrpop); sp <- s$shrpop[o]; bp <- cv$p[corte]
+    j <- findInterval(bp, sp); j <- ifelse(j < length(sp) & abs(sp[pmin(j + 1, length(sp))] - bp) < abs(sp[pmax(j, 1)] - bp), j + 1, pmax(j, 1))
+    c(max(abs(Lp(L, pmin(s$shrpop, 1)) - s$shrinc)), max(abs(s$shrtax[o][j] - cv$L[corte])),
+      max(abs(Lp(cv, pmin(s$shrpop, 1)) - s$shrtax))) })
+  salida <- kable(data.frame(Figura = 2:3, matrix(format(t(res), scientific = TRUE, digits = 2), 2)), align = "rrrr",
+                  col.names = c("Figura", "Lorenz", "Concentración, entre grupos de empate",
+                                "Concentración, todos los puntos"),
+                  caption = "Máxima diferencia absoluta entre R y Stata.")
+} else salida <- "No se encontraron los archivos .gph; se omite la verificación."
+salida
+```
+
+Dentro de un grupo de ingresos empatados, la curva de concentración puede diferir un poco porque Stata ordena esos hogares al azar.
+
+```{r sesion}
+sessionInfo()
+```

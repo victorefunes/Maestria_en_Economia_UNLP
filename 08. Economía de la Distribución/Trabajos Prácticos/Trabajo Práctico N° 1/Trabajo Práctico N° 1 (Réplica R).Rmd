@@ -1,0 +1,636 @@
+---
+title: "Trabajo Práctico N° 1 — Réplica en R"
+subtitle: "Maestría en Economía UNLP - Economía de la Distribución. Respuestas originales: Juan Menduiña"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+    self_contained: true
+    code_folding: hide
+---
+
+```{css, echo=FALSE}
+mark { background: #ffe27a; padding: 0 2px; }
+.disc { border-left: 6px solid; border-radius: 4px; padding: 10px 14px; margin: 14px 0; font-size: 0.95em; }
+.disc p:last-child { margin-bottom: 0; }
+.error { border-color: #c0392b; background: #fdecea; }
+.impr  { border-color: #d68910; background: #fef5e7; }
+.metodo{ border-color: #2874a6; background: #eaf2f8; }
+.enunciado { font-style: italic; color: #444; }
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 8, fig.height = 5, dpi = 120)
+library(haven); library(dplyr); library(knitr)
+
+num <- function(x, d = 0) formatC(x, format = "f", digits = d, big.mark = ".", decimal.mark = ",")
+pct <- function(x, d = 2) paste0(num(100 * x, d), "%")
+```
+
+# Cómo leer este documento {-}
+
+El texto de cada ejercicio es el del PDF *Trabajo Práctico N° 1 (R)*. Las tablas, las figuras y los números de los recuadros se calculan en R a partir de `Datos/usu_individual_t119.dta`. Lo <mark>resaltado</mark> es una frase o un número con alguna discrepancia, explicada en el recuadro que sigue:
+
+::: {.disc .error}
+**Error**: la afirmación contradice los datos.
+:::
+
+::: {.disc .impr}
+**Imprecisión**: redacción, rótulo o formato que puede inducir a error.
+:::
+
+::: {.disc .metodo}
+**Observación metodológica**: el número se replica, pero depende de una decisión discutible.
+:::
+
+**Resultado de la réplica.** Las tablas 1 y 2, las figuras 1 a 11 y los porcentajes de los ejercicios 5, 6 y 7 se reproducen en R, con una excepción: la primera cifra del ejercicio 7 depende de un orden aleatorio de las filas ([D18](#d18)). Las discrepancias están sobre todo en la **interpretación** de los resultados.
+
+| N° | Ej. | Tipo | Discrepancia |
+|----|-----|------|--------------|
+| [D1](#d1) | Intro | Error | La EPH no es representativa a nivel nacional |
+| [D2](#d2) | Intro | Imprecisión | Las 47.789 observaciones son posteriores a los filtros, que operan por hogar |
+| [D3](#d3) | 1 | Imprecisión | El enunciado dice "seis regiones" y enumera siete |
+| [D4](#d4) | 1 | Error | La mayor y menor dispersión no son las que indica el texto |
+| [D5](#d5) | 1 | Error | La mediana del NEA es 7.000, no 11.500 |
+| [D6](#d6) | 1 | Imprecisión | "Obs." es población expandida; formato inconsistente; errata en el desvío del NOA |
+| [D7](#d7) | 2 | Imprecisión | El logaritmo no oculta la asimetría: la invierte |
+| [D8](#d8) | 3 | Error | La dispersión no disminuye de forma monótona con la educación |
+| [D9](#d9) | 4 | Imprecisión | Las 317 observaciones del sector primario no son las usadas en la figura |
+| [D10](#d10) | 4 | Metodológica | Construcción, servicios públicos y actividad no especificada se cuentan como servicios |
+| [D11](#d11) | 4 | Metodológica | El *do-file* tiene dos definiciones de sector con muestras distintas |
+| [D12](#d12) | 4 | Error | En hombres, el sector primario tiene el mayor promedio, no el menor |
+| [D13](#d13) | 4 | Error | Las brechas sectoriales no se cierran al aumentar la educación |
+| [D14](#d14) | 4 | Error | El promedio del primario sin secundaria completa no es inferior al de los otros sectores |
+| [D15](#d15) | 6 | Metodológica | Shares de hogar ponderados con `pondii` en lugar de `pondih` |
+| [D16](#d16) | 6 | Metodológica | El promedio del cónyuge incluye hogares sin cónyuge |
+| [D17](#d17) | 6 | Imprecisión | El segundo método da participaciones agregadas, no promedios |
+| [D18](#d18) | 7 | Metodológica | 53,36% / 46,64% no es reproducible de forma exacta |
+
+# Datos y funciones
+
+Los filtros siguen el *do-file*: se conservan los hogares con decil de IPCF entre 1 y 10 (excluye sin ingreso y no respuesta) y se eliminan los hogares secundarios (51 y 71).
+
+```{r datos}
+base <- read_dta("Datos/usu_individual_t119.dta") |> zap_labels()
+names(base) <- tolower(names(base))
+
+d <- base |>
+  mutate(dec = suppressWarnings(as.numeric(deccfr))) |>
+  filter(!is.na(dec), dec >= 1, dec <= 10, !nro_hogar %in% c(51, 71)) |>
+  filter(nivel_ed %in% 1:7) |>
+  mutate(
+    region2 = ifelse(aglomerado %in% c(32, 33), aglomerado, region),
+    hombre  = ch04 == 1,
+    educ    = case_when(nivel_ed %in% c(1, 2, 3, 7) ~ 1,
+                        nivel_ed %in% c(4, 5) ~ 2,
+                        nivel_ed == 6 ~ 3)
+  )
+
+c(base_individual = nrow(base), muestra = nrow(d), poblacion = sum(d$pondih))
+```
+
+Estas funciones reproducen las fórmulas de Stata (`summarize [w=]`, `sktest, noadjust`, `histogram` y `kdensity`).
+
+```{r funciones}
+# Percentil ponderado
+wq <- function(x, w, p) {
+  o <- order(x); x <- x[o]; w <- w[o]
+  cw <- cumsum(w); P <- sum(w) * p; i <- which(cw > P)[1]
+  if (i > 1 && isTRUE(all.equal(cw[i - 1], P))) (x[i - 1] + x[i]) / 2 else x[i]
+}
+wsd <- function(x, w) {
+  n <- length(x); m <- weighted.mean(x, w)
+  sqrt(sum(w * (x - m)^2) / sum(w) * n / (n - 1))
+}
+describir <- function(x, w) {
+  k <- w > 0; x <- x[k]; w <- w[k]
+  frec <- tapply(w, x, sum)
+  data.frame(n = length(x), Obs = sum(w), Media = weighted.mean(x, w),
+             Desvio = wsd(x, w), CV = wsd(x, w) / weighted.mean(x, w),
+             p25 = wq(x, w, .25), Mediana = wq(x, w, .5), p75 = wq(x, w, .75),
+             Moda = as.numeric(names(which.max(frec))))
+}
+
+# Test de asimetría y curtosis (D'Agostino; Anscombe-Glynn), sin ajuste
+sktest <- function(x, w) {
+  n <- length(x); m <- weighted.mean(x, w)
+  mom <- function(r) sum(w * (x - m)^r) / sum(w)
+  g1 <- mom(3) / mom(2)^1.5; b2 <- mom(4) / mom(2)^2
+  Y  <- g1 * sqrt((n + 1) * (n + 3) / (6 * (n - 2)))
+  B  <- 3 * (n^2 + 27*n - 70) * (n+1) * (n+3) / ((n-2) * (n+5) * (n+7) * (n+9))
+  W2 <- -1 + sqrt(2 * (B - 1)); a <- sqrt(2 / (W2 - 1))
+  z1 <- asinh(Y / a) / sqrt(log(sqrt(W2)))
+  E  <- 3 * (n - 1) / (n + 1)
+  V  <- 24 * n * (n-2) * (n-3) / ((n+1)^2 * (n+3) * (n+5))
+  xs <- (b2 - E) / sqrt(V)
+  sb <- 6 * (n^2 - 5*n + 2) / ((n+7) * (n+9)) * sqrt(6 * (n+3) * (n+5) / (n * (n-2) * (n-3)))
+  A  <- 6 + 8 / sb * (2 / sb + sqrt(1 + 4 / sb^2))
+  t3 <- (1 - 2/A) / (1 + xs * sqrt(2 / (A - 4)))
+  z2 <- ((1 - 2/(9*A)) - sign(t3) * abs(t3)^(1/3)) / sqrt(2 / (9*A))
+  chi2 <- z1^2 + z2^2
+  data.frame(Obs = n, Asimetria = g1, Curtosis = b2,
+             p_asim = 2 * pnorm(-abs(z1)), p_curt = 2 * pnorm(-abs(z2)),
+             chi2 = chi2, p_chi2 = pchisq(chi2, 2, lower.tail = FALSE))
+}
+
+# Densidad kernel: Epanechnikov de Stata, ancho de banda por defecto, 300 puntos
+kd <- function(x, w, puntos = 300, grilla = seq(min(x), max(x), length.out = puntos)) {
+  iqr <- wq(x, w, .75) - wq(x, w, .25)
+  h <- 0.9 * min(wsd(x, w), iqr / 1.349) / length(x)^0.2
+  dens <- vapply(grilla, function(g) {
+    z <- (g - x) / h; k <- abs(z) < sqrt(5)
+    sum(w[k] * 0.75 * (1 - z[k]^2 / 5) / sqrt(5)) / (sum(w) * h)
+  }, numeric(1))
+  data.frame(x = grilla, densidad = dens)
+}
+
+# Histograma con pesos de frecuencia y número de barras por defecto de Stata
+histo <- function(x, w) {
+  N <- sum(w); k <- floor(min(sqrt(N), 10 * log10(N)))
+  ancho <- (max(x) - min(x)) / k
+  b <- pmin(floor((x - min(x)) / ancho), k - 1)
+  f <- tapply(w, b, sum) / N
+  data.frame(x = min(x) + (as.numeric(names(f)) + .5) * ancho,
+             fraccion = as.numeric(f), ancho = ancho)
+}
+graf_hist <- function(h, titulo_x) {
+  par(mar = c(4.2, 4.2, 1, 1), las = 1)
+  ancho <- h$ancho[1]
+  plot(NA, xlim = range(h$x) + c(-1, 1) * ancho / 2, ylim = c(0, max(h$fraccion) * 1.05),
+       xlab = titulo_x, ylab = "Fracción", yaxs = "i", xaxt = "n")
+  marcas <- pretty(h$x)
+  axis(1, at = marcas, labels = format(marcas, big.mark = ".", decimal.mark = ",", scientific = FALSE, trim = TRUE))
+  rect(h$x - ancho / 2, 0, h$x + ancho / 2, h$fraccion, col = "#cdc785", border = "white", lwd = .5)
+}
+colores <- c("#1a476f", "#90353b", "#55752f")
+graf_kd <- function(lista, titulo_x) {
+  curvas <- lapply(lista, function(g) kd(g$x, g$w))
+  par(mar = c(7, 4.2, 1, 1), las = 1)
+  plot(NA, xlim = range(sapply(curvas, function(k) range(k$x))),
+       ylim = c(0, max(0.8, sapply(curvas, function(k) max(k$densidad)))),
+       xlab = titulo_x, ylab = "Densidad")
+  grid()
+  for (i in seq_along(curvas)) lines(curvas[[i]]$x, curvas[[i]]$densidad, col = colores[i], lwd = 1.4)
+  legend("bottom", inset = c(0, -0.42), legend = names(lista), col = colores, lwd = 2,
+         horiz = TRUE, xpd = TRUE, bty = "n")
+}
+```
+
+# Introducción {-}
+
+Para los cálculos de este trabajo, se consideró la base de microdatos de la EPH del primer trimestre de 2019 elaborada por el INDEC, <mark>la cual es representativa a nivel nacional</mark> <mark>y comprende 47.789 observaciones</mark>.^[Texto original: "Se omiten aquellas observaciones que no presentan ingresos positivos, que no han dado respuesta sobre sus niveles de ingresos o que pertenecen a hogares secundarios".]
+
+::: {.disc .error #d1}
+**D1.** La EPH continua es una encuesta **urbana**: releva 31 aglomerados y no cubre la población rural ni las localidades fuera de esos aglomerados. No es representativa del total nacional. El "total país" debe leerse como "total de aglomerados urbanos relevados" (`r num(sum(d$pondih))` personas expandidas). La propia nota al pie 3 del original reconoce el carácter urbano.
+:::
+
+::: {.disc .impr #d2}
+**D2.** La base individual tiene **`r num(nrow(base))`** observaciones; `r num(nrow(d))` es la muestra que queda **después** de los filtros. Además, los filtros se aplican sobre el ingreso del **hogar**: dentro de la muestra quedan `r num(sum(d$p47t == 0))` personas sin ingreso individual (`p47t = 0`). La nota al pie debería decir que se omiten los hogares sin ingreso o sin respuesta.
+:::
+
+# Ejercicio 1
+
+::: {.enunciado}
+Caracterizar la distribución del ingreso per cápita familiar de las siguientes siete regiones que permite identificar la EPH: Partidos del GBA, Ciudad de Buenos Aires, NOA, NEA, Cuyo, Pampeana, y Patagónica. Además, mostrar resultados para el total del país. Como mínimo, calcular media, mediana, moda, cuartiles y desvío estándar.
+:::
+
+::: {.disc .impr #d3}
+**D3.** El PDF de enunciados dice "las siguientes **seis** regiones" y enumera **siete**. El PDF de respuestas lo cambia a "siete" sin aclararlo.
+:::
+
+En la tabla 1, se presentan estadísticas descriptivas del ingreso per cápita familiar (IPCF), para el total país y por región. A nivel país, se puede observar que el IPCF promedio se ubica en \$13.508,85, con una desviación estándar de \$13.729,96. Además, la mitad de los individuos percibe un IPCF de hasta \$9.600 y el valor más observado de esta variable es \$15.000.
+
+Al nivel regional, las diferencias en el IPCF son notorias. Por un lado, se puede observar que CABA registra el mayor IPCF promedio, ubicándose en torno a los \$23.527, mientras que, en el extremo opuesto, la región del NEA evidencia el menor promedio de esta variable, con un valor de \$9.534. Por otro lado, <mark>mientras que los Partidos del GBA y la región Pampeana registran la mayor dispersión en el IPCF, la región Patagónica registra la menor</mark>. Luego, mientras que, en CABA, la mitad de los individuos percibe un IPCF de hasta \$18.450, <mark>en NEA, este valor se reduce a \$11.500</mark>. Por último, en la región del NEA, Cuyo, Pampeana y Patagónica, el ingreso reportado con mayor frecuencia resulta \$10.000, mientras que, en CABA, ese valor asciende a \$15.000 (mayor moda) y, en los Partidos del GBA y en la región del NOA, desciende a \$5.000 (menor moda).
+
+```{r ej1}
+regiones <- c("32" = "CABA", "33" = "GBA", "40" = "NOA", "41" = "NEA",
+              "42" = "Cuyo", "43" = "Pampeana", "44" = "Patagónica")
+t1 <- bind_rows(lapply(names(regiones), function(r)
+  with(filter(d, region2 == as.numeric(r)), describir(ipcf, pondih))))
+t1 <- bind_rows(t1, describir(d$ipcf, d$pondih))
+t1 <- cbind(Region = c(regiones, "Total País"), t1)
+
+kable(t1 |> mutate(across(c(Obs, Media, Desvio, p25, Mediana, p75, Moda), num),
+                   CV = num(CV, 2), n = num(n)) |> relocate(n, .after = Obs),
+      row.names = FALSE, align = c("l", rep("r", 9)),
+      col.names = c("Región", "Obs. (expandidas)", "n muestral", "Media", "Desvío estándar",
+                    "CV", "p25", "Mediana", "p75", "Moda"),
+      caption = "Tabla 1. Estadísticas descriptivas del IPCF (Argentina, primer trimestre 2019).")
+```
+
+```{r ej1-control}
+# Valores publicados en la tabla 1 del PDF
+pdf1 <- matrix(c(
+  2977220, 23527, 19220, 0.82, 11450, 18450, 30200, 15000,
+  12131773, 12276, 12599, 1.03, 5167, 9000, 15000, 5000,
+  2688986, 9789, 9191, 0.94, 4500, 7200, 11714, 5000,
+  1391143, 9534, 9008, 0.94, 4000, 7000, 11500, 10000,
+  1771478, 12123, 13371, 1.10, 5250, 8975, 14200, 10000,
+  6130181, 13526, 13122, 0.97, 5740, 10000, 17000, 10000,
+  1030846, 16428, 13065, 0.80, 8200, 13000, 20900, 10000,
+  28121627, 13509, 13730, 1.02, 5393, 9600, 16450, 15000), ncol = 8, byrow = TRUE)
+rep1 <- as.matrix(t1[, c("Obs", "Media", "Desvio", "CV", "p25", "Mediana", "p75", "Moda")])
+tol <- matrix(rep(c(.5, .5, .5, .005, .5, .5, .5, .5), each = 8), 8)
+dif1 <- sum(abs(rep1 - pdf1) > tol)
+```
+
+Control: de las `r length(pdf1)` celdas publicadas, **`r dif1`** difiere de la réplica más allá del redondeo: <mark>el desvío estándar del NOA</mark> (PDF: 9.191; R: `r num(t1$Desvio[3], 2)`, que redondea a 9.190). Ver [D6](#d6).
+
+::: {.disc .error #d4}
+**D4.** La afirmación sobre dispersión no se sostiene con ninguna de las dos medidas de la tabla.
+
+* Por **desvío estándar**, de mayor a menor: `r paste(sprintf("%s (%s)", t1$Region[1:7], num(t1$Desvio[1:7]))[order(-t1$Desvio[1:7])], collapse = ", ")`. La mayor es CABA y la menor es el NEA.
+* Por **coeficiente de variación** (la comparación adecuada, porque las medias difieren mucho): `r paste(sprintf("%s (%s)", t1$Region[1:7], num(t1$CV[1:7], 2))[order(-t1$CV[1:7])], collapse = ", ")`. Las de mayor dispersión relativa son **Cuyo y GBA**; la Patagónica sí es la menor.
+:::
+
+::: {.disc .error #d5}
+**D5.** La **mediana** del NEA es \$`r num(t1$Mediana[4])`. El valor \$11.500 es su **percentil 75** (\$`r num(t1$p75[4])`).
+:::
+
+::: {.disc .impr #d6}
+**D6.** En la tabla 1 original, la columna "Obs." muestra la **suma de ponderadores** (población expandida), no el número de observaciones (columna "n muestral" arriba). Además, mezcla separadores: "1.10" y "0.97" con punto decimal frente a "0,82", y "4500" sin separador de miles. El desvío estándar del NOA figura como 9.191 y debería ser **9.190** (errata).
+
+Nota sobre la moda: coincide con el PDF, pero es poco informativa en una variable casi continua. En el total país el valor modal concentra apenas `r pct(max(tapply(d$pondih, d$ipcf, sum)) / sum(d$pondih), 1)` de la población.
+:::
+
+# Ejercicio 2
+
+::: {.enunciado}
+Presentar un histograma del ingreso total individual de las personas ocupadas. Repetir el ejercicio utilizando (a) el logaritmo del ingreso total individual de las personas ocupadas y (b) el logaritmo del ingreso total individual de hombres y de mujeres ocupados por separado. En todos los casos, evaluar la hipótesis de normalidad de la distribución.
+:::
+
+En la figura 1, se presenta la distribución del ingreso total individual de las personas ocupadas. Luego, se procede a efectuar un test de simetría y curtosis para estudiar la distribución de la variable mencionada. Bajo la hipótesis nula de este test, el coeficiente de asimetría no debe ser significativamente distinto de cero y el coeficiente de curtosis no debe ser significativamente distinto de tres. Esto es, se debería comprobar que la distribución es simétrica (coeficiente de asimetría igual a cero) y mesocúrtica (coeficiente de curtosis igual a tres).^[El coeficiente de asimetría de Fisher se define como $\gamma = \mu_3/\sigma^3$ y el de curtosis como $\beta = \mu_4/\sigma^4$, donde $\mu_3$ y $\mu_4$ son el tercer y cuarto momento con respecto a la media y $\sigma$ es el desvío estándar.] Los datos analizados presentan evidencia suficiente para rechazar la hipótesis nula de normalidad de la distribución del ingreso total individual de las personas ocupadas para cualquier nivel de significatividad.
+
+```{r fig1}
+ocup <- d |> filter(estado == 1, p47t > 0) |> mutate(lincome = log(p47t))
+h1 <- histo(ocup$p47t, ocup$pondii)
+graf_hist(h1, "Ingreso total individual ocupados")
+```
+
+**Figura 1.** Ingreso total individual de personas ocupadas (Argentina, primer trimestre 2019). Fuente: Elaboración propia en base a EPH-INDEC.
+
+En la figura 2, se presenta la distribución del logaritmo del ingreso total individual de las personas ocupadas. En este caso, si bien la hipótesis de normalidad de la distribución de esta variable sigue siendo rechazada para cualquier nivel de significatividad, al aplicar logaritmo a esta variable, se logra un progreso gráfico notable en el sentido de la distribución normal, ya que los valores altos de la variable se normalizan y la alta frecuencia de datos en niveles bajos de ingreso se mimetiza. Al aplicar el logaritmo a la variable, se comprime la escala de medición. <mark>No obstante, este procedimiento impide visualizar la asimetría positiva de la distribución observada en la figura 1.</mark>
+
+```{r fig2}
+h2 <- histo(ocup$lincome, ocup$pondii)
+graf_hist(h2, "Logaritmo del ingreso total individual ocupados")
+```
+
+**Figura 2.** Logaritmo del ingreso total individual de personas ocupadas (Argentina, primer trimestre 2019). Fuente: Elaboración propia en base a EPH-INDEC.
+
+```{r tabla2}
+hom <- filter(ocup, hombre); muj <- filter(ocup, !hombre)
+t2 <- bind_rows(income    = sktest(ocup$p47t, ocup$pondii),
+                lincome   = sktest(ocup$lincome, ocup$pondii),
+                lincome_h = sktest(hom$lincome, hom$pondii),
+                lincome_m = sktest(muj$lincome, muj$pondii), .id = "Variable")
+```
+
+::: {.disc .impr #d7}
+**D7.** El logaritmo no solo "impide visualizar" la asimetría positiva: la distribución transformada tiene asimetría **negativa**. El coeficiente pasa de `r num(t2$Asimetria[1], 2)` en niveles a `r num(t2$Asimetria[2], 2)` en logaritmos (cola izquierda más larga), y la curtosis baja de `r num(t2$Curtosis[1], 1)` a `r num(t2$Curtosis[2], 1)`.
+:::
+
+Las figuras 3 y 4 corresponden al ingreso total individual en logaritmo de hombres y mujeres, respectivamente. En ambos casos, se rechaza la hipótesis de normalidad de la distribución de esta variable para cualquier nivel de significatividad. Y, por último, en la tabla 2, se presentan los resultados de los test de normalidad de las distribuciones mencionadas, en donde se observa que, en todos los casos, se rechaza la hipótesis de normalidad para cualquier nivel de significatividad.
+
+```{r tabla2-salida}
+kable(t2 |> mutate(Obs = num(Obs), across(c(Asimetria, Curtosis), ~num(.x, 3)),
+                   across(c(p_asim, p_curt, p_chi2), ~num(.x, 3)), chi2 = num(chi2, 2)),
+      align = c("l", rep("r", 7)),
+      col.names = c("Variable", "Observaciones", "Asimetría", "Curtosis",
+                    "Pr(Skewness)", "Pr(Kurtosis)", "chi2(2)", "Prob>chi2"),
+      caption = "Tabla 2. Test de simetría/curtosis para normalidad.")
+dif2 <- max(abs(t2$chi2 - c(17659.17, 1839.01, 964.10, 791.32)))
+```
+
+Control: los estadísticos chi2 y las observaciones coinciden con el PDF (diferencia máxima en chi2: `r num(dif2, 3)`). Las columnas de asimetría y curtosis se agregan aquí.
+
+```{r fig3}
+h3 <- histo(hom$lincome, hom$pondii)
+graf_hist(h3, "Logaritmo del ingreso total individual ocupados (Hombres)")
+```
+
+**Figura 3.** Logaritmo del ingreso total individual de hombres ocupados.
+
+```{r fig4}
+h4 <- histo(muj$lincome, muj$pondii)
+graf_hist(h4, "Logaritmo del ingreso total individual ocupados (Mujeres)")
+```
+
+**Figura 4.** Logaritmo del ingreso total individual de mujeres ocupadas.
+
+# Ejercicio 3 (Opcional)
+
+::: {.enunciado}
+Presentar y comparar estimaciones no paramétricas por el método de Kernel de la distribución del logaritmo del ingreso total individual de los individuos ocupados contenidos en cada uno de los siguientes grupos: (i) con educación menor a secundaria completa, (ii) con educación menor a superior completa y (iii) con educación superior completa. Notar que los grupos no comparten individuos.
+:::
+
+En la figura 5, se presentan estimaciones no paramétricas por el método de Kernel de la distribución del logaritmo del ingreso total individual de los individuos ocupados para distintos niveles educativos alcanzados. Por un lado, se puede observar la distribución del logaritmo del ingreso total individual del nivel educativo más alto se localiza más a la derecha, lo cual significa que las personas con mayor educación perciben ingresos más elevados. Por otro lado, el promedio del logaritmo del ingreso total individual de ocupados con educación superior completa está por encima del promedio de esta variable con otros niveles educativos y, <mark>a mayor nivel educativo, también la dispersión de esta variable dentro de cada grupo se reduce</mark>.
+
+```{r fig5}
+g5 <- setNames(lapply(1:3, function(e) with(filter(ocup, educ == e), list(x = lincome, w = pondii))),
+               c("prii | pric | seci", "secc | supi", "supc"))
+graf_kd(g5, "Logaritmo del ingreso total individual ocupados")
+```
+
+**Figura 5.** Densidad kernel del logaritmo del ingreso total individual de ocupados por nivel educativo. Nota: prii | pric | seci: menor a secundaria completa; secc | supi: secundaria completa o superior incompleta; supc: superior completa.
+
+```{r ej3-momentos}
+t3 <- ocup |> group_by(educ) |>
+  summarise(n = n(), Media = weighted.mean(lincome, pondii), Desvio = wsd(lincome, pondii),
+            IQR = wq(lincome, pondii, .75) - wq(lincome, pondii, .25), .groups = "drop")
+kable(t3 |> mutate(educ = names(g5), n = num(n), across(Media:IQR, ~num(.x, 3))),
+      col.names = c("Grupo", "n", "Media", "Desvío estándar", "Rango intercuartil"),
+      align = "lrrrr", caption = "Momentos del logaritmo del ingreso por grupo educativo (agregado en la réplica).")
+```
+
+::: {.disc .error #d8}
+**D8.** La dispersión **no** cae de forma monótona. El desvío estándar es `r num(t3$Desvio[1], 3)`, `r num(t3$Desvio[2], 3)` y `r num(t3$Desvio[3], 3)`: **sube** del primer grupo al segundo y solo baja en superior completa. El rango intercuartil va de `r num(t3$IQR[1], 3)` a `r num(t3$IQR[2], 3)` y a `r num(t3$IQR[3], 3)`. La parte sobre las medias es correcta.
+:::
+
+# Ejercicio 4
+
+::: {.enunciado}
+Presentar y comparar estimaciones no paramétricas por el método de Kernel de la distribución del logaritmo del ingreso de la ocupación principal (ver variable p21) de los individuos ocupados en cada uno de los siguientes sectores: actividades primarias, manufacturas y servicios.
+:::
+
+La división CAES son los primeros dos dígitos de `pp04b_cod`. Las figuras del PDF corresponden a la "Opción 1" del *do-file*, que usa solo los códigos de 3 y 4 dígitos (ver [D11](#d11)).
+
+```{r sectores}
+sectorizar <- function(div) case_when(div >= 1 & div <= 9 ~ 1,
+                                      div >= 10 & div <= 33 ~ 2,
+                                      div >= 35 & div <= 99 ~ 3)
+d <- d |> mutate(
+  largo    = nchar(as.character(pp04b_cod)),
+  division = ifelse(largo >= 3, pp04b_cod %/% 100, pp04b_cod),
+  sector_op2 = sectorizar(division),
+  sector     = ifelse(largo >= 3, sector_op2, NA)
+)
+pr <- d |> filter(estado == 1, p21 > 0) |> mutate(lp21 = log(p21))
+sectores <- c("Actividades primarias", "Manufacturas", "Servicios")
+por_sector <- function(df) setNames(lapply(1:3, function(s)
+  with(df[which(df$sector == s), ], list(x = lp21, w = pondiio))), sectores)
+resumen <- function(df, ...) df |> filter(!is.na(sector)) |> group_by(...) |>
+  summarise(n = n(), media = weighted.mean(lp21, pondiio),
+            mediana = wq(lp21, pondiio, .5), desvio = wsd(lp21, pondiio), .groups = "drop")
+tabla_sec <- function(t, titulo) kable(
+  t |> mutate(sector = sectores[sector], n = num(n), across(c(media, mediana, desvio), ~num(.x, 3))),
+  caption = titulo, align = "r",
+  col.names = unname(c(hombre = "Sexo", educ = "Educación", sector = "Sector", n = "n", media = "Media",
+                       mediana = "Mediana", desvio = "Desvío")[names(t)]))
+```
+
+En la figura 6, se presentan estimaciones no paramétricas de la distribución del logaritmo del ingreso individual de la ocupación principal de los individuos ocupados diferenciando por sector productivo, primario, secundario y servicios. Por un lado, se puede observar que el sector de actividades primarias presenta, relativamente al resto, el mayor promedio del logaritmo del ingreso individual de la ocupación principal, la mayor dispersión en la distribución, así como también el mayor desplazamiento en términos relativos hacia la derecha, lo cual es señal de que una gran proporción de individuos ocupados en actividades primarias presentan ingresos, comparativamente, altos. Por otro lado, no se observan diferencias significativas entre el sector de manufacturas y el sector de servicios, exceptuando que este último pareciera tener una mayor dispersión en su distribución, a consecuencia de la mayor incidencia de salarios bajos.
+
+*Nota al pie original:* "Si bien los resultados son llamativos, al analizar un poco más el origen de los datos, se puede observar que esta encuesta fue realizada para el ámbito urbano y <mark>sólo cuenta con 317 observaciones</mark>".
+
+```{r fig6}
+graf_kd(por_sector(pr), "Logaritmo del ingreso ocupación principal")
+```
+
+**Figura 6.** Densidad kernel del logaritmo del ingreso de la ocupación principal por sector productivo.
+
+```{r fig6-tabla}
+t4 <- resumen(pr, sector)
+tabla_sec(t4, "Logaritmo del ingreso de la ocupación principal por sector (agregado en la réplica).")
+```
+
+```{r ej4-controles}
+n_prim_ocup <- sum(d$estado == 1 & d$sector == 1, na.rm = TRUE)
+cortos <- sum(pr$largo < 3)
+serv <- filter(pr, sector == 3)
+n_constr <- sum(serv$division == 40)
+n_util <- sum(serv$division %in% 35:39)
+n_nesp <- sum(serv$pp04b_cod == 9999)
+estricto <- filter(serv, division >= 45, pp04b_cod != 9999)
+```
+
+::: {.disc .impr #d9}
+**D9.** Las `r n_prim_ocup` observaciones son **todos** los ocupados del sector primario. La densidad de la figura 6 se estima con **`r t4$n[1]`**, porque `r n_prim_ocup - t4$n[1]` no declaran ingreso positivo en la ocupación principal.
+:::
+
+::: {.disc .metodo #d10}
+**D10.** El grupo "Servicios" abarca las divisiones 35 a 99, que en CAES incluyen **construcción** (división 40: `r num(n_constr)` observaciones), **electricidad, gas, agua y saneamiento** (35 a 39: `r num(n_util)`) y el código **9999, actividad no especificada** (`r num(n_nesp)`). Ninguno de los dos primeros es un servicio en sentido estricto (construcción es la sección F) y el último no debería asignarse a un sector. Sin ellos (divisiones 45 a 99, sin 9999), la media del logaritmo en servicios es `r num(weighted.mean(estricto$lp21, estricto$pondiio), 3)` (con ellos: `r num(t4$media[3], 3)`) y el desvío `r num(wsd(estricto$lp21, estricto$pondiio), 3)` (con ellos: `r num(t4$desvio[3], 3)`).
+:::
+
+::: {.disc .metodo #d11}
+**D11.** El *do-file* construye los sectores dos veces. La "Opción 1" deja sin sector los códigos de 1 y 2 dígitos (`r cortos` ocupados con ingreso); la "Opción 2" sí los clasifica. Las curvas guardadas en `Figuras/*.gph` coinciden con la **Opción 1** (ver [Verificación](#verificación-contra-las-figuras-de-stata)), aunque la Opción 2 se ejecuta después. Con la Opción 2, el sector primario tendría `r sum(pr$sector_op2 == 1, na.rm = TRUE)` observaciones; los resultados casi no cambian.
+:::
+
+En las figuras 7 y 8, se presentan estimaciones como en el caso anterior, pero desagregando entre hombres y mujeres. En los tres sectores, en promedio, los hombres perciben ingresos mayores que las mujeres. En el caso de los hombres, en términos generales, las distribuciones en cada sector presentan patrones muy similares a los comentados anteriormente. En el caso de las mujeres, en el sector primario, la dispersión del ingreso disminuye, mientras que, en los sectores manufacturero y servicios, aumenta; además, el promedio del ingreso es mayor en el sector primario, seguido por el sector servicios y, finalmente, por el sector manufacturero, <mark>a diferencia del caso de los hombres, en donde el promedio del ingreso es mayor en el sector manufacturero, seguido por el sector servicios y, finalmente, por el sector primario</mark>.
+
+```{r fig7}
+graf_kd(por_sector(filter(pr, hombre)), "Logaritmo del ingreso ocupación principal")
+```
+
+**Figura 7.** Densidad kernel por sector productivo (Hombres).
+
+```{r fig8}
+graf_kd(por_sector(filter(pr, !hombre)), "Logaritmo del ingreso ocupación principal")
+```
+
+**Figura 8.** Densidad kernel por sector productivo (Mujeres).
+
+```{r fig8-tabla}
+t5 <- resumen(pr, hombre, sector)
+tabla_sec(t5 |> mutate(hombre = ifelse(hombre, "Hombres", "Mujeres")),
+          "Logaritmo del ingreso por sexo y sector (agregado en la réplica).")
+mh <- t5$media[t5$hombre]; mm <- t5$media[!t5$hombre]
+```
+
+::: {.disc .error #d12}
+**D12.** En los hombres el orden es **primario (`r num(mh[1], 3)`) > manufacturas (`r num(mh[2], 3)`) > servicios (`r num(mh[3], 3)`)**: el primario tiene el promedio **más alto**, no el más bajo. La frase además contradice la oración anterior ("patrones muy similares" a los del agregado).
+
+Salvedad adicional: en el sector primario la diferencia entre hombres y mujeres es mínima (`r num(mh[1], 3)` contra `r num(mm[1], 3)`, con medianas `r num(t5$mediana[t5$hombre][1], 3)` y `r num(t5$mediana[!t5$hombre][1], 3)`) y solo hay `r t5$n[!t5$hombre][1]` mujeres en la muestra.
+:::
+
+En las figuras 9, 10 y 11, se presentan estimaciones como en el caso de la figura 6, pero desagregando entre niveles educativos. En primer lugar, se puede observar que la distribución del logaritmo del ingreso en cada sector cambia, ampliamente, de acuerdo al nivel educativo que se considere. En segundo lugar, a mayor nivel educativo alcanzado, mayor es el ingreso promedio en cada sector. En tercer lugar, en el caso de los ocupados con nivel de educación menor a secundaria completa, el nivel y la dispersión del ingreso promedio difiere, considerablemente, entre sectores, <mark>mientras que, a mayor nivel educativo, esas brechas se van cerrando y, como se observa en la figura 11, el nivel de ingreso promedio de los ocupados con educación superior completa es muy similar en los distintos sectores</mark>. Por último, <mark>a diferencia de lo que se observa a nivel agregado (figura 6), el promedio del logaritmo del ingreso de los ocupados en el sector primario que no han terminado la secundaria es inferior al de los ocupados en los sectores manufacturero y servicios</mark>.
+
+```{r fig9}
+graf_kd(por_sector(filter(pr, educ == 1)), "Logaritmo del ingreso ocupación principal")
+```
+
+**Figura 9.** Densidad kernel por sector (menor a secundaria completa).
+
+```{r fig10}
+graf_kd(por_sector(filter(pr, educ == 2)), "Logaritmo del ingreso ocupación principal")
+```
+
+**Figura 10.** Densidad kernel por sector (menor a superior completa).
+
+```{r fig11}
+graf_kd(por_sector(filter(pr, educ == 3)), "Logaritmo del ingreso ocupación principal")
+```
+
+**Figura 11.** Densidad kernel por sector (superior completa).
+
+```{r fig11-tabla}
+t6 <- resumen(pr, educ, sector)
+tabla_sec(t6 |> mutate(educ = names(g5)[educ]),
+          "Logaritmo del ingreso por educación y sector (agregado en la réplica).")
+brecha <- t6 |> group_by(educ) |> summarise(b = max(media) - min(media)) |> pull(b)
+m1 <- t6$media[t6$educ == 1]; med1 <- t6$mediana[t6$educ == 1]; m3 <- t6$media[t6$educ == 3]
+```
+
+::: {.disc .error #d13}
+**D13.** Las brechas **no se cierran**. La distancia entre la mayor y la menor media sectorial es `r num(brecha[1], 3)` sin secundaria completa, `r num(brecha[2], 3)` en el grupo intermedio y `r num(brecha[3], 3)` con superior completa: **crece** del primer grupo al segundo y se mantiene en el tercero. En superior completa las medias son `r num(m3[1], 3)` (primario), `r num(m3[2], 3)` (manufacturas) y `r num(m3[3], 3)` (servicios); la media geométrica del primario supera a la de manufacturas en `r pct(exp(m3[1] - m3[2]) - 1, 0)`. (El primario superior tiene solo `r t6$n[t6$educ == 3][1]` observaciones.)
+:::
+
+::: {.disc .error #d14}
+**D14.** Sin secundaria completa, la **media** del primario (`r num(m1[1], 3)`) **no es inferior** a la de manufacturas (`r num(m1[2], 3)`) ni a la de servicios (`r num(m1[3], 3)`). La afirmación vale para la **mediana** (`r num(med1[1], 3)` contra `r num(med1[2], 3)` y `r num(med1[3], 3)`) o para la moda que se ve en la figura 9; la cola derecha del primario eleva su promedio.
+:::
+
+# Ejercicio 5
+
+::: {.enunciado}
+Computar la proporción de individuos con ingreso per cápita familiar menor a 50% del ingreso mediano.
+:::
+
+```{r ej5}
+mediana <- wq(d$ipcf, d$pondih, .5)
+pobres <- weighted.mean(d$ipcf < 0.5 * mediana, d$pondih)
+c(mediana = mediana, umbral = mediana / 2, proporcion = pobres)
+```
+
+A partir de la determinación del ingreso mediano (que se ubica en el orden de \$9.600) y mediante el cómputo de la proporción de individuos con IPCF menor al 50% del valor mencionado, se determina que el 20,16% de estos perciben IPCF menores a \$4.800. Si el criterio para la determinación del nivel de pobreza se determinara en términos relativos, se estaría en condiciones de afirmar que el 20,16% de la población se encontraría bajo la línea de pobreza.
+
+Sin discrepancias: R obtiene **`r pct(pobres)`**. Vale para la población urbana cubierta por la EPH (ver [D1](#d1)).
+
+# Ejercicio 6
+
+::: {.enunciado}
+Computar, para cada hogar, la participación de Jefe/a y Cónyuge/Pareja en el ingreso total familiar. Luego, mostrar el promedio de esas participaciones para el total de la muestra.
+:::
+
+```{r ej6}
+hog <- d |> group_by(codusu, nro_hogar) |>
+  summarise(itf = first(itf),
+            jefe = sum(p47t[ch03 == 1]) / first(itf),
+            conyuge = sum(p47t[ch03 == 2]) / first(itf),
+            hay_conyuge = any(ch03 == 2),
+            hombres = sum(p47t[ch04 == 1]) / first(itf),
+            mujeres = sum(p47t[ch04 == 2]) / first(itf),
+            pondii_jefe = pondii[ch03 == 1][1],
+            pondih = first(pondih), .groups = "drop")
+prom <- function(v, w) weighted.mean(v, w)
+agregado <- function(cond, w = d$pondii) sum((w * d$p47t)[cond]) / sum(w * d$p47t)
+c1 <- hog$hay_conyuge
+t7 <- data.frame(
+  Calculo = c("Promedio de shares por hogar, pondii del jefe (PDF)",
+              "Promedio de shares por hogar, pondih",
+              "Promedio solo en hogares con cónyuge, pondih",
+              "Agregado: suma de ingresos / ingreso total, pondii (PDF)",
+              "Agregado, pondih"),
+  Jefe = c(prom(hog$jefe, hog$pondii_jefe), prom(hog$jefe, hog$pondih),
+           prom(hog$jefe[c1], hog$pondih[c1]), agregado(d$ch03 == 1), agregado(d$ch03 == 1, d$pondih)),
+  Conyuge = c(prom(hog$conyuge, hog$pondii_jefe), prom(hog$conyuge, hog$pondih),
+              prom(hog$conyuge[c1], hog$pondih[c1]), agregado(d$ch03 == 2), agregado(d$ch03 == 2, d$pondih)))
+kable(t7 |> mutate(across(c(Jefe, Conyuge), pct)), align = "lrr",
+      col.names = c("Cálculo", "Jefe/a", "Cónyuge/Pareja"))
+```
+
+Por un lado, computando, para cada hogar, la participación de los ingresos de Jefe/a y Cónyuge/Pareja en el ingreso total familiar, el promedio de esas participaciones para el total de la muestra es 69,80% y 18,91%, respectivamente. Por otro lado, computando las sumas de los ingresos de Jefe/a y Cónyuge/Pareja y la suma del ingreso total individual, <mark>las participaciones promedio son 63,44% y 23,19%</mark>, respectivamente. Por último, se puede decir que las diferencias en los valores obtenidos entre ambas metodologías se debe a que no es lo mismo computar los shares a través del promedio de los shares de cada hogar que computar los shares a través de la sumatoria de los ingresos de toda la muestra.
+
+Las cifras del PDF se replican (filas 1 y 4).
+
+::: {.disc .metodo #d15}
+**D15.** El share es una variable del **hogar**, pero se pondera con `pondii` (ponderador por no respuesta del ingreso **individual**) del jefe. Con el ponderador de hogar `pondih`, los promedios son `r pct(t7$Jefe[2])` y `r pct(t7$Conyuge[2])`.
+:::
+
+::: {.disc .metodo #d16}
+**D16.** El promedio del cónyuge asigna cero a los hogares sin cónyuge, que representan `r pct(1 - prom(c1, hog$pondih), 1)` (ponderados con `pondih`). Entre los hogares **con** cónyuge, la participación media es `r pct(t7$Conyuge[3])` (jefe/a: `r pct(t7$Jefe[3])`). Ambas definiciones son válidas, pero el texto debería decir cuál usa.
+:::
+
+::: {.disc .impr #d17}
+**D17.** El segundo cálculo no entrega "participaciones **promedio**" ni se computa "para cada hogar": es la participación **agregada** de jefes y cónyuges en la masa total de ingresos.
+:::
+
+# Ejercicio 7 (Opcional)
+
+::: {.enunciado}
+Computar, para cada hogar, la participación de hombres y mujeres en el ingreso total familiar; considerar a todos los miembros del hogar. Luego, mostrar el promedio de esas participaciones para el total de la muestra.
+:::
+
+```{r ej7}
+d <- d |> group_by(codusu, nro_hogar) |>
+  mutate(sh_hombres = sum(p47t[hombre]) / first(itf)) |> ungroup()
+clave <- paste(d$codusu, d$nro_hogar)
+set.seed(2019)
+# Un miembro al azar por hogar aporta el ponderador, como ocurre con _n==1 en Stata
+sorteos <- replicate(1000, {
+  i <- sample.int(nrow(d)); i <- i[!duplicated(clave[i])]
+  weighted.mean(d$sh_hombres[i], d$pondii[i])
+})
+ag_h <- agregado(d$hombre)
+t8 <- data.frame(
+  Calculo = c("Promedio por hogar, pondii del primer componente",
+              "Promedio por hogar, pondih",
+              "Agregado, pondii (PDF)", "Agregado, pondih"),
+  Hombres = c(prom(hog$hombres, hog$pondii_jefe), prom(hog$hombres, hog$pondih),
+              ag_h, agregado(d$hombre, d$pondih)))
+# El primer componente según el número de componente
+primero <- d |> arrange(codusu, nro_hogar, componente) |> distinct(codusu, nro_hogar, .keep_all = TRUE)
+t8$Hombres[1] <- weighted.mean(primero$sh_hombres, primero$pondii)
+t8$Mujeres <- 1 - t8$Hombres
+kable(t8 |> mutate(across(c(Hombres, Mujeres), pct)), align = "lrr",
+      col.names = c("Cálculo", "Hombres", "Mujeres"))
+```
+
+Por un lado, computando, para cada hogar, la participación de los ingresos de hombres y mujeres en el ingreso total familiar, el promedio de esas participaciones para el total de la muestra es <mark>53,36% y 46,64%</mark>, respectivamente. Por otro lado, computando las sumas de los ingresos de hombres y mujeres y la suma del ingreso total individual, las participaciones promedio son 58,14% y 41,86%, respectivamente. Por último, se puede decir que las diferencias en los valores obtenidos entre ambas metodologías se debe a la misma razón planteada en el ejercicio anterior.
+
+::: {.disc .metodo #d18}
+**D18.** El *do-file* toma una fila por hogar (`_n==1`) después de `bysort codusu nro_hogar`, sin fijar el orden dentro del hogar, y pondera con el `pondii` **de esa persona**, que difiere entre miembros. El resultado depende de qué miembro quede primero. En 1.000 sorteos, la participación masculina varía entre `r pct(min(sorteos))` y `r pct(max(sorteos))`; el 53,36% del PDF cae dentro de ese rango. Con el primer componente se obtiene `r pct(t8$Hombres[1])` y con `pondih`, que es el ponderador apropiado y no depende del orden, **`r pct(t8$Hombres[2])` / `r pct(t8$Mujeres[2])`**.
+
+La segunda cifra (58,14% / 41,86%) se replica; le cabe la misma observación que en [D17](#d17).
+:::
+
+# Verificación contra las figuras de Stata
+
+Los archivos `.gph` guardan los puntos dibujados por Stata. El bloque siguiente los lee y los compara con los cálculos en R.
+
+```{r verificacion}
+leer_gph <- function(archivo, bytes) {
+  b <- readBin(archivo, "raw", file.size(archivo))
+  ini <- grepRaw("sersetreadwrite", b, all = TRUE, fixed = TRUE)
+  fin <- grepRaw("<EndSersetData>", b, all = TRUE, fixed = TRUE)
+  lapply(seq_along(ini), function(k) {
+    n <- readBin(b[ini[k] + 22:25], "integer", size = 4, endian = "little")
+    matrix(b[(fin[k] - 2 - n * bytes):(fin[k] - 3)], nrow = bytes)
+  })
+}
+real <- function(m, filas, tam) readBin(as.vector(m[filas, ]), "double", ncol(m), size = tam, endian = "little")
+
+grupos <- list(
+  g5, por_sector(pr), por_sector(filter(pr, hombre)), por_sector(filter(pr, !hombre)),
+  por_sector(filter(pr, educ == 1)), por_sector(filter(pr, educ == 2)), por_sector(filter(pr, educ == 3)))
+hists <- list(h1, h2, h3, h4)
+ruta <- function(i) sprintf("Figuras/Figura %d.gph", i)
+
+if (all(file.exists(ruta(1:11)))) {
+  ver_h <- sapply(1:4, function(i) {
+    m <- leer_gph(ruta(i), 9)[[1]]
+    alto <- real(m, 1:4, 4); x <- real(m, 6:9, 4); ok <- alto < 1e30
+    alto <- alto[ok][order(x[ok])]
+    if (length(alto) != nrow(hists[[i]])) return(NA)
+    max(abs(alto - hists[[i]]$fraccion))
+  })
+  ver_k <- sapply(5:11, function(i) {
+    s <- leer_gph(ruta(i), 20)
+    max(sapply(1:3, function(k) {
+      dens <- real(s[[k]], 1:8, 8); x <- real(s[[k]], 9:16, 8); ok <- dens < 1e300 & x < 1e300
+      g <- grupos[[i - 4]][[k]]
+      max(abs(kd(g$x, g$w, grilla = x[ok])$densidad - dens[ok]))
+    }))
+  })
+  kable(data.frame(Figura = 1:11, Tipo = rep(c("Histograma", "Kernel"), c(4, 7)),
+                   Dif = format(c(ver_h, ver_k), scientific = TRUE, digits = 2)),
+        col.names = c("Figura", "Tipo", "Máxima diferencia absoluta R - Stata"), align = "llr")
+} else cat("No se encontraron los archivos .gph; se omite la verificación.")
+```
+
+Los `.gph` conservan rótulos anteriores a los del PDF (por ejemplo, "Ingreso Total *Laboral*", aunque la variable `p47t` es el ingreso total individual, y la figura 4, de mujeres, rotulada "Hombres"). En el PDF esos rótulos están corregidos.
+
+```{r sesion}
+sessionInfo()
+```

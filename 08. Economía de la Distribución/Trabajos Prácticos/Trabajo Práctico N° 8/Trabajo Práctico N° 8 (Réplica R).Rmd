@@ -1,0 +1,856 @@
+---
+title: "Trabajo Práctico N° 8 — Réplica en R"
+subtitle: "Maestría en Economía UNLP - Economía de la Distribución. Respuestas originales: Juan Menduiña"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+    self_contained: true
+    code_folding: hide
+---
+
+```{css, echo=FALSE}
+mark { background: #ffe27a; padding: 0 2px; }
+.disc { border-left: 6px solid; border-radius: 4px; padding: 10px 14px; margin: 14px 0; font-size: 0.95em; }
+.disc p:last-child { margin-bottom: 0; }
+.error { border-color: #c0392b; background: #fdecea; }
+.impr  { border-color: #d68910; background: #fef5e7; }
+.metodo{ border-color: #2874a6; background: #eaf2f8; }
+.enunciado { font-style: italic; color: #444; }
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 9, fig.height = 4.5, dpi = 120)
+library(haven); library(dplyr); library(knitr)
+
+num <- function(x, d = 0) formatC(round(x, 10) + 0, format = "f", digits = d, big.mark = ".", decimal.mark = ",")
+porc <- function(x, dig = 1) paste0(num(100 * x, dig), "%")
+```
+
+# Cómo leer este documento {-}
+
+El texto de cada ejercicio es el del PDF *Trabajo Práctico N° 8 (R)*. Las tablas, las figuras y los números de los recuadros se calculan en R a partir de `Datos/`, siguiendo los *do-files*. Lo <mark>resaltado</mark> es una frase o un número con alguna discrepancia, explicada en el recuadro correspondiente:
+
+::: {.disc .error}
+**Error**: la afirmación contradice los datos o el enunciado, o el cálculo es incorrecto.
+:::
+
+::: {.disc .impr}
+**Imprecisión**: redacción, rótulo o formato que puede inducir a error.
+:::
+
+::: {.disc .metodo}
+**Observación metodológica**: el resultado depende de una decisión discutible o no documentada.
+:::
+
+**Resultado de la réplica.** Las tablas 1 a 4 se reproducen, salvo dos celdas de 1.b que difieren en el último decimal. En el ejercicio 3 los *do-files* sortean números al azar sin fijar semilla, así que las tablas 5 y 6 no pueden reproducirse exactamente; se repite la simulación 100 veces y se muestra dónde caen los valores publicados. Las 21 figuras se contrastan con los datos guardados en los `.gph` ([verificación](#verificación-contra-las-figuras-de-stata)). Las discrepancias más importantes son de programación: las curvas "de Lorenz" contrafácticas son curvas de concentración ([D3](#d3)), el inciso 1.b suma dos veces ingresos de no ocupados ([D7](#d7)), el 3.a no aplica el efecto de la educación sobre el salario ([D17](#d17)), el modelo ocupacional trata como ocupados a desocupados ([D15](#d15)) y el 3.b no reduce el desempleo ([D20](#d20)).
+
+| N° | Ej. | Tipo | Discrepancia |
+|----|-----|------|--------------|
+| [D1](#d1) | Intro | Error | La EPH no es representativa a nivel nacional |
+| [D2](#d2) | Intro | Error | No se excluyen los hogares sin ingreso, como pide el enunciado |
+| [D3](#d3) | 1 a 3 | Error | La curva "de Lorenz" contrafáctica es una curva de concentración |
+| [D4](#d4) | 1.a | Error | La desigualdad no sube por el tamaño de los hogares |
+| [D5](#d5) | 1 a 3 | Metodológica | Curva de incidencia: otro ponderador, no anónima y sin el percentil 1 |
+| [D6](#d6) | 1.b | Error | La desigualdad no aumenta en mayor proporción que en 1.a |
+| [D7](#d7) | 1.b | Error | Se suman ingresos de no ocupados que ya estaban en el ingreso familiar |
+| [D8](#d8) | 1.b | Metodológica | El aumento se aplica también a ingresos de otras ocupaciones |
+| [D9](#d9) | 1.c | Error | Se excluye a los mayores de 60 que no trabajan |
+| [D10](#d10) | 1.c | Error | El esquema no está financiado: los débitos superan a las transferencias |
+| [D11](#d11) | 1.c | Imprecisión | Las personas se expanden con un ponderador distinto al de los índices |
+| [D12](#d12) | 1.c | Imprecisión | El 20% superior no queda todo debajo del eje |
+| [D13](#d13) | 2 | Metodológica | La ecuación de Mincer se pondera con `pondih` |
+| [D14](#d14) | 3 | Imprecisión | Falta el caso de cambio entre asalariado y cuenta propia |
+| [D15](#d15) | 3 | Error | La mayoría de los desocupados se clasifica como ocupada |
+| [D16](#d16) | 3 | Metodológica | Sin semilla, y se descarta alrededor del 5% de la muestra de elección |
+| [D17](#d17) | 3.a | Error | El efecto de la educación sobre el salario nunca se aplica |
+| [D18](#d18) | 3.a | Metodológica | Solo se simula a personas de 18 a 64 años |
+| [D19](#d19) | 3.a | Imprecisión | La curva de incidencia refleja cambios de ocupación, no retornos a la educación |
+| [D20](#d20) | 3.b | Error | No se reduce 5 puntos la tasa de desempleo: se mueve sobre todo a inactivos |
+| [D21](#d21) | 3.b | Error | La pobreza no cae en menor proporción en las tres medidas |
+
+# Datos y funciones
+
+```{r datos}
+LP <- 4006.098
+base <- read_dta("Datos/usu_individual_t119.dta") |> zap_labels()
+names(base) <- tolower(names(base))
+base$dec <- suppressWarnings(as.numeric(base$deccfr))
+
+# prepara_base.do. corregido = TRUE: los desocupados cuentan como "no trabaja"
+preparar <- function(corregido = FALSE) {
+  d <- base |> filter(!is.na(dec), dec <= 10, !nro_hogar %in% c(51, 71), nivel_ed %in% 1:7)
+  d$id <- as.integer(factor(paste(d$codusu, d$nro_hogar)))
+  d$miem <- ave(rep(1, nrow(d)), d$id, FUN = sum)
+  d$edad <- d$ch06; d$edad2 <- d$edad^2
+  d$hombre <- as.numeric(d$ch04 == 1); d$gender <- d$hombre + 1
+  d$ocupado <- d$estado == 1
+  d$ila <- ifelse(d$ocupado, pmax(d$p21 + d$tot_p12, 0), NA)
+  d$lila <- ifelse(!is.na(d$ila) & d$ila > 0, log(d$ila), NA)
+  d$muestra <- d$edad >= 15 & d$edad <= 64
+  d$pric <- +(d$nivel_ed == 2); d$seci <- +(d$nivel_ed == 3); d$secc <- +(d$nivel_ed == 4)
+  d$supi <- +(d$nivel_ed == 5); d$supc <- +(d$nivel_ed == 6)
+  # 1 = no trabaja, 2 = asalariado, 3 = cuenta propia o patrón
+  d$ocup <- ifelse(!d$ocupado, 1, NA)
+  d$ocup[d$cat_ocup == 3] <- 2                  # el do-file no condiciona en "ocupado"
+  d$ocup[d$cat_ocup %in% c(1, 2, 4)] <- 3
+  if (corregido) d$ocup[!d$ocupado] <- 1
+  d$jefe <- +(d$ch03 == 1); d$casado <- +(d$ch07 %in% 1:2)
+  d
+}
+d <- preparar(); dc <- preparar(corregido = TRUE)
+w <- d$pondih
+c(observaciones = nrow(d), hogares = max(d$id), poblacion = sum(w))
+```
+
+```{r funciones}
+gini <- function(y, w) {
+  k <- w > 0 & y > 0 & !is.na(y); y <- y[k]; w <- w[k]; o <- order(y); y <- y[o]; w <- w[o]
+  N <- sum(w); mu <- sum(w * y) / N; i <- cumsum(w) - (w - 1) / 2
+  1 + 1 / N - 2 / (mu * N^2) * sum(w * y * (N - i + 1))
+}
+theil <- function(y, w) { k <- w > 0 & y > 0; y <- y[k]; w <- w[k]; r <- y / weighted.mean(y, w)
+  weighted.mean(r * log(r), w) }
+atk <- function(y, w, e) { k <- w > 0 & y > 0; y <- y[k]; w <- w[k]; mu <- weighted.mean(y, w)
+  if (e == 1) 1 - exp(weighted.mean(log(y / mu), w)) else 1 - weighted.mean((y / mu)^(1 - e), w)^(1 / (1 - e)) }
+fgt <- function(y, w, a) 100 * sum(w * ifelse(y < LP, (pmax(LP - y, 0) / LP)^a, 0)) / sum(w)
+indices <- function(y, w) c(Gini = gini(y, w), Theil = theil(y, w), "ATK (0,5)" = atk(y, w, .5),
+  "ATK (1)" = atk(y, w, 1), "ATK (2)" = atk(y, w, 2),
+  "FGT (0)" = fgt(y, w, 0), "FGT (1)" = fgt(y, w, 1), "FGT (2)" = fgt(y, w, 2))
+
+# genera-ing-familiar.do: reemplaza el ingreso laboral familiar observado por el simulado
+familiar <- function(d, sim) {
+  obs <- ave(ifelse(is.na(d$ila), 0, d$ila), d$id, FUN = sum)
+  nuevo <- ave(ifelse(is.na(sim), 0, sim), d$id, FUN = sum)
+  (d$itf - obs + nuevo) / d$miem
+}
+percentiles <- function(x, w, o = order(x)) {
+  s <- cumsum(w[o]) / sum(w); k <- integer(length(x))
+  k[o] <- pmin(100, pmax(1, ceiling(s * 100 - 1e-9))); k
+}
+# rep-cic.do: percentiles del IPCF original con pondiio y cambio de la media de cada grupo
+# gcuan usa sort estable: los empates quedan ordenados por el ingreso contrafáctico (indicadores.do)
+cic <- function(d, y1, o = order(d$ipcf, y1)) {
+  k <- percentiles(d$ipcf, d$pondiio, o); w <- d$pondiio
+  m0 <- tapply(w * d$ipcf, k, sum) / tapply(w, k, sum); m1 <- tapply(w * y1, k, sum) / tapply(w, k, sum)
+  r <- rep(NA_real_, 100); r[as.integer(names(m0))] <- (m1 / m0 - 1) * 100; r
+}
+curva <- function(y, o) data.frame(p = c(0, cumsum(w[o]) / sum(w)), L = c(0, cumsum((w * y)[o]) / sum(w * y)))
+Lp <- function(cv, p) approx(cv$p, cv$L, p, ties = "ordered", rule = 2)$y
+
+orden0 <- order(d$ipcf); L0 <- curva(d$ipcf, orden0)
+fig_lorenz <- function(y, titulo) {
+  C <- curva(y, orden0); L1 <- curva(y, order(y)); g <- seq(.005, .995, .0025)
+  dC <- 100 * (Lp(C, g) - Lp(L0, g)); dL <- 100 * (Lp(L1, g) - Lp(L0, g))
+  par(mfrow = c(1, 2), mar = c(4, 4, 3, 1))
+  i <- unique(c(seq(1, nrow(L0), 50), nrow(L0)))
+  plot(L0$p[i], L0$L[i], type = "l", col = "red", xlab = "p", ylab = "L(p)", main = titulo)
+  lines(C$p[i], C$L[i], col = "blue", lty = 2); abline(0, 1)
+  legend("topleft", c("Original", "Contrafáctico (PDF)", "LPI"), col = c("red", "blue", "black"), lty = c(1, 2, 1), bty = "n")
+  plot(g, dC, type = "l", col = "blue", lty = 2, lwd = 2, ylim = range(dC, dL, 0) * 1.15, xlab = "p",
+       ylab = "Contrafáctico menos original (p.p.)", main = "Diferencia con la Lorenz original")
+  lines(g, dL, col = "darkgreen", lwd = 2); abline(h = 0, col = "red")
+  legend("topleft", c("Como en el PDF (concentración)", "Lorenz correcta"), col = c("blue", "darkgreen"),
+         lty = c(2, 1), lwd = 2, bty = "n")
+}
+fig_cdf <- function(y, titulo) {
+  par(mar = c(4, 4, 3, 1))
+  f <- function(v) { o <- order(v); data.frame(x = log(v[o]), F = cumsum(w[o]) / sum(w))[v[o] > 0, ] }
+  a <- f(d$ipcf); b <- f(y)
+  plot(a$x, a$F, type = "l", xlab = "Logaritmo del IPCF", ylab = "Share de la población", main = titulo)
+  lines(b$x, b$F, col = "blue", lty = 2); abline(v = log(LP), col = "red")
+  legend("topleft", c("Original", "Contrafáctico", "Línea de pobreza"), col = c("black", "blue", "red"),
+         lty = c(1, 2, 1), bty = "n")
+}
+fig_cic <- function(y, titulo) {
+  par(mar = c(4, 4, 3, 1)); v <- cic(d, y)
+  plot(2:100, v[2:100], type = "l", ylim = range(v[2:100], 0), xlab = "Percentiles del IPCF",
+       ylab = "Variación % promedio del IPCF", main = titulo); abline(h = 0, col = "red")
+}
+# Tabla con la réplica y el valor del PDF entre corchetes
+tabla <- function(res, pdf, filas, dig, titulo) {
+  m <- sapply(seq_along(res), function(j) {
+    v <- res[[j]][filas]; paste0(num(v, dig), " [", num(pdf[, j], dig), "]") })
+  kable(data.frame(Indicador = filas, m, check.names = FALSE), col.names = c("Indicador", names(res)),
+        align = "r", caption = titulo)
+}
+celdas <- function(res, pdf, filas, dig) {
+  r <- sapply(res, function(v) round(v[filas], dig)); sum(abs(r - pdf) < 10^-dig / 2)
+}
+desig <- c("Gini", "Theil", "ATK (0,5)", "ATK (1)", "ATK (2)"); pob <- c("FGT (0)", "FGT (1)", "FGT (2)")
+orig <- indices(d$ipcf, w)
+```
+
+# Introducción {-}
+
+Para los cálculos de este trabajo, se consideró la base de microdatos de la EPH del primer trimestre de 2019 elaborada por el INDEC, <mark>la cual es representativa a nivel nacional</mark> y comprende <mark>47.987 observaciones</mark>.^[Se omiten aquellas observaciones que no han dado respuesta sobre sus niveles de ingresos o que pertenecen a hogares secundarios.]
+
+::: {.disc .error #d1}
+**D1.** La EPH continua releva **31 aglomerados urbanos**. No representa a la población rural ni a las localidades fuera de esos aglomerados.
+:::
+
+```{r sin-ingreso}
+con <- d$dec != 0
+sin0 <- indices(d$ipcf[con], w[con])
+```
+
+::: {.disc .error #d2}
+**D2.** El enunciado pide excluir a quienes están **sin ingreso**, además de la no respuesta y los hogares secundarios. El *do-file* solo hace `drop if (deccfr>10)`, que conserva el decil `00` (sin ingreso): quedan **`r num(sum(!con))`** observaciones con IPCF cero entre las 47.987. Excluyéndolas quedan `r num(sum(con))` y la pobreza original es **FGT(0) = `r num(sin0["FGT (0)"], 2)`**, FGT(1) = `r num(sin0["FGT (1)"], 2)` y FGT(2) = `r num(sin0["FGT (2)"], 2)`, en lugar de `r num(orig["FGT (0)"], 2)`, `r num(orig["FGT (1)"], 2)` y `r num(orig["FGT (2)"], 2)`. Los índices de desigualdad no cambian porque las rutinas ignoran los ingresos nulos. El resto de la réplica sigue al *do-file*.
+:::
+
+# Ejercicio 1
+
+::: {.enunciado}
+Microsimulaciones aritméticas. Simular los efectos sobre desigualdad y pobreza (línea de pobreza = USD 4 = \$4.006,098) de: (a) crecer 5% anual durante 10 años; (b) aumentar 25% los salarios de los empleados de la administración pública (ver pregunta `pp04b_cod`); (c) un programa de transferencias que permita que los mayores de 60 años alcancen un ingreso individual al menos igual a la línea de pobreza.
+:::
+
+En la tabla 1, se presentan diferentes índices de desigualdad (Gini, Theil y Atkinson), mientras que, en la tabla 2, se presentan los indicadores de pobreza FGT (α), con α = 0, 1 y 2 (incidencia, brecha y severidad de la pobreza, respectivamente). En ambas tablas, se computan los resultados para el escenario original y para los escenarios contrafácticos (a), (b) y (c).
+
+En las figuras 1, 4 y 7, se presentan las <mark>curvas de Lorenz</mark> para el IPCF antes y después de las microsimulaciones (a), (b) y (c), respectivamente, mientras que, en las figuras 2, 5 y 8, se presentan las funciones de distribución del IPCF (log). Por último, en las figuras 3, 6 y 9, se presentan las curvas de incidencia del crecimiento. Los escenarios contrafácticos se construyen a partir de microsimulaciones aritméticas.
+
+```{r ejercicio1}
+obs <- ave(ifelse(is.na(d$ila), 0, d$ila), d$id, FUN = sum)       # ingreso laboral familiar observado
+# (a)
+ya <- (d$itf - obs + obs * 1.05^10) / d$miem
+# (b) do-file: ila_emp se construye para todas las personas, ocupadas o no
+adm <- d$pp04b_cod %in% c(8300, 8401, 8402)
+extra <- function(v) ifelse(adm, v * 0.25, 0)
+yb <- familiar(d, d$p21 + extra(d$p21) + d$tot_p12 + extra(d$tot_p12))
+yb_sin_doble <- familiar(d, ifelse(d$ocupado, d$ila + extra(d$p21) + extra(d$tot_p12), 0))
+yb_ok <- familiar(d, ifelse(d$ocupado, d$ila + extra(d$p21), 0))
+# (c) do-file: completa el ingreso laboral de ocupados > 60 y debita LP a quienes ganan 88.000 o más
+t_pob <- ifelse(d$edad > 60 & !is.na(d$ila) & LP - d$ila > 0, LP - d$ila, 0)
+rico <- !is.na(d$ila) & d$ila >= 88000
+yc <- familiar(d, ifelse(is.na(d$ila), 0, d$ila) + ifelse(rico, -LP, t_pob))
+# (c) según el enunciado: ingreso total individual de todos los > 60 (sin financiamiento)
+t_ok <- ifelse(d$edad > 60, pmax(LP - d$p47t, 0), 0)
+yc_ok <- (d$itf + ave(t_ok, d$id, FUN = sum)) / d$miem
+
+E1 <- list("Original" = orig, "(a) crecimiento" = indices(ya, w), "(b) empleo público" = indices(yb, w),
+           "(c) transferencias" = indices(yc, w))
+```
+
+## (a) Crecimiento de 5% anual durante 10 años {-}
+
+Se presenta el efecto sobre la desigualdad y la pobreza que tendría un escenario contrafáctico en el cual se crece a una tasa de 5% anual durante un período de 10 años. Por un lado, se puede observar que la desigualdad aumenta, como se aprecia mediante los índices de desigualdad (ver tabla 1) y <mark>la comparación de las curvas de Lorenz (ver figura 1)</mark>. <mark>Esto debido a que el crecimiento del ingreso laboral per cápita familiar es proporcionalmente idéntico para todos los individuos de la muestra, pero los hogares de bajos ingresos tienen, en promedio, una mayor cantidad de miembros</mark>, por lo que, en estos casos, el crecimiento del ingreso laboral se distribuye entre una mayor cantidad de individuos y, por lo tanto, el crecimiento del ingreso per cápita familiar de los individuos de bajos ingresos es, en promedio, menor que el crecimiento del ingreso per cápita familiar de los individuos de ingresos medios y de altos ingresos. Por otro lado, se observa que la pobreza disminuye en gran medida, como lo manifiestan los indicadores de pobreza (ver tabla 2) y las funciones de distribución (ver figura 2). Por último, en línea con lo mencionado, la <mark>curva de incidencia del crecimiento</mark> (ver figura 3), al estar completamente por encima del eje horizontal, indica que la pobreza disminuye, pero, al no tener una pendiente definida, no expresa claramente el impacto sobre la desigualdad.
+
+```{r fig1, fig.cap="Figura 1. Curva de Lorenz (escenario original y contrafáctico a)."}
+fig_lorenz(ya, "Escenario (a)")
+```
+
+```{r d3-calculo}
+g <- seq(.005, .995, .001)
+arriba <- function(y, o) mean(Lp(curva(y, o), g) - Lp(L0, g) > 1e-7)
+```
+
+::: {.disc .error #d3}
+**D3.** En `indicadores.do` el ingreso simulado se acumula **con las personas ordenadas por el IPCF original** (`sort ipcf` y luego `n_suminc=sum(ipcf_sim*pondih)`). Eso es una **curva de concentración**, no la curva de Lorenz del ingreso contrafáctico. La serie guardada en las figuras de Stata coincide con la curva de concentración ([ver verificación](#verificación-contra-las-figuras-de-stata)). En 1.a la diferencia invierte la lectura: la curva graficada queda **por encima** de la original en el `r porc(arriba(ya, orden0))` del recorrido (parece que la desigualdad baja), mientras que la Lorenz correcta queda **por debajo** en el `r porc(1 - arriba(ya, order(ya)))` y solo cruza en la parte alta. Es decir, la figura publicada no respalda la frase del texto. Además, como las Lorenz correctas se cruzan, no hay dominancia: el resultado depende del índice. Afecta a las figuras 1, 4, 7, 10, 12, 14, 16, 18 y 20 (las dos últimas dependen del sorteo y se comparan por rangos en la verificación); el panel derecho de cada figura de esta réplica muestra ambas curvas.
+:::
+
+```{r d4-calculo}
+dec <- ceiling(percentiles(d$ipcf, w) / 10)
+por_dec <- function(x) as.numeric(tapply(w * x, dec, sum) / tapply(w, dec, sum))
+part_lab <- por_dec(obs / d$miem) / por_dec(d$ipcf)
+crec <- 100 * (por_dec(ya) / por_dec(d$ipcf) - 1)
+T4 <- data.frame(Decil = 1:10, num(por_dec(d$miem), 2), num(100 * part_lab, 1), num(crec, 1))
+```
+
+::: {.disc .error #d4}
+**D4.** El tamaño del hogar **no** explica el resultado. Si el ingreso laboral de un hogar crece 62,9% (1,05¹⁰ − 1), su ingreso per cápita crece 62,9% multiplicado por la **participación del ingreso laboral en el ingreso familiar**, cualquiera sea el número de miembros: el divisor es el mismo antes y después. El decil 1 gana menos que el resto porque depende más de ingresos no laborales (`r porc(part_lab[1])` de ingreso laboral contra `r porc(part_lab[4])` en el decil 4). Entre los demás deciles el orden tampoco sigue al tamaño del hogar: el decil 10, con los hogares más chicos, tiene una participación laboral baja (`r porc(part_lab[10])`) y por eso crece poco.
+:::
+
+```{r d4-tabla}
+kable(T4, align = "r", col.names = c("Decil de IPCF", "Miembros (media)", "Ingreso laboral / ITF (%)",
+                                     "Crecimiento del IPCF medio en (a) (%)"))
+```
+
+```{r fig2, fig.cap="Figura 2. Función de distribución del IPCF (log), escenario a."}
+fig_cdf(ya, "Escenario (a)")
+```
+
+```{r fig3, fig.cap="Figura 3. Curva de incidencia del crecimiento, escenario a."}
+fig_cic(ya, "Escenario (a)")
+p1 <- sapply(list(a = ya, b = yb, c = yc), function(y) cic(d, y)[1])
+set.seed(1)
+azar <- cic(d, ya, order(d$ipcf, runif(nrow(d))))
+desemp <- abs(azar - cic(d, ya))[2:100]
+```
+
+::: {.disc .metodo #d5}
+**D5.** `rep-cic.do` (a) arma los percentiles con **`pondiio`**, el ponderador del ingreso de la ocupación principal, aunque el IPCF y las tablas usan `pondih`; (b) mantiene a cada persona en su percentil **original** (curva *no anónima*, distinta de la curva de incidencia usual, que reordena el ingreso contrafáctico); (c) deja a las personas con igual IPCF ordenadas por el **ingreso contrafáctico** (el orden en que quedan los datos tras `indicadores.do`, que `gcuan` respeta), de modo que dentro de cada empate las de menor ingreso simulado caen en el percentil inferior: con un desempate al azar, la figura 3 cambia hasta `r num(max(desemp, na.rm = TRUE), 1)` puntos en un percentil; y (d) grafica solo `percentil>1`, sin avisarlo. En el percentil 1 la variación es `r num(p1[1], 1)`% en (a), `r num(p1[2], 1)`% en (b) y `r num(p1[3], 1)`% en (c). La réplica sigue el mismo criterio.
+:::
+
+## (b) Aumento de 25% a empleados de la administración pública {-}
+
+Se presenta el efecto sobre la desigualdad y la pobreza que tendría un escenario contrafáctico en el cual los salarios de los empleados de la administración pública aumentan 25%. Por un lado, se puede observar que la desigualdad aumenta <mark>(en mayor proporción que en el caso anterior)</mark>, como se aprecia mediante los índices de desigualdad (ver tabla 1) y la comparación de las curvas de Lorenz (ver figura 4). Esto debido a que el nuevo nivel del ingreso laboral de los empleados de la administración pública se aleja relativamente más del nivel de ingreso de los individuos más pobres que lo que se acerca al nivel de ingreso de los individuos más ricos. Por otro lado, se observa que <mark>la pobreza disminuye</mark> (en menor proporción que en el caso anterior), como lo manifiestan los indicadores de pobreza (ver tabla 2) y las funciones de distribución (ver figura 5). Por último, en línea con lo mencionado, del análisis de la curva de incidencia del crecimiento (ver figura 6), surgen las mismas consideraciones que en el caso anterior.
+
+```{r d6-calculo}
+cmp <- data.frame(Indicador = desig, num(orig[desig], 4), num(E1[[2]][desig] - orig[desig], 4),
+                  num(E1[[3]][desig] - orig[desig], 4))
+rownames(cmp) <- NULL
+```
+
+::: {.disc .error #d6}
+**D6.** Según la propia tabla 1, el aumento en (b) es **menor** que en (a) para el Gini, Atkinson(0,5) y Atkinson(1), y **Atkinson(2) baja** (de 0,537 a 0,532). Solo el índice de Theil sube más que en (a).
+:::
+
+```{r d6-tabla}
+kable(cmp, align = "r", col.names = c("Índice", "Original", "Cambio en (a)", "Cambio en (b)"))
+```
+
+```{r d7-calculo}
+doble <- !d$ocupado & d$tot_p12 > 0
+m_doble <- sum(w * ifelse(!d$ocupado, d$tot_p12 + extra(d$tot_p12), 0))
+m_aumento <- sum(w * ifelse(d$ocupado, extra(d$p21) + extra(d$tot_p12), 0))
+Bs <- list("Original" = orig, "(b) do-file" = E1[[3]], "(b) sin doble conteo" = indices(yb_sin_doble, w),
+           "(b) sin doble conteo y solo p21" = indices(yb_ok, w))
+tabla_simple <- function(l) kable(data.frame(Indicador = c(desig, pob),
+  sapply(l, function(v) c(num(v[desig], 4), num(v[pob], 2))), check.names = FALSE), align = "r", row.names = FALSE)
+```
+
+::: {.disc .error #d7}
+**D7.** El *do-file* calcula `ila_emp = rowtotal(n_p21 n_tot_p12)` para **todas** las personas, pero el ingreso laboral observado que resta del ingreso familiar (`ilatf_obs`) solo incluye a los **ocupados**. A `r num(sum(doble))` no ocupados con `tot_p12 > 0` se les vuelve a sumar ese ingreso, que ya estaba en el ITF. El monto agregado por error es de \$`r num(m_doble / 1e6)` millones expandidos, equivalente al `r porc(m_doble / m_aumento, 0)` del aumento salarial simulado (\$`r num(m_aumento / 1e6)` millones). Corregido, **Atkinson(2) sube** a `r num(Bs[[3]]["ATK (2)"], 4)` en vez de bajar, y FGT(0) es `r num(Bs[[3]]["FGT (0)"], 2)` (la caída pasa de `r num(orig["FGT (0)"] - Bs[[2]]["FGT (0)"], 2)` a `r num(orig["FGT (0)"] - Bs[[3]]["FGT (0)"], 2)` puntos).
+:::
+
+```{r d7-tabla}
+tabla_simple(Bs)
+```
+
+::: {.disc .metodo #d8}
+**D8.** El enunciado habla de **salarios** de la administración pública. El código identifica a las personas por la actividad de la ocupación principal (`pp04b_cod`) y aumenta también `tot_p12`, que reúne otras ocupaciones, deudas y retroactivos. La última columna de la tabla anterior aplica el 25% solo a `p21`. Los códigos usados son 8300, 8401 y 8402; en los datos hay `r num(sum(adm))` observaciones con esos códigos (`r num(sum(d$pp04b_cod == 8300, na.rm = TRUE))` con el 8300).
+:::
+
+```{r fig4, fig.cap="Figura 4. Curva de Lorenz (escenario original y contrafáctico b)."}
+fig_lorenz(yb, "Escenario (b)")
+```
+
+```{r fig5, fig.cap="Figura 5. Función de distribución del IPCF (log), escenario b."}
+fig_cdf(yb, "Escenario (b)")
+```
+
+```{r fig6, fig.cap="Figura 6. Curva de incidencia del crecimiento, escenario b."}
+fig_cic(yb, "Escenario (b)")
+```
+
+## (c) Transferencias a mayores de 60 años {-}
+
+Se presenta el efecto sobre la desigualdad y la pobreza que tendría un escenario contrafáctico en el cual se implementa un programa de transferencias que permite que los individuos mayores de 60 años perciban un ingreso individual al menos igual a la línea de pobreza.^[El esquema de transferencias empleado consiste en asignarles a estos individuos una transferencia, <mark>que proviene del ingreso laboral de los individuos de más altos ingresos</mark> de la muestra, a razón de un monto equivalente a la línea de pobreza por individuo.] Por un lado, se puede observar que la desigualdad disminuye, como se aprecia mediante los índices de desigualdad (ver tabla 1) y la comparación de las curvas de Lorenz (ver figura 7). Esto debido a que aumenta el <mark>ingreso laboral</mark> individual de los adultos mayores que no alcanzan la línea de pobreza (un total de 256 observaciones, equivalentes a <mark>138.100 individuos a nivel nacional</mark>, con un ingreso laboral menor a \$4.006,098), quienes se ubican en la cola inferior de la distribución del ingreso, en detrimento del ingreso laboral de los individuos de más altos ingresos (un total de 134 observaciones, equivalentes a <mark>80.352 individuos</mark> a nivel nacional, con un ingreso laboral mayor a \$87.000). Por otro lado, se observa que la pobreza también disminuye (en menor proporción que en el caso anterior), como lo manifiestan los indicadores de pobreza (ver tabla 2) y las funciones de distribución (ver figura 8). Por último, en línea con lo mencionado, la curva de incidencia del crecimiento (ver figura 9), <mark>al estar el 80% de los percentiles correspondientes a los individuos de más bajos ingresos por encima del eje horizontal y el 20% de los percentiles correspondientes a los de más altos ingresos por debajo de este eje</mark>, por un lado, indica que la pobreza disminuye y, por el otro, expresa que la desigualdad disminuye.
+
+```{r d9-calculo}
+may <- d$edad > 60
+Cs <- list("Original" = orig, "(c) do-file" = E1[[4]], "(c) ingreso individual, todos los > 60" = indices(yc_ok, w))
+```
+
+::: {.disc .error #d9}
+**D9.** El enunciado pide que los mayores de 60 alcancen un **ingreso individual** igual a la línea de pobreza. El *do-file* usa el **ingreso laboral**, que solo está definido para los ocupados: los mayores que no trabajan no reciben nada (hay `r num(sum(may & d$p47t == 0))` sin ningún ingreso individual) y, a la vez, un ocupado puede recibir la transferencia aunque su jubilación u otros ingresos ya superen la línea. Usando el ingreso total individual (`p47t`) de todos los mayores de 60, reciben transferencia `r num(sum(t_ok > 0))` observaciones (`r num(sum(w[t_ok > 0]))` personas), el costo es \$`r num(sum(w * t_ok) / 1e6)` millones y FGT(0) baja a **`r num(Cs[[3]]["FGT (0)"], 2)`** (contra `r num(Cs[[2]]["FGT (0)"], 2)`). Esta alternativa no incluye financiamiento.
+:::
+
+```{r d9-tabla}
+tabla_simple(Cs)
+```
+
+```{r d10-calculo}
+fin <- data.frame(Ponderador = c("Sin ponderar (muestra)", "pondera", "pondih (índices)"),
+  W = I(list(rep(1, nrow(d)), d$pondera, d$pondih)))
+fin$Transferencias <- sapply(fin$W, function(p) sum(p * t_pob))
+fin$Debitos <- sapply(fin$W, function(p) sum(p[rico]) * LP)
+```
+
+::: {.disc .error #d10}
+**D10.** El esquema solo está equilibrado **contando observaciones**: el *do-file* divide la suma de transferencias **sin ponderar** por la línea de pobreza para elegir cuántos "ricos" debitar. Expandido a la población, los débitos superan a las transferencias en `r porc(fin$Debitos[3] / fin$Transferencias[3] - 1)` con `pondih`. Una parte de la caída de la desigualdad proviene de ingreso que desaparece.
+:::
+
+```{r d10-tabla}
+kable(data.frame(fin$Ponderador, num(fin$Transferencias), num(fin$Debitos),
+                 num(100 * (fin$Debitos / fin$Transferencias - 1), 1)), align = "lrrr",
+      col.names = c("Ponderador", "Transferencias (\\$)", "Débitos (\\$)", "Exceso de débitos (%)"))
+```
+
+::: {.disc .impr #d11}
+**D11.** Las 138.100 y 80.352 personas se expanden con `pondera` (la réplica obtiene `r num(sum(d$pondera[t_pob > 0]))` y `r num(sum(d$pondera[rico]))`), mientras que los índices usan `pondih`, con el que son `r num(sum(w[t_pob > 0]))` y `r num(sum(w[rico]))`. Tampoco son totales "a nivel nacional" ([D1](#d1)). Las `r num(sum(t_pob > 0))` observaciones sí coinciden.
+:::
+
+```{r fig7, fig.cap="Figura 7. Curva de Lorenz (escenario original y contrafáctico c)."}
+fig_lorenz(yc, "Escenario (c)")
+```
+
+```{r fig8, fig.cap="Figura 8. Función de distribución del IPCF (log), escenario c."}
+fig_cdf(yc, "Escenario (c)")
+```
+
+```{r fig9, fig.cap="Figura 9. Curva de incidencia del crecimiento, escenario c."}
+fig_cic(yc, "Escenario (c)")
+```
+
+```{r leer-gph}
+leer_gph <- function(archivo) {
+  b <- readBin(archivo, "raw", file.size(archivo))
+  i <- grepRaw("sersetreadwrite", b, fixed = TRUE); fin <- grepRaw("<EndSersetData>", b, fixed = TRUE)
+  cab <- rawToChar(b[grepRaw("<BeginSerset>", b, fixed = TRUE):(i - 1)])
+  nom <- regmatches(cab, gregexpr('[.]name = `"[^"]*"', cab, useBytes = TRUE))[[1]]
+  nom <- substr(nom, 11, nchar(nom, "bytes") - 1)
+  nv <- readBin(b[i + 18:21], "integer", size = 4, endian = "little")
+  n  <- readBin(b[i + 22:25], "integer", size = 4, endian = "little")
+  tipo <- as.integer(b[i + 25 + seq_len(nv)])
+  tam <- unname(c("255" = 8, "254" = 4, "253" = 4, "252" = 2, "251" = 1)[as.character(tipo)])
+  mat <- matrix(b[(fin - 2 - n * sum(tam)):(fin - 3)], nrow = sum(tam)); desde <- cumsum(c(0, tam))
+  s <- lapply(seq_len(nv), function(j) { r <- as.vector(mat[desde[j] + seq_len(tam[j]), ])
+    v <- if (tipo[j] >= 254) readBin(r, "double", n, size = tam[j], endian = "little")
+         else readBin(r, "integer", n, size = tam[j], signed = TRUE, endian = "little")
+    if (tipo[j] == 254) v[v > 1.7e38] <- NA
+    if (tipo[j] == 255) v[v > 8.9e307] <- NA
+    v })
+  setNames(s, make.unique(nom))
+}
+figura <- function(n) leer_gph(sprintf("Figuras/Figura %s.gph", n))
+f9 <- figura(9)
+neg <- f9$percentil[f9$cambio < -1e-6]; cero <- f9$percentil[abs(f9$cambio) <= 1e-6]
+```
+
+::: {.disc .impr #d12}
+**D12.** En la figura 9 original, del 20% superior (percentiles 81 a 100) solo **`r length(neg)`** quedan debajo del eje (`r paste(neg, collapse = ", ")`); los demás tienen variación nula o positiva. Entre los percentiles restantes hay `r length(cero)` con variación exactamente cero (`r paste(cero, collapse = ", ")`), que no están "por encima". La lectura general (ganan los de abajo, pierden los de arriba) se mantiene.
+:::
+
+## Tablas 1 y 2 {-}
+
+```{r tabla1}
+pdf1 <- cbind(c(.444,.350,.161,.298,.537), c(.447,.351,.163,.305,.564), c(.447,.353,.162,.300,.532), c(.444,.348,.160,.297,.537))
+pdf2 <- cbind(c(16.13,5.35,2.83), c(8.47,3.26,1.91), c(15.84,5.17,2.74), c(16.04,5.34,2.83))
+tabla(E1, pdf1, desig, 3, "Tabla 1. Índices de desigualdad: réplica [PDF].")
+tabla(E1, pdf2, pob, 2, "Tabla 2. Indicadores de pobreza: réplica [PDF].")
+```
+
+**Control:** coinciden `r celdas(E1, pdf1, desig, 3)` de 20 celdas de la tabla 1 y `r celdas(E1, pdf2, pob, 2)` de 12 de la tabla 2. Las dos diferencias están en (b): Atkinson(1) es `r num(E1[[3]]["ATK (1)"], 5)` en R contra 0,300 y FGT(0) es `r num(E1[[3]]["FGT (0)"], 3)` contra 15,84.
+
+# Ejercicio 2
+
+::: {.enunciado}
+Microsimulaciones con ecuación de Mincer: alcanzar la educación secundaria para todos los individuos con (a) 18–40, (b) 18–60, (c) 18–80 y (d) 18 o más años.
+:::
+
+En la tabla 3, se presentan diferentes índices de desigualdad (Gini, Theil y Atkinson), mientras que, en la tabla 4, se presentan los indicadores de pobreza FGT (α). En las figuras 10, 12, 14 y 16, se presentan las curvas de Lorenz para el IPCF antes y después de las microsimulaciones (a), (b), (c) y (d), respectivamente, mientras que, en las figuras 11, 13, 15 y 17, se presentan las curvas de incidencia del crecimiento. Los escenarios contrafácticos se construyen a partir de una microsimulación basada en la estimación de una <mark>ecuación de Mincer</mark>.
+
+```{r ejercicio2}
+mincer <- function(hasta, peso = "pondih") {
+  d$peso <- d[[peso]]
+  m <- lm(lila ~ edad + edad2 + hombre + pric + seci + secc + supi + supc, data = d, weights = peso,
+          subset = muestra & ocup %in% 2:3)
+  sel <- d$edad >= 18 & d$edad <= hasta; n <- d
+  cambia <- sel & d$nivel_ed %in% c(1, 2, 3, 7); n$secc[cambia] <- 1; n$pric[cambia] <- 0; n$seci[cambia] <- 0
+  sim <- exp(predict(m, n) + d$lila - predict(m, d))        # mantiene el residuo individual
+  list(m = m, y = familiar(d, ifelse(sel, sim, d$ila)), cambiados = sum(cambia & !is.na(d$lila)))
+}
+M2 <- lapply(c(40, 60, 80, Inf), mincer)
+E2 <- c(list("Original" = orig), setNames(lapply(M2, function(r) indices(r$y, w)),
+        c("(a) 18-40", "(b) 18-60", "(c) 18-80", "(d) 18+")))
+alt <- mincer(Inf, "pondiio")
+ia <- indices(alt$y, w)
+```
+
+::: {.disc .metodo #d13}
+**D13.** `sim-mincer_1/2.do` estima la ecuación de salarios con `pondih`. Para el ingreso de la ocupación el ponderador de la EPH es `pondiio`, que es el que usa el propio ejercicio 3 (`estimate-mincer.do`). El efecto es chico: en (d), FGT(0) pasa de `r num(E2[[5]]["FGT (0)"], 2)` a `r num(ia["FGT (0)"], 2)` y el Gini cambia en menos de `r num(ceiling(1e4 * abs(E2[[5]]["Gini"] - ia["Gini"]) + 1e-9) / 1e4, 4)`. Las conclusiones se mantienen.
+:::
+
+```{r coef2}
+co <- cbind(pondih = coef(M2[[4]]$m), pondiio = coef(alt$m))
+kable(num(co, 4) |> matrix(nrow(co), dimnames = dimnames(co)), align = "rr", caption = "Ecuación de Mincer")
+```
+
+## (a) 18 a 40 años {-}
+
+Se presenta el efecto sobre la desigualdad y la pobreza que tendría un escenario contrafáctico en el cual todos los individuos entre 18 y 40 años de edad tienen, al menos, educación secundaria completa. Por un lado, se puede observar que la desigualdad disminuye, como se aprecia mediante los índices de desigualdad (ver tabla 3) y la comparación de las curvas de Lorenz (ver figura 10). Por otro lado, la pobreza también disminuye, como lo manifiestan los indicadores de pobreza (ver tabla 4) y la curva de incidencia del crecimiento (ver figura 11). Por último, en línea con lo mencionado, esta curva, al estar completamente por encima del eje horizontal, indica que la pobreza disminuye y, al tener pendiente negativa, expresa que la desigualdad también disminuye, ya que, a medida que se asciende hacia estratos más ricos de la distribución, los aumentos proporcionales del ingreso son menores.
+
+```{r fig10, fig.cap="Figura 10. Curva de Lorenz (escenario original y contrafáctico a)."}
+fig_lorenz(M2[[1]]$y, "18 a 40 años")
+```
+
+```{r fig11, fig.cap="Figura 11. Curva de incidencia del crecimiento, escenario a."}
+fig_cic(M2[[1]]$y, "18 a 40 años")
+```
+
+## (b) 18 a 60 años {-}
+
+Se presenta el efecto sobre la desigualdad y la pobreza que tendría un escenario contrafáctico en el cual todos los individuos entre 18 y 60 años de edad tienen, al menos, educación secundaria completa. Por un lado, se puede observar que la desigualdad disminuye (en mayor proporción que en el caso anterior), como se aprecia mediante los índices de desigualdad (ver tabla 3) y la comparación de las curvas de Lorenz (ver figura 12). Por otro lado, la pobreza también disminuye (en mayor proporción que en el caso anterior), como lo manifiestan los indicadores de pobreza (ver tabla 4) y la curva de incidencia del crecimiento (ver figura 13). Por último, en línea con lo mencionado, del análisis de esta curva, surgen las mismas consideraciones que en el caso anterior.
+
+```{r fig12, fig.cap="Figura 12. Curva de Lorenz (escenario original y contrafáctico b)."}
+fig_lorenz(M2[[2]]$y, "18 a 60 años")
+```
+
+```{r fig13, fig.cap="Figura 13. Curva de incidencia del crecimiento, escenario b."}
+fig_cic(M2[[2]]$y, "18 a 60 años")
+```
+
+## (c) 18 a 80 años {-}
+
+Se presenta el efecto sobre la desigualdad y la pobreza que tendría un escenario contrafáctico en el cual todos los individuos entre 18 y 80 años de edad tienen, al menos, educación secundaria completa. Por un lado, se puede observar que la desigualdad disminuye (aunque varía ínfimamente respecto del caso anterior), como se aprecia mediante los índices de desigualdad (ver tabla 3) y la comparación de las curvas de Lorenz (ver figura 14). Por otro lado, la pobreza también disminuye (aunque también varía ínfimamente respecto del caso anterior), como lo manifiestan los indicadores de pobreza (ver tabla 4) y la curva de incidencia del crecimiento (ver figura 15). Por último, en línea con lo mencionado, del análisis de esta curva, surgen las mismas consideraciones que en los casos anteriores.
+
+```{r fig14, fig.cap="Figura 14. Curva de Lorenz (escenario original y contrafáctico c)."}
+fig_lorenz(M2[[3]]$y, "18 a 80 años")
+```
+
+```{r fig15, fig.cap="Figura 15. Curva de incidencia del crecimiento, escenario c."}
+fig_cic(M2[[3]]$y, "18 a 80 años")
+```
+
+## (d) 18 o más años {-}
+
+Se presenta el efecto sobre la desigualdad y la pobreza que tendría un escenario contrafáctico en el cual todos los individuos con 18 o más años de edad tienen, al menos, educación secundaria. Por un lado, se puede observar que la desigualdad disminuye (aunque no varía respecto al caso anterior), como se aprecia mediante los índices de desigualdad (ver tabla 3) y la comparación de las curvas de Lorenz (ver figura 16). Por otro lado, la pobreza también disminuye (aunque tampoco varía respecto al caso anterior), como lo manifiestan los indicadores de pobreza (ver tabla 4) y la curva de incidencia del crecimiento (ver figura 17). Por último, en línea con lo mencionado, del análisis de esta curva, surgen las mismas consideraciones que en los casos anteriores.
+
+```{r fig16, fig.cap="Figura 16. Curva de Lorenz (escenario original y contrafáctico d)."}
+fig_lorenz(M2[[4]]$y, "18 o más años")
+```
+
+```{r fig17, fig.cap="Figura 17. Curva de incidencia del crecimiento, escenario d."}
+fig_cic(M2[[4]]$y, "18 o más años")
+```
+
+## Tablas 3 y 4 {-}
+
+```{r tabla3}
+pdf3 <- cbind(c(.444,.350,.161,.298,.537), c(.433,.332,.153,.285,.524), c(.424,.319,.147,.275,.513),
+              c(.424,.317,.147,.275,.513), c(.424,.317,.147,.275,.513))
+pdf4 <- cbind(c(16.13,5.35,2.83), c(13.71,4.64,2.53), c(12.02,4.18,2.29), c(11.63,4.11,2.27), c(11.63,4.11,2.27))
+tabla(E2, pdf3, desig, 3, "Tabla 3. Índices de desigualdad: réplica [PDF].")
+tabla(E2, pdf4, pob, 2, "Tabla 4. Indicadores de pobreza: réplica [PDF].")
+```
+
+**Control:** coinciden `r celdas(E2, pdf3, desig, 3)` de 25 celdas de la tabla 3 y `r celdas(E2, pdf4, pob, 2)` de 15 de la tabla 4. Entre (c) y (d) solo cambian los ocupados de más de 80 años (`r sum(d$edad > 80 & d$ocupado)`). Las comparaciones del texto entre (a), (b), (c) y (d) son correctas.
+
+# Ejercicio 3
+
+::: {.enunciado}
+Microsimulaciones con ecuación de Mincer y modelo de elección ocupacional (no trabaja, asalariado o cuenta propia): (a) alcanzar la educación secundaria para todos los individuos con 18 o más años; (b) disminuir la tasa de desempleo en 5 puntos porcentuales.
+:::
+
+En la tabla 5, se presentan diferentes índices de desigualdad, mientras que, en la tabla 6, se presentan los indicadores de pobreza FGT (α). En las figuras 18 y 20, se presentan las curvas de Lorenz para el IPCF antes y después de las microsimulaciones (a) y (b), respectivamente, mientras que, en las figuras 19 y 21, se presentan las curvas de incidencia del crecimiento.
+
+Los escenarios contrafácticos se construyen a partir de una microsimulación que combina la estimación de una ecuación de Mincer con un modelo de elección ocupacional. Esta microsimulación permite observar cambios en la elección individual de ocupación y de ingresos laborales individuales. Supone que los individuos reevalúan su utilidad de estar en una de las tres alternativas posibles en el mercado laboral <mark>(inactivo/desempleado, asalariado, no asalariado)</mark> y deciden moverse o no, de acuerdo a sus características y a las del hogar. Es decir, que <mark>se pueden presentar tres casos: no variación en el estado ocupacional, pasar de trabajar a no trabajar y viceversa</mark>. Cada alternativa es exclusiva.
+
+```{r modelo}
+# Logit multinomial ponderado (base: no trabaja), por Newton-Raphson
+mlogit <- function(X, y, w) {
+  K <- ncol(X); B <- matrix(0, K, 2); w <- w / mean(w)
+  for (i in 1:50) {
+    e <- exp(X %*% B); P <- e / (1 + rowSums(e))
+    G <- c(crossprod(X, w * ((y == 2) - P[, 1])), crossprod(X, w * ((y == 3) - P[, 2])))
+    H <- matrix(0, 2 * K, 2 * K)
+    for (a in 1:2) for (b in 1:2) { v <- w * P[, a] * ((a == b) - P[, b])
+      H[(a - 1) * K + 1:K, (b - 1) * K + 1:K] <- crossprod(X, X * v) }
+    paso <- solve(H, G); B <- B + matrix(paso, K); if (max(abs(paso)) < 1e-10) break
+  }
+  B
+}
+estimar <- function(d) {
+  occ <- d$muestra & d$ocup %in% 2:3 & !is.na(d$lila); d$s3 <- +(d$ocup == 3)
+  m <- lm(lila ~ edad + edad2 + hombre + pric + seci + secc + supi + supc + s3, data = d, weights = pondiio, subset = occ)
+  sigma <- sqrt(sum(residuals(m)^2 * d$pondiio[occ] / mean(d$pondiio[occ])) / m$df.residual)
+  X <- cbind(1, as.matrix(d[, c("edad", "edad2", "pric", "seci", "secc", "supi", "supc", "hombre", "jefe", "miem", "casado")]))
+  s <- d$muestra
+  list(m = m, sigma = sigma, occ = occ, X = X, B = mlogit(X[s, ], d$ocup[s], d$pondiio[s]))
+}
+xbeta <- function(M, d, ocup) { d$s3 <- +(ocup == 3); as.numeric(predict(M$m, d)) }
+
+# estimate-mincer.do y estimate-occup.do: residuos salariales y calibración de los errores Gumbel
+sortear <- function(d, M) {
+  n <- nrow(d); res <- d$lila - xbeta(M, d, d$ocup); res[!M$occ] <- rnorm(sum(!M$occ), 0, M$sigma)
+  xl <- M$X %*% M$B; samp <- d$muestra; cal <- !samp; r2 <- r3 <- rep(NA_real_, n)
+  repeat {
+    k <- which(!cal); g <- function() -log(-log(1 - runif(length(k))))
+    e1 <- g(); e2 <- g(); e3 <- g(); a <- e2 - e1; b <- e3 - e1
+    d2 <- xl[k, 1] + a; d3 <- xl[k, 2] + b
+    y <- ifelse(d2 <= 0 & d3 <= 0, 1, ifelse(d2 > 0 & d3 <= d2, 2, 3))
+    ok <- y == d$ocup[k]; j <- k[ok]; r2[j] <- a[ok]; r3[j] <- b[ok]; cal[j] <- TRUE
+    if (100 * mean(cal[samp]) > 95) { samp[samp & !cal] <- FALSE; break }   # descarta a los no calibrados
+    if (!any(samp & !cal)) break
+  }
+  e <- exp(xl)
+  list(res = res, samp = samp, r2 = r2, r3 = r3, pr = cbind(1, e) / (1 + rowSums(e)), azar = runif(n))
+}
+ingreso <- function(d, M, s, sel, ocup) {          # genera-ing-laboral.do (educación observada)
+  y <- ifelse(sel, exp(xbeta(M, d, ocup) + s$res), d$ila)
+  igual <- !is.na(ocup) & ocup == d$ocup; y[igual] <- d$ila[igual]; y[sel & ocup %in% 1] <- NA; y
+}
+secundaria <- function(d, sel) { x <- sel & d$nivel_ed %in% c(1, 2, 3, 7); d$secc[x] <- 1; d$pric[x] <- 0; d$seci[x] <- 0; d }
+```
+
+```{r escenarios}
+# (a) sim-secc.do
+sim_a <- function(d, M, s) {
+  sel <- s$samp & d$edad >= 18; n <- secundaria(d, sel)
+  X <- M$X; X[, c("pric", "seci", "secc")] <- as.matrix(n[, c("pric", "seci", "secc")]); xl <- X %*% M$B
+  d2 <- xl[, 1] + s$r2; d3 <- xl[, 2] + s$r3
+  o <- ifelse(d2 <= 0 & d3 <= 0, 1, ifelse(d2 > 0 & d3 <= d2, 2, 3)); o[!sel] <- d$ocup[!sel]
+  list(y = ingreso(d, M, s, sel, o), o = o, sel = sel)
+}
+# (a) corregido: la nueva educación entra en la ecuación de salarios
+sim_a_salario <- function(d, M, s, hasta = Inf) {
+  a <- sim_a(d, M, s); sel <- d$edad >= 18 & d$edad <= hasta; n <- secundaria(d, sel); o <- a$o
+  res <- s$res; k <- d$ocupado & !is.na(d$lila); res[k] <- (d$lila - xbeta(M, d, d$ocup))[k]
+  cambia <- sel & o != 1 & (d$nivel_ed %in% c(1, 2, 3, 7) | o != d$ocup)
+  y <- d$ila; y[cambia] <- exp(xbeta(M, n, o) + res)[cambia]
+  sin_salario <- cambia & d$ocupado & is.na(d$lila) & o == d$ocup; y[sin_salario] <- d$ila[sin_salario]
+  y[sel & o == 1] <- NA
+  list(y = y, o = o)
+}
+# (b) sim-part.do con las participaciones fijas de scen-defn-unemp.do (filas: mujer, varón)
+meta <- rbind(c(0.355430382, 0.512064173, 0.132505445), c(0.129747831, 0.64336218, 0.226889989))
+participaciones <- function(d, sel) {
+  t <- sapply(1:3, function(j) sapply(1:2, function(i) sum(d$pondiio[sel & d$gender == i & d$ocup == j])))
+  t / rowSums(t)
+}
+sim_b <- function(d, M, s) {
+  sel <- s$samp & d$edad >= 15; w <- d$pondiio; g <- d$gender; oc <- d$ocup
+  cambio <- meta - participaciones(d, sel); mover <- logical(nrow(d))
+  for (i in 1:2) { tot <- sum(w[sel & g == i])
+    for (j in 1:3) { k <- which(sel & g == i & oc == j); k <- k[order(-s$pr[k, j], s$azar[k])]
+      mover[k[cumsum(w[k]) / tot > meta[i, j]]] <- TRUE } }
+  o <- rep(NA_real_, nrow(d))
+  for (i in 1:2) for (j in 1:3) if (cambio[i, j] > 0) {
+    quedan <- sel & g == i & oc == j; o[quedan] <- oc[quedan]; k <- which(sel & g == i)
+    primero <- mover[k] & oc[k] != j & is.na(o[k]); k <- k[order(!primero, -s$pr[k, j], s$azar[k])]
+    o[k[cumsum(w[k]) / sum(w[k]) <= cambio[i, j]]] <- j }
+  f <- sel & is.na(o); o[f] <- oc[f]
+  list(y = ingreso(d, M, s, sel, o), o = o, sel = sel)
+}
+# (b) según el enunciado: ocupar desocupados hasta bajar 5 puntos la tasa de desempleo
+sim_b_desempleo <- function(d, M, s, pp = .05) {
+  w <- d$pondiio; activos <- s$samp & d$estado %in% 1:2; objetivo <- pp * sum(w[activos])
+  k <- which(s$samp & d$estado == 2); k <- k[order(s$pr[k, 1], s$azar[k])]
+  mv <- k[cumsum(w[k]) - w[k] / 2 <= objetivo]
+  o <- d$ocup; o[mv] <- ifelse(s$pr[mv, 2] >= s$pr[mv, 3], 2, 3)
+  y <- d$ila; y[mv] <- exp(xbeta(M, d, o) + s$res)[mv]
+  list(y = y, o = o)
+}
+```
+
+```{r montecarlo}
+M <- estimar(d); Mc <- estimar(dc)
+R <- 100
+pp <- c(.2, .5, .8)               # puntos de control de las curvas de Lorenz
+u <- d$estado == 2; act <- d$estado %in% 1:2; W <- d$pondiio
+set.seed(2019)
+sim <- lapply(seq_len(R), function(r) {
+  s <- sortear(d, M); a <- sim_a(d, M, s); s2 <- sortear(d, M); b <- sim_b(d, M, s2)   # como el do-file
+  sc <- sortear(dc, Mc)
+  a1 <- sim_a(dc, Mc, sc); a2 <- sim_a_salario(dc, Mc, sc, 64); a3 <- sim_a_salario(dc, Mc, sc); b1 <- sim_b_desempleo(dc, Mc, sc)
+  ya <- familiar(d, a$y); yb <- familiar(d, b$y)
+  mv <- b$sel & d$ocup == 1 & b$o %in% 2:3; sa <- a$sel; sb <- s2$samp
+  U <- sum(W[sb & u]); A <- sum(W[sb & act]); mu <- sum(W[mv & u]); mi <- sum(W[mv & !act])
+  nocal <- d$ocupado & d$nivel_ed %in% c(1, 2, 3, 7) & sa
+  Uc <- sum(dc$pondiio[sc$samp & u]); Ac <- sum(dc$pondiio[sc$samp & act])
+  list(lorenz = sapply(list(a = ya, b = yb), function(y) 100 * c(Lp(curva(y, orden0), pp) - Lp(L0, pp),
+                                                             Lp(curva(y, order(y)), pp) - Lp(L0, pp))),
+       part = participaciones(d, s2$samp),
+       ind = rbind(a = indices(ya, w), b = indices(yb, w), a1 = indices(familiar(dc, a1$y), w),
+                   a2 = indices(familiar(dc, a2$y), w), a3 = indices(familiar(dc, a3$y), w),
+                   b1 = indices(familiar(dc, b1$y), w)),
+       cic = rbind(a = cic(d, ya), b = cic(d, yb)),
+       x = c(descartados = sum(d$muestra & !s$samp), muestra = sum(d$muestra),
+             entran = sum(W[sa & d$ocup == 1 & a$o != 1]), salen = sum(W[sa & d$ocup != 1 & a$o == 1]),
+             cruzan = sum(W[sa & d$ocup != 1 & a$o != 1 & a$o != d$ocup]), sel = sum(W[sa]),
+             sin_cambio = sum(W[nocal & a$o == d$ocup]) / sum(W[nocal]),
+             movidos = mu + sum(W[mv & act & !u]) + mi, mov_des = mu, mov_inac = mi,
+             tasa0 = 100 * U / A, tasa1 = 100 * (U - mu) / (A + mi),
+             tasa_c1 = 100 * (Uc - sum(dc$pondiio[sc$samp & u & b1$o != 1])) / Ac, tasa_c0 = 100 * Uc / Ac),
+       primero = if (r == 1) list(ya = ya, yb = yb, s = s) else NULL)
+})
+I <- simplify2array(lapply(sim, `[[`, "ind")); X <- rowMeans(sapply(sim, `[[`, "x"))
+C <- simplify2array(lapply(sim, `[[`, "cic"))
+uno <- sim[[1]]$primero
+parte <- Reduce(`+`, lapply(sim, `[[`, "part")) / R
+```
+
+```{r d15-calculo}
+des <- base_des <- d$estado == 2
+como_ocupado <- des & d$ocup %in% 2:3
+```
+
+::: {.disc .impr #d14}
+**D14.** Con tres alternativas hay un cuarto caso que el texto omite: **seguir trabajando pero cambiar** entre asalariado y cuenta propia. En (a) representa en promedio `r num(X["cruzan"])` personas, contra `r num(X["entran"])` que pasan a trabajar y `r num(X["salen"])` que dejan de hacerlo.
+:::
+
+::: {.disc .error #d15}
+**D15.** `prepara_base.do` asigna `ocup=1` a quien no está ocupado, pero a continuación reemplaza por 2 o 3 según `cat_ocup` **sin condicionar en estar ocupado**. La EPH completa `cat_ocup` también para los desocupados con empleo anterior. Resultado: **`r num(sum(como_ocupado))` de `r num(sum(des))` desocupados** (`r porc(sum(W[como_ocupado]) / sum(W[des]))` expandido) figuran como asalariados o cuentapropistas, al revés de lo que dice el texto. Esto contamina el logit multinomial, la calibración y los dos escenarios. Es el criterio compatible con los resultados publicados: con él las participaciones observadas casi coinciden con las anotadas en `scen-defn-blank.do` (las diferencias se deben al sorteo); con la clasificación correcta, no.
+:::
+
+```{r d15-tabla}
+pb <- parte
+blank <- rbind(c(0.405366744, 0.487095992, 0.107537264), c(0.17981163, 0.618330281, 0.201858089))
+pc <- participaciones(dc, dc$muestra); pf <- function(m) as.vector(t(m))
+kable(data.frame(Sexo = rep(c("Mujer", "Varón"), each = 3), Alternativa = rep(c("No trabaja", "Asalariado", "Cuenta propia"), 2),
+  num(100 * pf(blank), 2), num(100 * pf(pb), 2), num(100 * pf(pc), 2)), align = "llrrr",
+  col.names = c("Sexo", "Alternativa", "Anotado en el do-file (%)", "R, mismo criterio, media (%)", "R, desocupados como no trabajan (%)"))
+```
+
+```{r coef3}
+cm <- cbind(M$B, Mc$B)
+dimnames(cm) <- list(c("const", "edad", "edad2", "pric", "seci", "secc", "supi", "supc", "hombre", "jefe", "miembros", "casado"),
+                     c("Asal. (do-file)", "Cta. propia (do-file)", "Asal. (corregido)", "Cta. propia (corregido)"))
+kable(matrix(num(cm, 3), nrow(cm), dimnames = dimnames(cm)), align = "rrrr", caption = "Logit multinomial (base: no trabaja)")
+```
+
+::: {.disc .metodo #d16}
+**D16.** Ni `estimate-occup.do` ni `estimate-mincer.do` fijan semilla, y la calibración se detiene al superar el 95% descartando a quienes no se calibraron (en promedio **`r num(X["descartados"])`** de `r num(X["muestra"])` observaciones, `r porc(X["descartados"] / X["muestra"])`). Cada ejecución da resultados distintos y (a) y (b) usan sorteos diferentes. Por eso la réplica repite el procedimiento `r R` veces.
+:::
+
+## (a) Educación secundaria para mayores de 18 {-}
+
+Se presenta el efecto sobre la desigualdad y la pobreza que tendría un escenario contrafáctico en el cual <mark>todos los individuos con 18 o más años de edad</mark> tienen, al menos, educación secundaria completa. Por un lado, se puede observar que la desigualdad disminuye, como se aprecia mediante los índices de desigualdad (ver tabla 5) y la comparación de las curvas de Lorenz (ver figura 18). Por otro lado, se observa que la pobreza también disminuye, como lo manifiestan los indicadores de pobreza (ver tabla 6) y la curva de incidencia del crecimiento (ver figura 19). Por último, en línea con lo mencionado, esta curva, al estar completamente por encima del eje horizontal, indica que la pobreza disminuye y, al tener pendiente negativa, expresa que <mark>la desigualdad también disminuye</mark>, ya que, a medida que se asciende hacia estratos más ricos de la distribución, los aumentos proporcionales del ingreso son menores.
+
+::: {.disc .error #d17}
+**D17.** `sim-secc.do` pone secundaria completa para calcular la **elección ocupacional**, pero **restaura la educación original antes de `genera-ing-laboral`** y además deja el ingreso observado a quien no cambia de ocupación (`replace ila_=ila if (ocup_sim==ocup)`). El mayor salario por tener más educación nunca se aplica: en promedio, `r porc(X["sin_cambio"])` de los ocupados sin secundaria mantienen exactamente el mismo ingreso. La tabla compara el código con correcciones acumulativas (medias de `r R` repeticiones). Al aplicar el efecto salarial, FGT(0) pasa de `r num(mean(I["a1", "FGT (0)", ]), 2)` a **`r num(mean(I["a2", "FGT (0)", ]), 2)`** y el Gini de `r num(mean(I["a1", "Gini", ]), 3)` a **`r num(mean(I["a2", "Gini", ]), 3)`**.
+:::
+
+```{r d17-tabla}
+corr <- list("Original" = orig, "do-file" = rowMeans(I["a", , ]), "+ desocupados no trabajan (D15)" = rowMeans(I["a1", , ]),
+             "+ efecto salarial, 18-64 (D17)" = rowMeans(I["a2", , ]), "+ todos los 18+ (D18)" = rowMeans(I["a3", , ]))
+tabla_simple(corr)
+```
+
+::: {.disc .metodo #d18}
+**D18.** La elección ocupacional se estima con personas de 15 a 64 años y `sim-secc.do` exige `sampocup==1`, así que el escenario cubre de hecho de **18 a 64**, no "18 o más". Quedan fuera `r num(sum(d$edad > 64 & d$ocupado & d$nivel_ed %in% c(1, 2, 3, 7)))` ocupados sin secundaria de 65 años o más. La última columna de la tabla anterior les aplica el efecto salarial.
+:::
+
+::: {.disc .impr #d19}
+**D19.** La lectura de la forma de la figura 19 es correcta, pero la curva no refleja que la educación eleve los salarios: como surge de [D17](#d17), los cambios de ingreso provienen solo de personas que cambian de alternativa ocupacional (incluidas las que empiezan a trabajar).
+:::
+
+```{r fig18, fig.cap="Figura 18. Curva de Lorenz (primera repetición)."}
+fig_lorenz(uno$ya, "Escenario (a)")
+```
+
+```{r fig-banda}
+f19 <- figura(19); f21 <- figura(21)
+fig_banda <- function(k, f, titulo) {
+  v <- C[k, 2:100, ]; lo <- apply(v, 1, min, na.rm = TRUE); hi <- apply(v, 1, max, na.rm = TRUE); p <- 2:100
+  par(mar = c(4, 4, 3, 1))
+  plot(p, hi, type = "n", ylim = range(lo, hi, f$cambio, 0), xlab = "Percentiles del IPCF",
+       ylab = "Variación % promedio del IPCF", main = titulo)
+  polygon(c(p, rev(p)), c(lo, rev(hi)), col = "grey85", border = NA)
+  lines(p, rowMeans(v, na.rm = TRUE), lwd = 2); lines(f$percentil, f$cambio, col = "blue"); abline(h = 0, col = "red")
+  legend("topright", c("Rango de las repeticiones", "Media en R", "Figura publicada"),
+         fill = c("grey85", NA, NA), border = NA, col = c(NA, "black", "blue"), lty = c(NA, 1, 1), bty = "n")
+}
+```
+
+```{r fig19, fig.cap="Figura 19. Curva de incidencia del crecimiento, escenario a."}
+fig_banda("a", f19, "Escenario (a)")
+```
+
+## (b) Disminuir la tasa de desempleo 5 puntos {-}
+
+Se presenta el efecto sobre la desigualdad y la pobreza que tendría un escenario contrafáctico en el cual <mark>disminuye la tasa de desempleo en 5 puntos porcentuales</mark>. Por un lado, se puede observar que la desigualdad disminuye (en menor proporción que en el caso anterior), como se aprecia mediante los índices de desigualdad (ver tabla 5) y la comparación de las curvas de Lorenz (ver figura 20). Por otro lado, se observa que <mark>la pobreza también disminuye (en menor proporción que en el caso anterior)</mark>, como lo manifiestan los indicadores de pobreza (ver tabla 6) y la curva de incidencia del crecimiento (ver figura 21). Por último, en línea con lo mencionado, del análisis de esta curva, surgen las mismas consideraciones que en el caso anterior.
+
+::: {.disc .error #d20}
+**D20.** `scen-defn-unemp.do` fija participaciones que **restan 5 puntos a "no trabaja" sobre toda la población de 15 a 64 años** (por sexo) y los reparten en mitades entre asalariados y cuenta propia. "No trabaja" es sobre todo población **inactiva** (y, por [D15](#d15), casi no contiene desocupados). En promedio pasan a trabajar `r num(X["movidos"])` personas, de las cuales **`r porc(X["mov_inac"] / X["movidos"])` eran inactivas** y solo `r porc(X["mov_des"] / X["movidos"])` desocupadas. La tasa de desempleo pasa de `r num(X["tasa0"], 1)`% a **`r num(X["tasa1"], 1)`%** (`r num(X["tasa0"] - X["tasa1"], 1)` puntos, no 5). Además las participaciones están escritas a mano a partir de una ejecución particular y no se recalculan. La alternativa que cumple el enunciado ocupa solo desocupados (los de mayor probabilidad de trabajar) hasta bajar la tasa de `r num(X["tasa_c0"], 1)`% a `r num(X["tasa_c1"], 1)`% (cada tasa se mide sobre la muestra calibrada de su variante, por eso los puntos de partida difieren levemente).
+:::
+
+```{r d20-tabla}
+tabla_simple(list("Original" = orig, "do-file (media)" = rowMeans(I["b", , ]),
+                  "Desempleo -5 puntos (media)" = rowMeans(I["b1", , ])))
+```
+
+```{r d21-calculo}
+frec <- sapply(pob, function(k) mean(I["b", k, ] > I["a", k, ]))
+```
+
+::: {.disc .error #d21}
+**D21.** En la propia tabla 6 la caída es menor en (b) solo para FGT(0) (14,09 contra 13,79). Para **FGT(1)** (4,51 contra 4,59) y **FGT(2)** (2,32 contra 2,43) la pobreza cae **más** en (b). Además la comparación depende del sorteo: la proporción de repeticiones en que (b) queda con más pobreza que (a) es `r porc(frec[1], 0)` en FGT(0), `r porc(frec[2], 0)` en FGT(1) y `r porc(frec[3], 0)` en FGT(2).
+:::
+
+```{r fig20, fig.cap="Figura 20. Curva de Lorenz (primera repetición)."}
+fig_lorenz(uno$yb, "Escenario (b)")
+```
+
+```{r fig21, fig.cap="Figura 21. Curva de incidencia del crecimiento, escenario b."}
+fig_banda("b", f21, "Escenario (b)")
+```
+
+## Tablas 5 y 6 {-}
+
+```{r tabla5}
+pdf5 <- list(a = c(.434,.334,.153,.285,.520, 13.79,4.59,2.43), b = c(.438,.339,.156,.291,.529, 14.09,4.51,2.32))
+filas <- c(desig, pob)
+dig <- c(rep(3, 5), rep(2, 3))
+T56 <- do.call(rbind, lapply(c("a", "b"), function(k) {
+  lo <- apply(I[k, , ], 1, min); hi <- apply(I[k, , ], 1, max); med <- rowMeans(I[k, , ])
+  tol <- c(rep(.0005, 5), rep(.005, 3))
+  data.frame(Escenario = paste0("(", k, ")"), Indicador = filas, Original = mapply(num, orig, dig), PDF = mapply(num, pdf5[[k]], dig),
+             Media = mapply(num, med, dig), Rango = paste0(mapply(num, lo, dig), " a ", mapply(num, hi, dig)),
+             Dentro = ifelse(pdf5[[k]] >= lo - tol & pdf5[[k]] <= hi + tol, "sí", "no"))
+}))
+kable(T56, align = "llrrrrc", row.names = FALSE,
+      col.names = c("Escenario", "Indicador", "Original", "PDF", paste("Media de", R), "Rango", "¿PDF en el rango?"),
+      caption = "Tablas 5 y 6. Réplica con la lógica del do-file.")
+```
+
+**Control:** `r sum(T56$Dentro == "sí")` de 16 valores publicados caen dentro del rango de las `r R` repeticiones. La columna "Original" coincide con el PDF.
+
+# Verificación contra las figuras de Stata
+
+Las figuras `.gph` guardan los datos graficados. **Curvas de Lorenz:** máxima diferencia absoluta entre la serie contrafáctica de Stata y dos curvas calculadas en R.
+
+```{r verif-lorenz}
+ys <- list("1" = ya, "4" = yb, "7" = yc, "10" = M2[[1]]$y, "12" = M2[[2]]$y, "14" = M2[[3]]$y, "16" = M2[[4]]$y)
+gr <- seq(.01, .99, .01)
+vl <- t(sapply(names(ys), function(n) {
+  s <- figura(n); o <- !duplicated(s$shrpop); v <- approx(s$shrpop[o], s[[3]][o], gr, rule = 2)$y
+  c(original = max(abs(approx(s$shrpop[o], s[[1]][o], gr, rule = 2)$y - Lp(L0, gr))),
+    concentracion = max(abs(v - Lp(curva(ys[[n]], orden0), gr))),
+    lorenz = max(abs(v - Lp(curva(ys[[n]], order(ys[[n]])), gr))))
+}))
+kable(data.frame(Figura = names(ys), matrix(format(vl, scientific = TRUE, digits = 2), nrow(vl))), align = "rrrr", row.names = FALSE,
+      col.names = c("Figura", "Lorenz original", "Contrafáctica vs. concentración", "Contrafáctica vs. Lorenz"))
+```
+
+**Curvas de incidencia** (percentiles 2 a 100). La réplica reproduce el desempate de Stata ([D5](#d5)). Las diferencias restantes provienen de personas que además empatan en el ingreso contrafáctico, cuyo orden es arbitrario.
+
+```{r verif-cic}
+ys2 <- c(list("3" = ya, "6" = yb, "9" = yc), setNames(lapply(M2, `[[`, "y"), c("11", "13", "15", "17")))
+vc <- t(sapply(names(ys2), function(n) { s <- figura(n); v <- cic(d, ys2[[n]])[s$percentil]; e <- abs(v - s$cambio)
+  c(median(e), max(e), cor(v, s$cambio)) }))
+kable(data.frame(Figura = names(ys2), num(vc[, 1], 4), num(vc[, 2], 3), num(vc[, 3], 5)), align = "rrrr", row.names = FALSE,
+      col.names = c("Figura", "Mediana |R - Stata| (p.p.)", "Máximo (p.p.)", "Correlación"))
+dentro <- sapply(c(a = "19", b = "21"), function(n) { f <- figura(n); v <- C[if (n == "19") "a" else "b", f$percentil, ]
+  mean(f$cambio >= apply(v, 1, min, na.rm = TRUE) - .05 & f$cambio <= apply(v, 1, max, na.rm = TRUE) + .05) })
+```
+
+En las figuras 19 y 21, el `r porc(dentro["a"], 0)` y el `r porc(dentro["b"], 0)` de los percentiles publicados caen dentro del rango de las repeticiones.
+
+**Funciones de distribución.** Diferencia máxima en el logaritmo del IPCF y en la proporción acumulada (medida al final de cada grupo de valores empatados).
+
+```{r verif-cdf}
+vd <- do.call(rbind, lapply(c("2", "5", "8"), function(n) do.call(rbind, lapply(c("a", "b"), function(p) {
+  s <- figura(sprintf("%s (%s)", n, p)); y <- if (p == "a") d$ipcf else list("2" = ya, "5" = yb, "8" = yc)[[n]]
+  o <- order(y); acum <- cumsum(w[o]) / sum(w); lx <- ifelse(y[o] > 0, log(pmax(y[o], 1e-300)), NA)
+  k <- !is.na(s[[2]]); st <- tapply(s[[1]][k], signif(s[[2]][k], 10), max); r <- tapply(acum[!is.na(lx)], signif(lx[!is.na(lx)], 10), max)
+  igual <- length(st) == length(r)
+  data.frame(Figura = sprintf("%s (%s)", n, p), valores = length(r),
+             x = if (igual) max(abs(as.numeric(names(st)) - as.numeric(names(r)))) else NA,
+             F = if (igual) max(abs(st - r)) else NA) }))))
+kable(data.frame(vd$Figura, num(vd$valores), format(vd$x, scientific = TRUE, digits = 2), format(vd$F, scientific = TRUE, digits = 2)),
+      align = "lrrr", col.names = c("Figura", "Valores distintos", "Máx. dif. en log IPCF", "Máx. dif. acumulada"))
+```
+
+**Curvas de Lorenz del ejercicio 3.** Como dependen del sorteo, se compara la distancia entre la serie contrafáctica y la original (en puntos porcentuales) con el rango que dan las repeticiones para cada tipo de curva.
+
+```{r verif-lorenz3}
+LR <- simplify2array(lapply(sim, `[[`, "lorenz"))
+v3 <- do.call(rbind, lapply(1:2, function(k) { s <- figura(c(18, 20)[k]); o <- !duplicated(s$shrpop)
+  st <- 100 * (approx(s$shrpop[o], s[[3]][o], pp)$y - approx(s$shrpop[o], s[[1]][o], pp)$y)
+  conc <- LR[1:3, k, ]; lor <- LR[4:6, k, ]
+  data.frame(Figura = c(18, 20)[k], p = pp, stata = st, cl = apply(conc, 1, min), ch = apply(conc, 1, max),
+             ll = apply(lor, 1, min), lh = apply(lor, 1, max)) }))
+en_conc <- sum(v3$stata >= v3$cl - .02 & v3$stata <= v3$ch + .02); en_lor <- sum(v3$stata >= v3$ll - .02 & v3$stata <= v3$lh + .02)
+kable(data.frame(v3$Figura, num(v3$p, 1), num(v3$stata, 3), paste(num(v3$cl, 3), "a", num(v3$ch, 3)),
+                 paste(num(v3$ll, 3), "a", num(v3$lh, 3))), align = "rrrrr",
+      col.names = c("Figura", "p", "Stata", "Rango: concentración", "Rango: Lorenz"))
+```
+
+De los `r nrow(v3)` puntos de control, `r en_conc` caen en el rango de la curva de concentración y `r en_lor` en el de la curva de Lorenz.
+
+```{r sesion}
+sessionInfo()
+```

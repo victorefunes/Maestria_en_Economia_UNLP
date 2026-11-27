@@ -1,0 +1,550 @@
+---
+title: "Trabajo Práctico N° 4 — Réplica en R"
+subtitle: "Maestría en Economía UNLP - Economía de la Distribución. Respuestas originales: Juan Menduiña"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+    self_contained: true
+    code_folding: hide
+---
+
+```{css, echo=FALSE}
+mark { background: #ffe27a; padding: 0 2px; }
+.disc { border-left: 6px solid; border-radius: 4px; padding: 10px 14px; margin: 14px 0; font-size: 0.95em; }
+.disc p:last-child { margin-bottom: 0; }
+.error { border-color: #c0392b; background: #fdecea; }
+.impr  { border-color: #d68910; background: #fef5e7; }
+.metodo{ border-color: #2874a6; background: #eaf2f8; }
+.enunciado { font-style: italic; color: #444; }
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 8, fig.height = 5, dpi = 120)
+library(haven); library(dplyr); library(knitr); library(readxl)
+
+num <- function(x, d = 0) formatC(x, format = "f", digits = d, big.mark = ".", decimal.mark = ",")
+```
+
+# Cómo leer este documento {-}
+
+El texto de cada ejercicio es el del PDF *Trabajo Práctico N° 4 (R)*. Las tablas, las figuras y los números de los recuadros se calculan en R a partir de las bases de `Datos/`. Lo <mark>resaltado</mark> es una frase o un número con alguna discrepancia, explicada en el recuadro correspondiente:
+
+::: {.disc .error}
+**Error**: la afirmación contradice los datos o el cálculo es incorrecto.
+:::
+
+::: {.disc .impr}
+**Imprecisión**: redacción, rótulo o formato que puede inducir a error.
+:::
+
+::: {.disc .metodo}
+**Observación metodológica**: el resultado depende de una decisión discutible o no documentada.
+:::
+
+**Resultado de la réplica.** Las tablas 1 a 9 y las figuras 1 y 2 se reproducen en R (la curva de incidencia, salvo el ruido que genera el orden aleatorio de los empates). Reproducirlas deja a la vista errores de cálculo: el indicador de condiciones sanitarias no mide lo que dice ([D10](#d10)), una cifra de la tabla 3 no corresponde a su línea de pobreza ([D5](#d5)) y la tabla 8 mezcla ponderadores ([D17](#d17)).
+
+| N° | Ej. | Tipo | Discrepancia |
+|----|-----|------|--------------|
+| [D1](#d1) | Intro | Error | La EPH no es representativa a nivel nacional |
+| [D2](#d2) | Intro | Metodológica | La muestra cambia entre ejercicios sin aviso |
+| [D3](#d3) | 1 | Imprecisión | Grupos de edad distintos de los pedidos y rótulo "> 65" |
+| [D4](#d4) | 1 | Error | Las participaciones por edad no evolucionan con α como dice el texto |
+| [D5](#d5) | 2 | Error | Con la línea de \$5.333,33 la incidencia no es 25% |
+| [D6](#d6) | 2 | Imprecisión | Figura 1 sin leyenda y con colores que confunden |
+| [D7](#d7) | 3 | Imprecisión | El enunciado dice "seis regiones" y enumera siete |
+| [D8](#d8) | 3 | Error | Las contribuciones no siguen estrictamente a la población |
+| [D9](#d9) | 3 | Imprecisión | "Observaciones" es población expandida |
+| [D10](#d10) | 4 | Error | El indicador sanitario excluye justamente a los hogares sin baño |
+| [D11](#d11) | 4 | Metodológica | Hacinamiento calculado con cuartos para dormir |
+| [D12](#d12) | 4 | Metodológica | "Vivienda inconveniente" incluye villas y excluye hoteles y pensiones |
+| [D13](#d13) | 4 | Metodológica | Hogares sin ocupados cuentan en subsistencia cualquiera sea su tamaño |
+| [D14](#d14) | 4 | Metodológica | Ponderador `pondera` en una muestra filtrada por respuesta de ingresos |
+| [D15](#d15) | 4 | Error | El texto habla de hogares; las cifras son de personas |
+| [D16](#d16) | 4 | Error | NEA no es la región con más NBI y CABA no es la menor en todo |
+| [D17](#d17) | 4 | Error | El total de la tabla 8 no corresponde a sus filas |
+| [D18](#d18) | 5 | Error | "Decrecimiento para cualquier percentil" se contradice |
+| [D19](#d19) | 5 | Error | La mejora relativa no se concentra en los ingresos bajos |
+| [D20](#d20) | 5 | Metodológica | Deflactor del Gran Buenos Aires para todo el país |
+| [D21](#d21) | 5 | Metodológica | Se excluyen los ingresos nulos, a diferencia de los ejercicios 1 a 3 |
+
+# Datos y funciones
+
+```{r datos}
+leer <- function(f) {
+  x <- read_dta(f) |> zap_labels(); names(x) <- tolower(names(x))
+  x$dec <- suppressWarnings(as.numeric(x$deccfr)); x
+}
+ind19 <- leer("Datos/usu_individual_t119.dta")
+ind17 <- leer("Datos/usu_individual_t117.dta")
+hog19 <- leer("Datos/usu_hogar_t119.dta")
+sin_secundarios <- function(x) filter(x, !is.na(dec), dec <= 10, !nro_hogar %in% c(51, 71))
+
+d    <- sin_secundarios(ind19)             # ejercicios 1 a 3: incluye ingreso nulo
+d17z <- sin_secundarios(ind17)
+s19  <- filter(d, dec >= 1)                # ejercicios 4 y 5: excluye ingreso nulo
+s17  <- filter(d17z, dec >= 1)
+d <- d |> mutate(edad = ifelse(ch06 == -1, 0, ch06),
+                 region2 = ifelse(aglomerado %in% c(32, 33), aglomerado, region))
+regiones <- c("32" = "CABA", "33" = "GBA", "40" = "NOA", "41" = "NEA",
+              "42" = "Cuyo", "43" = "Pampeana", "44" = "Patagónica")
+LP <- 4006.098
+```
+
+```{r funciones}
+# Indicadores FGT, en porcentaje (comando_fgt.do)
+fgt <- function(y, w, a, z = LP) 100 * sum(w * ifelse(y < z, (pmax(z - y, 0) / z)^a, 0)) / sum(w)
+media <- function(x, w) 100 * weighted.mean(x, w, na.rm = TRUE)
+```
+
+# Introducción {-}
+
+Para los cálculos de este trabajo, se consideraron las bases de microdatos de la EPH del primer trimestre de 2017 y de 2019 elaboradas por el INDEC, <mark>las cuales son representativas a nivel nacional</mark> y <mark>comprenden 44.124 y 47.987 observaciones</mark>, respectivamente.^[Texto original: "Se omiten aquellas observaciones que no han dado respuesta sobre sus niveles de ingresos o que pertenecen a hogares secundarios".]
+
+::: {.disc .error #d1}
+**D1.** La EPH continua es una encuesta **urbana** (31 aglomerados). No es representativa del total nacional: "Argentina" y "país" deben leerse como "total de aglomerados urbanos relevados".
+:::
+
+::: {.disc .metodo #d2}
+**D2.** Las cifras `r num(nrow(d17z))` y `r num(nrow(d))` se obtienen incluyendo los ingresos nulos, y valen para los ejercicios 1 a 3. El ejercicio 4 trabaja con unas 47.600 observaciones y el ejercicio 5 con `r num(nrow(s17))` y `r num(nrow(s19))`, porque ambos **excluyen** además a los hogares sin ingreso. El enunciado de este trabajo no pide esa exclusión y el texto no la informa.
+:::
+
+# Ejercicio 1
+
+::: {.enunciado}
+Computar la tasa de incidencia P0, el indicador de brecha de la pobreza P1 y el FGT con α = 2, para el total y para los siguientes grupos de edades: 0 a 12, 13 a 24, 25 a 64, y 65 y más; emplear una línea de pobreza de \$4.006,098 mensuales por persona.
+:::
+
+En la tabla 1, se presentan los indicadores de pobreza FGT ($\alpha$), con $\alpha$ = 0, 1 y 2 (incidencia, brecha y severidad de la pobreza, respectivamente), para el agregado y para diferentes grupos de edad, empleando una línea de pobreza de \$4.006,098. Por un lado, se puede observar que, a nivel agregado, la tasa de incidencia de la pobreza es del 16,13% de la población, reduciéndose este valor a 5,35% y 2,84% según se trate del indicador de brecha o de severidad de la pobreza, respectivamente. Por otro lado, respecto de la desagregación por grupo de edad, es importante señalar que el comportamiento intergrupal es robusto respecto de cada indicador: la población infantil es la que presenta los niveles más altos de pobreza para cualquier indicador, reduciéndose progresivamente los valores en los grupos de edad sucesivos.
+
+```{r ej1}
+tabla_edad <- function(cortes, nombres) {
+  g <- cut(d$edad, cortes, labels = nombres)
+  t1 <- sapply(0:2, function(a) c(sapply(nombres, function(k) fgt(d$ipcf[g == k], d$pondih[g == k], a)),
+                                  fgt(d$ipcf, d$pondih, a)))
+  pob <- as.numeric(tapply(d$pondih, g, sum)) / sum(d$pondih)
+  sh <- sweep(t1[seq_along(nombres), ] * pob, 2, t1[length(nombres) + 1, ], "/") * 100
+  list(niv = t1, share = sh, pob = 100 * pob, nombres = nombres)
+}
+e1 <- tabla_edad(c(-1, 12, 24, 40, 64, Inf),
+                 c("0-12 años", "13-24 años", "25-40 años", "41-64 años", "> 65 años"))
+mostrar <- function(m, filas, titulo) kable(
+  data.frame(Grupo = filas, matrix(num(m, 2), nrow(m))), align = "lrrr", row.names = FALSE,
+  col.names = c("Grupo", "FGT (0)", "FGT (1)", "FGT (2)"), caption = titulo)
+mostrar(e1$niv, c(e1$nombres, "Total País"), "Tabla 1. Indicadores de pobreza por grupo de edad (%).")
+pdf1 <- matrix(c(27.91, 9.40, 4.71, 21.80, 7.21, 3.82, 14.73, 4.74, 2.48, 11.30, 3.81, 2.22,
+                 3.02, 0.99, 0.54, 16.13, 5.35, 2.84), ncol = 3, byrow = TRUE)
+dif1 <- sum(abs(round(e1$niv, 2) - pdf1) > 1e-8)
+```
+
+Finalmente, en la tabla 2, también se observa que, en un extremo, el grupo de individuos de 0 a 12 años es el de mayor participación en el cómputo de la pobreza, aportando un 32,10%, 32,58% y 30,83% para $\alpha$ = 0, 1 y 2, respectivamente, mientras que, en el otro extremo, el grupo de individuos de más de 65 años es el de menor participación, con 2,45%, 2,41% y 2,50% para $\alpha$ = 0, 1 y 2, respectivamente. En consecuencia, se puede ver que, <mark>a medida que $\alpha$ aumenta, la participación relativa en la pobreza del primer grupo aumenta, mientras que la del último grupo disminuye</mark>.
+
+```{r tabla2}
+mostrar(rbind(e1$share, colSums(e1$share)), c(e1$nombres, "Total"),
+        "Tabla 2. Participación de cada grupo de edad en la pobreza (%).")
+pdf2 <- matrix(c(32.10, 32.58, 30.83, 26.37, 26.28, 26.32, 20.96, 20.33, 20.08,
+                 18.12, 18.40, 20.27, 2.45, 2.41, 2.50), ncol = 3, byrow = TRUE)
+dif2 <- which(abs(e1$share - pdf2) > .0051, arr.ind = TRUE)
+e1b <- tabla_edad(c(-1, 12, 24, 64, Inf), c("0-12 años", "13-24 años", "25-64 años", "65 años y más"))
+mostrar(e1b$niv, c(e1b$nombres, "Total"),
+        "Tabla 1 bis (agregada). FGT con los grupos de edad del enunciado (%).")
+```
+
+Control: la mayor diferencia con la tabla 1 del PDF es `r num(max(abs(e1$niv - pdf1)), 4)` puntos; `r dif1` celdas cambian en 0,01 al redondear (por ejemplo, `r num(e1$niv[2, 1], 4)` figura como 21,80). En la tabla 2 la mayor diferencia con el PDF es `r num(max(abs(e1$share - pdf2)), 3)` puntos (0-12 años, α = 0: `r num(e1$share[1, 1], 3)` contra 32,10), propia de calcular con cifras ya redondeadas.
+
+::: {.disc .impr #d3}
+**D3.** El enunciado pide un solo grupo de **25 a 64** años y las tablas 1 y 2 lo dividen en 25-40 y 41-64 (la tabla 1 bis usa los grupos pedidos). Además, la categoría "> 65 años" **incluye** a las personas de 65 (`r num(sum(d$edad == 65))` observaciones): debe decir "65 y más".
+:::
+
+::: {.disc .error #d4}
+**D4.** Los propios números de la tabla 2 contradicen la frase. El grupo de 0 a 12 pasa de `r num(e1$share[1, 1], 2)` a `r num(e1$share[1, 2], 2)` y a `r num(e1$share[1, 3], 2)`: **sube y luego baja**, y con α = 2 queda por debajo de α = 0. El grupo mayor pasa de `r num(e1$share[5, 1], 2)` a `r num(e1$share[5, 2], 2)` y a `r num(e1$share[5, 3], 2)`: **baja y luego sube**. Ninguno evoluciona de forma monótona.
+:::
+
+# Ejercicio 2
+
+::: {.enunciado}
+Construir la curva de Pen del ingreso per cápita familiar. ¿Qué proporción de la población es clasificada como pobre si la línea de pobreza es \$4.006,098? Indicar la línea de pobreza y la proporción de pobres sobre el gráfico de la curva de Pen. ¿Cómo cambiaría la proporción de pobres si la línea se fijara en un valor 10% superior? ¿Y si se fijara en un valor 10% inferior? ¿Cuál es la línea de pobreza que generaría una tasa de incidencia del 25%?
+:::
+
+En la figura 1, se presenta la curva de Pen del ingreso per cápita familiar, indicando diferentes líneas de pobreza,^[A fin de que pueda observarse más plenamente lo comentado seguidamente, se muestra la curva de Pen hasta el percentil 85.] mientras que, en la tabla 3, se muestra el indicador de incidencia de la pobreza para estas mismas líneas de pobreza. Se puede observar que, si la línea de pobreza es \$4.006,098, el 16,13% de la población es clasificada como pobre, mientras que, si la línea de pobreza fuera 10% superior (es decir, \$4.406,708), la proporción de pobres aumentaría a 18,01% y, si se fijara en un valor 10% inferior (es decir, \$3.605,488), se reduciría a 12,75%. Por otra parte, se puede mencionar que <mark>la línea de pobreza que generaría una tasa de incidencia del 25% es \$5.333,33</mark>.
+
+```{r ej2}
+lineas_p <- c(3605.4882, 4006.098, 4406.7078, 5333.33)
+inc <- sapply(lineas_p, function(z) fgt(d$ipcf, d$pondih, 0, z))
+kable(data.frame("FGT (0)", t(num(inc, 2))), align = "lrrrr",
+      col.names = c("", "LP1 = 3.605,49", "LP2 = 4.006,10", "LP3 = 4.406,71", "LP4 = 5.333,33"),
+      caption = "Tabla 3. Incidencia de la pobreza para diferentes líneas (%), calculada en R.")
+hasta <- 100 * sum(d$pondih[d$ipcf <= 5333.33]) / sum(d$pondih)
+sig <- min(d$ipcf[d$ipcf > 5333.33])
+```
+
+```{r fig1}
+o <- order(d$ipcf); pen <- data.frame(p = cumsum(d$pondih[o]) / sum(d$pondih), y = d$ipcf[o] / 1000)
+v <- pen$p <= .85
+par(mar = c(4.5, 4.5, 1, 1), las = 1)
+plot(pen$p[v], pen$y[v], type = "l", lwd = 1.5, xlab = "Share de la población", ylab = "IPCF (Miles de pesos)")
+abline(h = lineas_p / 1000, col = c("red", "red", "blue", "blue"), lty = c(2, 1, 1, 2))
+abline(v = c(.1613, .25), col = c("red", "blue"))
+```
+
+**Figura 1.** Curva de Pen del IPCF, con los mismos trazos que el PDF.
+
+::: {.disc .error #d5}
+**D5.** La tabla 3 del PDF informa **25,00** para LP4, pero con \$5.333,33 la incidencia es **`r num(inc[4], 2)`%** (la tabla de arriba coincide en las otras tres columnas). Hay muchas personas con ingreso exactamente igual a \$5.333,33 (16.000 entre tres): por debajo queda el `r num(inc[4], 2)`% y por debajo o igual, el `r num(hasta, 2)`%. Como la línea se aplica con desigualdad estricta, **ninguna línea produce exactamente 25%**: cualquiera mayor que \$5.333,33 y hasta \$`r num(sig, 2)` da `r num(hasta, 2)`%. La respuesta correcta es que \$5.333,33 es el **percentil 25** del IPCF.
+:::
+
+::: {.disc .impr #d6}
+**D6.** La figura no tiene leyenda. La línea vertical **azul** (0,25) corresponde a la horizontal azul **punteada** (LP4), pero la horizontal azul **continua** es LP2 (+10%), cuya incidencia es 18,01%. Las líneas de LP2 y LP3 no tienen marcada su proporción.
+:::
+
+# Ejercicio 3
+
+::: {.enunciado}
+Descomponer el nivel del indicador FGT con α igual a 0, 1 y 2 entre las siguientes siete regiones que permite identificar la EPH: Partidos del GBA, Ciudad de Buenos Aires, NOA, NEA, Cuyo, Pampeana y Patagónica; emplear la línea de pobreza de \$4.006,098 mensuales por persona.
+:::
+
+::: {.disc .impr #d7}
+**D7.** El PDF de enunciados dice "las siguientes **seis** regiones" y enumera **siete**; el PDF de respuestas lo cambia a "siete" sin aclararlo.
+:::
+
+En la tabla 4, se presentan los indicadores de pobreza FGT ($\alpha$), con $\alpha$ = 0, 1 y 2 (incidencia, brecha y severidad de la pobreza, respectivamente), por región, empleando una línea de pobreza de \$4.006,098. Se puede observar que, cualquier sea el indicador FGT que se considere, la región del NEA es la de mayor nivel de pobreza, mientras que CABA se encuentra en el otro extremo, con el menor nivel de pobreza.
+
+```{r ej3}
+r_niv <- t(sapply(names(regiones), function(r) { k <- d$region2 == as.numeric(r)
+  sapply(0:2, function(a) fgt(d$ipcf[k], d$pondih[k], a)) }))
+r_pob <- sapply(names(regiones), function(r) sum(d$pondih[d$region2 == as.numeric(r)]))
+r_sh <- sweep(r_niv * (r_pob / sum(r_pob)), 2, sapply(0:2, function(a) fgt(d$ipcf, d$pondih, a)), "/") * 100
+mostrar(r_niv, regiones, "Tabla 4. Indicadores de pobreza por región (%).")
+```
+
+En la tabla 5, se presentan las contribuciones de cada región en el cómputo de cada uno de los indicadores de pobreza, empleando una línea de pobreza de \$4.006,098. Se puede observar que, independientemente del indicador de pobreza que se mire, <mark>las contribuciones de cada región están estrictamente relacionadas con la proporción de su población respecto a la población total del país</mark> (ver tabla 6). Así, la contribución sistemáticamente más alta corresponde a Partidos del GBA, con un valor que oscila entre el 48,45% y 49,15%, mientras que la Patagonia es la región con la contribución más baja, cuyos valores contributivos no superan el 2,23%.
+
+```{r tabla5}
+mostrar(rbind(r_sh, colSums(r_sh)), c(regiones, "Total"), "Tabla 5. Participación de cada región en la pobreza (%).")
+kable(data.frame(Región = c(regiones, "Total"), Observaciones = num(c(r_pob, sum(r_pob))),
+                 Share = num(c(100 * r_pob / sum(r_pob), 100), 2)), align = "lrr", row.names = FALSE,
+      col.names = c("Región", "Observaciones (población expandida)", "Share (%)"),
+      caption = "Tabla 6. Participación de la población de cada región.")
+pp <- 100 * r_pob / sum(r_pob); names(pp) <- regiones; s0 <- r_sh[, 1]; names(s0) <- regiones
+pdf4 <- matrix(c(5.73,2.32,1.50, 18.29,6.01,3.23, 20.34,5.89,2.63, 26.47,8.77,4.54, 16.90,5.07,2.63,
+                 13.99,5.02,2.66, 7.32,2.88,1.73), ncol = 3, byrow = TRUE)
+pdf5 <- matrix(c(3.76,4.59,5.62, 48.96,48.45,49.15, 12.02,10.49,8.84, 8.14,8.12,7.94, 6.58,5.95,5.83,
+                 18.88,20.43,20.39, 1.67,1.97,2.23), ncol = 3, byrow = TRUE)
+```
+
+Control: la mayor diferencia con el PDF es `r num(max(abs(r_niv - pdf4)), 4)` puntos en la tabla 4 y `r num(max(abs(r_sh - pdf5)), 4)` en la tabla 5: solo cambia el último decimal de algunas celdas por redondeo.
+
+::: {.disc .error #d8}
+**D8.** La contribución es la proporción de población **multiplicada por la pobreza relativa** de la región, así que no sigue estrictamente a la población. Con α = 0:
+
+* CABA tiene más población que el NOA (`r num(pp["CABA"], 2)`% contra `r num(pp["NOA"], 2)`%) y aporta mucho menos (`r num(s0["CABA"], 2)`% contra `r num(s0["NOA"], 2)`%).
+* El NEA tiene menos población que Cuyo (`r num(pp["NEA"], 2)`% contra `r num(pp["Cuyo"], 2)`%) y aporta más (`r num(s0["NEA"], 2)`% contra `r num(s0["Cuyo"], 2)`%).
+
+Que GBA aporte más y Patagónica menos sí es correcto.
+:::
+
+::: {.disc .impr #d9}
+**D9.** La columna "Observaciones" de la tabla 6 es la **suma de ponderadores** (personas representadas), no la cantidad de observaciones, que es `r num(nrow(d))` en total.
+:::
+
+# Ejercicio 4
+
+::: {.enunciado}
+Calcular indicadores de necesidades básicas insatisfechas similares a los que utiliza el INDEC: 1. Hacinamiento: hogares que tuvieran más de 3 personas por cuarto. 2. Vivienda: hogares que habitaran en una vivienda de tipo inconveniente (pieza de inquilinato, vivienda precaria u otro tipo). 3. Condiciones sanitarias: hogares que no tuvieran ningún tipo de retrete. 4. Asistencia escolar: hogares que tuvieran algún niño en edad escolar que no asista a la escuela. 5. Capacidad de subsistencia: hogares que tuvieran 4 o más personas por miembro ocupado y, además, cuyo jefe tuviera baja educación.
+:::
+
+```{r nbi-funcion}
+# Indicadores por persona. Cada argumento reproduce el do-file o aplica una alternativa
+nbi <- function(sanidad = "dofile", cuartos = "ii2", vivienda = "dofile", subsist = "dofile") {
+  h <- sin_secundarios(hog19) |> filter(!iv1 %in% 9, !iv8 %in% 9, !iv12_3 %in% 9)
+  h <- if (sanidad == "dofile") filter(h, !iv10 %in% c(0, 9)) else filter(h, !(iv8 == 1 & iv10 == 9))
+  m <- inner_join(s19, select(h, codusu, nro_hogar, iv1, iv8, iv10, iv12_3, ii1, ii2),
+                  by = c("codusu", "nro_hogar")) |>
+    group_by(codusu, nro_hogar) |>
+    mutate(miembros = n(), edad = ifelse(ch06 == -1, 0, ch06),
+           escolares = sum(edad >= 6 & edad <= 12 & ch10 != 1),
+           ocupados = sum(estado == 1),
+           jefe_baja = sum(ch03 == 1 & nivel_ed %in% c(1, 7))) |>
+    ungroup()
+  n_c <- m[[cuartos]]
+  m$i1 <- ifelse(n_c == 0, NA, m$miembros / n_c > 3)
+  m$i2 <- if (vivienda == "dofile") m$iv1 %in% c(3, 5, 6) | m$iv12_3 == 1 else m$iv1 %in% 3:6
+  m$i3 <- if (sanidad == "dofile") m$iv8 == 2 | m$iv10 %in% c(2, 3) else m$iv8 == 2
+  m$i4 <- m$escolares >= 1
+  cuatro <- if (subsist == "dofile") m$ocupados == 0 | m$miembros / m$ocupados >= 4
+            else ifelse(m$ocupados == 0, m$miembros >= 4, m$miembros / m$ocupados >= 4)
+  m$i5 <- cuatro & m$jefe_baja > 0
+  # En Stata, un indicador faltante cumple "> 0" y cuenta como NBI
+  alguno <- m$i2 | m$i3 | m$i4 | m$i5 | (m$i1 %in% TRUE)
+  m$nbi <- if (sanidad == "dofile") alguno | is.na(m$i1) else alguno
+  m$pobre <- m$ipcf < LP
+  m$region2 <- ifelse(m$aglomerado %in% c(32, 33), m$aglomerado, m$region)
+  m
+}
+m <- nbi()
+por_region <- function(x, vars, w = "pondera") {
+  fila <- function(k) setNames(sapply(vars, function(v) media(x[[v]][k], x[[w]][k])), vars)
+  t <- do.call(rbind, c(lapply(names(regiones), function(r) fila(x$region2 == as.numeric(r))),
+                        list(fila(TRUE & seq_len(nrow(x)) > 0))))
+  rownames(t) <- c(regiones, "Total País"); t
+}
+t7 <- por_region(m, paste0("i", 1:5))
+```
+
+En la tabla 7, se presentan indicadores de necesidades básicas insatisfechas (NBI) similares a los que utiliza el INDEC, para el total país y por región. A nivel país, se puede observar que: el 9,29% de la población vive en condiciones de hacinamiento; el <mark>2,97% de los hogares</mark> habita una vivienda en condiciones edilicias o geográficas inconvenientes, mientras que <mark>el 7,88% de estos no tienen ningún tipo de retrete</mark>; sólo el <mark>0,53% de los hogares</mark> tiene algún niño en edad escolar que no asiste a la escuela; y el <mark>4,19% de los hogares</mark> tiene 4 o más personas por miembro ocupado con un jefe de familia que tiene baja educación. Considerando estos indicadores y según el criterio de unión,^[Criterio de "unión": $i \in \Im_p$ si y sólo si $\exists\, j$ tal que $x_{ij} < z_j$.] el 19,42% de la población del país es pobre (ver tabla 8).
+
+A nivel regional, se tiene que: el indicador hacinamiento ronda entre el 5,35% y el 11,17%, siendo Partidos del GBA la región más afectada; vivienda entre 0,59% y 5,42%, con NEA como la región más afectada; condiciones sanitarias entre 0,09% y 12,72%, figurando Partidos del GBA como la región, considerablemente, más afectada; asistencia escolar entre 0,16% y 2,27%, con NEA como la región más afectada; y, por último, capacidad de subsistencia entre 0,83% y 6,60%, siendo NEA, nuevamente, la región más afectada. En conclusión, en términos generales, puede decirse que <mark>la región del NEA resulta ser la que exhibe mayor proporción de individuos con NBI, seguida por Partidos del GBA, mientras que CABA es la región con los menores valores de estos indicadores</mark>.
+
+```{r tabla7}
+nombres_i <- c("Hacinamiento", "Vivienda", "Condiciones sanitarias", "Asistencia escolar",
+               "Capacidad de subsistencia")
+kable(matrix(num(t7, 2), 8, dimnames = list(rownames(t7), nombres_i)), align = "r",
+      caption = "Tabla 7. Indicadores de NBI (% de personas), como en el PDF.")
+pdf7 <- matrix(c(5.35,2.53,.09,.43,.83, 11.17,4.44,12.72,.40,4.94, 9.70,.59,8.08,.52,3.89,
+  10.29,5.42,7.53,2.27,6.60, 9.55,1.02,2.53,.16,3.19, 7.57,2.27,6.10,.44,4.40,
+  7.75,1.35,1.70,.47,3.27, 9.29,2.97,7.88,.53,4.19), ncol = 5, byrow = TRUE)
+dif7 <- sum(abs(round(t7, 2) - pdf7) > 1e-8)
+```
+
+Control: celdas de la tabla 7 que difieren del PDF: **`r dif7`**.
+
+```{r nbi-sanidad}
+m_san <- nbi(sanidad = "correcta")
+h19 <- sin_secundarios(hog19)
+excluidos <- anti_join(m_san, m, by = c("codusu", "nro_hogar", "componente"))
+san <- por_region(m_san, "i3")
+kable(data.frame(Región = rownames(san), PDF = num(t7[, 3], 2), Correcto = num(san[, 1], 2)),
+      row.names = FALSE, align = "lrr",
+      col.names = c("Región", "Como en el PDF (%)", "Sin retrete (%)"),
+      caption = "Condiciones sanitarias: indicador publicado y corregido (agregado en la réplica).")
+```
+
+::: {.disc .error #d10}
+**D10.** El *do-file* elimina los hogares con `iv10 = 0`, y ese es el valor que toma `iv10` en **todos los hogares sin baño ni letrina** (`iv8 = 2`, `r num(sum(h19$iv8 == 2))` hogares). Quedan fuera de la muestra precisamente quienes cumplen la condición. Lo que se cuenta como privación son los hogares que **sí tienen retrete**, pero sin botón o con letrina (`iv10` = 2 o 3). Medido como pide el enunciado (`iv8 = 2`), el indicador total es **`r num(san["Total País", 1], 2)`%**, no `r num(t7["Total País", 3], 2)`%. La exclusión además elimina `r num(nrow(excluidos))` personas de **todos** los indicadores.
+:::
+
+```{r nbi-alternativas}
+m_cua <- nbi(cuartos = "ii1"); m_viv <- nbi(vivienda = "enunciado"); m_sub <- nbi(subsist = "min4")
+cero_ocu <- m$i5 & m$ocupados == 0
+villa <- m$i2 & !(m$iv1 %in% c(3, 5, 6))
+hotel <- sum(m$iv1 == 4)
+```
+
+::: {.disc .metodo #d11}
+**D11.** Se usa `ii2`, los ambientes que el hogar utiliza **para dormir**, y no `ii1`, el total de ambientes de uso exclusivo. Con `ii1` el hacinamiento total es `r num(media(m_cua$i1, m_cua$pondera), 2)`% en lugar de `r num(t7["Total País", 1], 2)`%. La definición debería explicitarse. Además, `r num(sum(is.na(m$i1)))` personas sin ambientes para dormir quedan fuera del indicador pero se cuentan como pobres por NBI, porque en Stata un valor faltante cumple `indic1 > 0`.
+:::
+
+::: {.disc .metodo #d12}
+**D12.** El indicador de vivienda suma las viviendas en **villa de emergencia** (`iv12_3 = 1`), que explican `r num(media(villa, m$pondera), 2)` de los `r num(t7["Total País", 2], 2)` puntos, y no incluye la **pieza en hotel o pensión** (`iv1 = 4`, `r hotel` personas). Con los tipos 3 a 6 de `iv1` y sin villas el total es `r num(media(m_viv$i2, m_viv$pondera), 2)`%.
+:::
+
+::: {.disc .metodo #d13}
+**D13.** En los hogares **sin ocupados** el cociente miembros/ocupados queda faltante y Stata lo trata como mayor que 4. Así entran, por ejemplo, jubilados que viven solos: de los `r num(t7["Total País", 5], 2)` puntos del indicador, `r num(media(cero_ocu, m$pondera), 2)` son hogares sin ocupados, y entre esas personas el `r num(media(m$edad[cero_ocu] >= 65, m$pondera[cero_ocu]), 0)`% tiene 65 años o más. Si en esos hogares se exigen al menos 4 miembros, el indicador es `r num(media(m_sub$i5, m_sub$pondera), 2)`%.
+:::
+
+::: {.disc .metodo #d14}
+**D14.** La muestra descarta la no respuesta de ingresos pero pondera con `pondera`, que no corrige esa pérdida: representa `r num(sum(m$pondera))` personas, contra `r num(sum(m$pondih))` con `pondih`. La pobreza por ingreso es `r num(media(m$pobre, m$pondera), 2)`% con `pondera` y `r num(media(m$pobre, m$pondih), 2)`% con `pondih` sobre la misma muestra.
+:::
+
+```{r nbi-hogares}
+jefes <- filter(m, ch03 == 1)
+hog_t <- sapply(paste0("i", 1:5), function(v) media(jefes[[v]], jefes$pondera))
+kable(data.frame(Indicador = nombres_i, Personas = num(t7["Total País", ], 2), Hogares = num(hog_t, 2)),
+      row.names = FALSE, align = "lrr", col.names = c("Indicador", "% de personas (PDF)", "% de hogares"),
+      caption = "Unidad de análisis (agregado en la réplica).")
+```
+
+::: {.disc .error #d15}
+**D15.** Las cifras se calculan sobre la base **individual**: son porcentajes de **personas**, no de hogares (la tabla anterior muestra cuánto difieren). Además, "el 7,88% **de estos**" sugiere un porcentaje de quienes tienen vivienda inconveniente, cuando es un porcentaje del total.
+:::
+
+En la tabla 8, se desagrega la medición de pobreza según el criterio del ingreso y el criterio de NBI por región. Se puede observar que la región del NEA es la más pobre en términos del criterio del ingreso (27,33%), mientras que Partidos del GBA lo es en términos del criterio de NBI (25,43%). Para ambos criterios, la región con menores niveles de pobreza es CABA (6,20% y 8,38% según ingreso y según NBI, respectivamente).
+
+```{r tabla8}
+t8 <- por_region(m, c("pobre", "nbi"))
+total_pondih <- fgt(d$ipcf, d$pondih, 0)
+kable(data.frame(Región = rownames(t8), Ingreso = c(num(t8[1:7, 1], 2), paste0("<mark>16,13</mark> → ", num(t8[8, 1], 2))),
+                 NBI = num(t8[, 2], 2)), row.names = FALSE, align = "lrr", escape = FALSE,
+      col.names = c("Región", "Pobreza s/ ingreso (%)", "Pobreza s/ NBI (%)"),
+      caption = "Tabla 8. Pobreza por región según ingreso y NBI. En el total de ingreso: PDF → valor consistente.")
+```
+
+```{r ej4-ranking}
+ind_reg <- t7[1:7, ]
+no_min <- nombres_i[apply(ind_reg, 2, which.min) != 1]
+nbi_orden <- names(sort(t8[1:7, 2], decreasing = TRUE))
+```
+
+::: {.disc .error #d16}
+**D16.** Según la propia tabla 8, el orden por NBI es **`r nbi_orden[1]`** (`r num(t8[nbi_orden[1], 2], 2)`%) y luego `r nbi_orden[2]` (`r num(t8[nbi_orden[2], 2], 2)`%): el texto los invierte, y contradice la oración que sigue en el párrafo de la tabla 8. CABA tiene la menor NBI total, pero **no** el menor valor en `r paste(tolower(no_min), collapse = " ni en ")`.
+
+Salvedad: este orden depende del indicador sanitario erróneo. Al corregirlo ([D10](#d10)), la NBI total pasa a ser `r num(media(m_san$nbi[m_san$region2 == 41], m_san$pondera[m_san$region2 == 41]), 2)`% en el NEA y `r num(media(m_san$nbi[m_san$region2 == 33], m_san$pondera[m_san$region2 == 33]), 2)`% en GBA, y el NEA queda primero. La frase no es compatible con las tablas publicadas, aunque su orden coincide con el que surge de los datos corregidos.
+:::
+
+::: {.disc .error #d17}
+**D17.** Las filas regionales de la tabla 8 se calculan con `pondera` en la muestra sin ingresos nulos, cuyo total es **`r num(t8[8, 1], 2)`%** (el que usa la tabla 9). El 16,13% de la fila "Total País" se copió del ejercicio 1, calculado con `pondih` e incluyendo ingresos nulos (`r num(total_pondih, 2)`%).
+:::
+
+Finalmente, en la tabla 9, se puede ver que el 7,90% que es pobre según el criterio de NBI también lo es bajo el criterio del ingreso (utilizando una línea de pobreza de \$4.006,098); el 17,08% es pobre según el criterio del ingreso; el 19,42% es pobre según el criterio de NBI; y, por último, el 71,40% no reviste ningún tipo de pobreza.
+
+```{r tabla9}
+cruce <- 100 * xtabs(pondera ~ pobre + nbi, m) / sum(m$pondera)
+t9 <- addmargins(cruce)
+kable(matrix(num(t9, 3), 3, dimnames = list(c("Ingreso 0", "Ingreso 1", "Total"),
+      c("NBI 0", "NBI 1", "Total"))), align = "r", caption = "Tabla 9. Pobreza según ingreso y NBI (% de personas).")
+```
+
+Control: la tabla 9 coincide con el PDF; la celda de ambas privaciones es `r num(t9[2, 2], 3)` (el PDF la muestra como 7,90).
+
+```{r nbi-acumulado}
+pasos <- list(
+  "Como en el PDF" = list(m, "pondera"),
+  "+ sanidad: sin retrete" = list(nbi("correcta"), "pondera"),
+  "+ hacinamiento con ii1" = list(nbi("correcta", "ii1"), "pondera"),
+  "+ vivienda: iv1 3 a 6, sin villas" = list(nbi("correcta", "ii1", "enunciado"), "pondera"),
+  "+ subsistencia: sin ocupados exige 4 miembros" = list(nbi("correcta", "ii1", "enunciado", "min4"), "pondera"),
+  "+ ponderador pondih" = list(nbi("correcta", "ii1", "enunciado", "min4"), "pondih"))
+acum <- t(sapply(pasos, function(s) { t <- por_region(s[[1]], c(paste0("i", 1:5), "nbi"), s[[2]])
+  c(t["Total País", ], GBA = t["GBA", "nbi"], NEA = t["NEA", "nbi"]) }))
+kable(matrix(num(acum, 2), nrow(acum), dimnames = list(rownames(acum),
+      c("Hacin.", "Vivienda", "Sanidad", "Escolar", "Subsist.", "NBI total", "NBI GBA", "NBI NEA"))),
+      align = "r", caption = "Sensibilidad acumulada de las NBI (%). Agregado en la réplica.")
+```
+
+La última tabla aplica los cambios uno sobre otro. La corrección del indicador sanitario es un arreglo de un error; las filas siguientes son definiciones alternativas.
+
+# Ejercicio 5
+
+::: {.enunciado}
+Estimar una curva de incidencia del crecimiento para evaluar el cambio en la distribución del ingreso ocurrido entre el primer trimestre de 2017 y el primer trimestre de 2019.
+:::
+
+En la figura 2, se presenta la curva de incidencia del crecimiento por percentil de ingreso (se utiliza el ingreso per cápita familiar) para evaluar el cambio en la distribución del ingreso ocurrido entre el primer trimestre de 2017 y el de 2019. Se puede observar que, en el período analizado, <mark>hubo un decrecimiento de los ingresos para cualquier percentil de la población</mark>, con la particularidad de que <mark>los individuos de ingresos más bajos han resultado beneficiados en términos proporcionales respecto de los sucesivos percentiles</mark>. Esto es, el crecimiento entre estos dos años ha sido negativo para cualquier nivel de ingreso, exceptuando los casos de los primeros cuatro percentiles.
+
+```{r ej5}
+# Media del IPCF por percentil (asignación del do-file)
+medias_perc <- function(y, w, orden = order(y)) {
+  shr <- cumsum(w[orden]) / sum(w)
+  k <- integer(length(y)); k[orden] <- pmin(100, pmax(1, ceiling(shr * 100 - 1e-9)))
+  as.numeric(tapply(y * w, k, sum) / tapply(w, k, sum))
+}
+gic <- function(a, b, factor = 197.10 / 103.80, azar = FALSE) {
+  y17 <- a$ipcf * factor
+  oa <- if (azar) order(a$ipcf, runif(nrow(a))) else order(a$ipcf)
+  ob <- if (azar) order(b$ipcf, runif(nrow(b))) else order(b$ipcf)
+  # El orden se toma sobre el ingreso nominal original de cada base
+  (medias_perc(b$ipcf, b$pondih, ob) / medias_perc(y17, a$pondih, oa) - 1) * 100
+}
+g <- gic(s17, s19)
+par(mar = c(4.5, 4.5, 1, 1), las = 1)
+plot(1:100, g, type = "l", lwd = 1.5, xlab = "Percentiles del IPCF", ylab = "Variación % promedio del IPCF")
+grid(); abline(h = 0, col = "red", lty = 2)
+```
+
+**Figura 2.** Curva de incidencia del crecimiento (2017-t1 a 2019-t1).
+
+```{r ej5-resumen}
+tramos <- list(1:4, 5:10, 11:35, 36:70, 71:90, 91:95, 96:100)
+res <- data.frame(Percentiles = sapply(tramos, function(t) paste(min(t), "a", max(t))),
+                  Cambio = sapply(tramos, function(t) mean(g[t])))
+kable(res |> mutate(Cambio = num(Cambio, 1)), align = "lr",
+      col.names = c("Percentiles", "Cambio real medio (%)"), caption = "Resumen de la curva (agregado en la réplica).")
+cambio_media <- (weighted.mean(s19$ipcf, s19$pondih) /
+                 (weighted.mean(s17$ipcf, s17$pondih) * 197.10 / 103.80) - 1) * 100
+```
+
+::: {.disc .error #d18}
+**D18.** No hubo caída "para cualquier percentil": los percentiles **`r paste(which(g > 0), collapse = ", ")`** crecieron (hasta `r num(max(g), 1)`%). El propio párrafo lo reconoce en la oración siguiente. Debe decir "para todos los percentiles salvo los cuatro primeros". El ingreso medio cayó `r num(-cambio_media, 1)`%.
+:::
+
+::: {.disc .error #d19}
+**D19.** La curva tiene forma de **U**, no desciende desde los pobres hacia los ricos. Salvo los percentiles más bajos, los mayores perdedores están en los percentiles 11 a 35 (`r num(mean(g[11:35]), 1)`% en promedio), y las pérdidas se **reducen** hacia arriba: `r num(mean(g[36:90]), 1)`% entre el 36 y el 90 y `r num(mean(g[96:100]), 1)`% en el 5% más rico. El tramo superior fue relativamente beneficiado frente a la parte media-baja, de modo que la curva no permite concluir que la distribución mejoró.
+:::
+
+```{r deflactores}
+ipc <- suppressMessages(read_excel("Datos/sh_ipc_aperturas.xls", sheet = "Índices aperturas",
+                                   col_names = FALSE, .name_repair = "minimal")) |> as.data.frame()
+filas <- which(ipc[[1]] %in% "Nivel general")      # GBA, Pampeana, NOA, NEA, Cuyo, Patagonia
+serie <- function(f) suppressWarnings(as.numeric(unlist(ipc[f, 2:29])))   # dic-2016 en adelante
+# Posiciones: 1 = dic-16, 2:4 = ene-mar 17, 25 = dic-18, 26:28 = ene-mar 19
+razon <- function(f, a = 2:4, b = 26:28) mean(serie(f)[b]) / mean(serie(f)[a])
+factores <- sapply(filas, razon)
+names(factores) <- c("GBA", "Pampeana", "NOA", "NEA", "Cuyo", "Patagonia")
+fac_ind <- with(s17, case_when(region == 1 ~ factores["GBA"], region == 40 ~ factores["NOA"],
+  region == 41 ~ factores["NEA"], region == 42 ~ factores["Cuyo"],
+  region == 43 ~ factores["Pampeana"], region == 44 ~ factores["Patagonia"]))
+g_reg <- gic(s17, s19, unname(fac_ind))
+g_lag <- gic(s17, s19, razon(filas[1], 1:3, 25:27))
+g_cero <- gic(d17z, d)
+```
+
+```{r gic-alternativas}
+par(mar = c(7, 4.5, 1, 1), las = 1)
+matplot(1:100, cbind(g, g_reg, g_lag, g_cero), type = "l", lty = c(1, 2, 3, 1), lwd = 1.5,
+        col = c("black", "#1a476f", "#55752f", "#90353b"), ylim = c(-16, 26),
+        xlab = "Percentiles del IPCF", ylab = "Variación %")
+abline(h = 0, col = "grey60")
+legend("bottom", inset = c(0, -0.42), ncol = 2, xpd = TRUE, bty = "n", lwd = 2,
+       col = c("black", "#1a476f", "#55752f", "#90353b"), lty = c(1, 2, 3, 1),
+       legend = c("Como en el PDF", "Deflactor regional", "GBA, meses de referencia (dic-feb)", "Incluye ingreso nulo"))
+alt <- data.frame(Percentiles = res$Percentiles,
+  sapply(list(g, g_reg, g_lag, g_cero), function(x) sapply(tramos, function(t) mean(x[t]))))
+kable(alt |> mutate(across(-Percentiles, ~num(.x, 1))), align = "lrrrr",
+      col.names = c("Percentiles", "PDF", "Regional", "Dic-feb", "Con nulos"),
+      caption = "Sensibilidad de la curva (agregado en la réplica).")
+```
+
+**Gráfico agregado.** Sensibilidad de la curva. El eje se recorta: con ingresos nulos el percentil 1 crece `r num(g_cero[1], 0)`%.
+
+::: {.disc .metodo #d20}
+**D20.** Los deflactores 103,80 y 197,10 del *do-file* son el promedio enero-marzo del IPC del **Gran Buenos Aires** (`sh_ipc_aperturas.xls`), aplicado a todo el país. Los factores regionales van de `r num(min(factores), 3)` a `r num(max(factores), 3)` contra `r num(197.1 / 103.8, 3)`. Además, la EPH capta ingresos del mes anterior a la entrevista: con diciembre-febrero el factor es `r num(razon(filas[1], 1:3, 25:27), 3)` y toda la curva sube cerca de `r num(mean(g_lag - g), 1)` puntos.
+:::
+
+::: {.disc .metodo #d21}
+**D21.** Se excluyen los hogares sin ingreso, aunque el enunciado solo pide excluir la no respuesta y los ejercicios 1 a 3 los incluyen. Es la decisión que más cambia la parte baja: con ellos, los percentiles 1 a 4 varían `r num(mean(g_cero[1:4]), 1)`% en promedio contra `r num(mean(g[1:4]), 1)`%. Los extremos inferiores son muy sensibles y conviene interpretarlos con cautela.
+:::
+
+# Verificación contra las figuras de Stata
+
+```{r verificacion}
+leer_gph <- function(archivo) {
+  b <- readBin(archivo, "raw", file.size(archivo))
+  i <- grepRaw("sersetreadwrite", b, fixed = TRUE); fin <- grepRaw("<EndSersetData>", b, fixed = TRUE)
+  nv <- readBin(b[i + 18:21], "integer", size = 4, endian = "little")
+  n  <- readBin(b[i + 22:25], "integer", size = 4, endian = "little")
+  tipo <- as.integer(b[i + 25 + seq_len(nv)])
+  tam <- unname(c("255" = 8, "254" = 4, "253" = 4, "252" = 2, "251" = 1)[as.character(tipo)])
+  mat <- matrix(b[(fin - 2 - n * sum(tam)):(fin - 3)], nrow = sum(tam)); desde <- cumsum(c(0, tam))
+  lapply(seq_len(nv), function(j) {
+    r <- as.vector(mat[desde[j] + seq_len(tam[j]), ])
+    if (tipo[j] >= 254) readBin(r, "double", n, size = tam[j], endian = "little")
+    else readBin(r, "integer", n, size = tam[j], endian = "little")
+  })
+}
+if (all(file.exists(sprintf("Figuras/Figura %d.gph", 1:2)))) {
+  f1 <- leer_gph("Figuras/Figura 1.gph")   # ipcf, shrpop
+  y <- f1[[1]]; p <- f1[[2]]
+  ac <- c(0, pen$p); yo <- pen$y * 1000
+  inf <- ac[findInterval(y - .01, yo, left.open = TRUE) + 1]; sup <- ac[findInterval(y + .01, yo) + 1]
+  dif_f1 <- max(pmax(inf - p, p - sup, 0))
+  f2 <- leer_gph("Figuras/Figura 2.gph")   # chg, percentil
+  g_stata <- f2[[1]][order(f2[[2]])]
+  set.seed(1); sim <- replicate(300, gic(s17, s19, azar = TRUE))
+  fuera <- sum(g_stata < apply(sim, 1, min) - .05 | g_stata > apply(sim, 1, max) + .05)
+  salida <- kable(data.frame(
+    Control = c("Figura 1: distancia máxima al intervalo de cada ingreso (proporción)",
+                "Figura 2: máxima diferencia R - Stata (puntos porcentuales)",
+                "Figura 2: percentiles fuera del rango de 300 órdenes de empates"),
+    Valor = c(format(dif_f1, scientific = TRUE, digits = 2), num(max(abs(g - g_stata)), 3), fuera)),
+    align = "lr")
+} else salida <- "No se encontraron los archivos .gph; se omite la verificación."
+salida
+```
+
+En la figura 2, las diferencias provienen de que ambas bases se ordenan solo por `ipcf` y Stata desempata al azar, lo que cambia qué hogares caen en cada percentil.
+
+```{r sesion}
+sessionInfo()
+```

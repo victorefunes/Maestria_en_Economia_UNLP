@@ -1,0 +1,510 @@
+---
+title: "Trabajo Práctico N° 3 — Réplica en R"
+subtitle: "Maestría en Economía UNLP - Economía de la Distribución. Respuestas originales: Juan Menduiña"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+    self_contained: true
+    code_folding: hide
+---
+
+```{css, echo=FALSE}
+mark { background: #ffe27a; padding: 0 2px; }
+.disc { border-left: 6px solid; border-radius: 4px; padding: 10px 14px; margin: 14px 0; font-size: 0.95em; }
+.disc p:last-child { margin-bottom: 0; }
+.error { border-color: #c0392b; background: #fdecea; }
+.impr  { border-color: #d68910; background: #fef5e7; }
+.metodo{ border-color: #2874a6; background: #eaf2f8; }
+.enunciado { font-style: italic; color: #444; }
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 8, fig.height = 5, dpi = 120)
+library(haven); library(dplyr); library(knitr)
+
+num <- function(x, d = 0) formatC(x, format = "f", digits = d, big.mark = ".", decimal.mark = ",")
+pct <- function(x, dig = 1) paste0(num(100 * x, dig), "%")
+# "1 a 7 y 98 a 99" a partir de un vector de enteros
+rangos <- function(v) {
+  if (!length(v)) return("ninguno")
+  g <- split(v, cumsum(c(1, diff(v) != 1)))
+  paste(sapply(g, function(s) if (length(s) > 1) paste(min(s), "a", max(s)) else s), collapse = ", ")
+}
+```
+
+# Cómo leer este documento {-}
+
+El texto de cada ejercicio es el del PDF *Trabajo Práctico N° 3 (R)*. Las tablas, las figuras y los números de los recuadros se calculan en R a partir de `Datos/usu_individual_t119.dta`. Lo <mark>resaltado</mark> es una frase o un número con alguna discrepancia, explicada en el recuadro correspondiente:
+
+::: {.disc .error}
+**Error**: la afirmación contradice los datos o el cálculo es incorrecto.
+:::
+
+::: {.disc .impr}
+**Imprecisión**: redacción, rótulo o formato que puede inducir a error.
+:::
+
+::: {.disc .metodo}
+**Observación metodológica**: el resultado depende de una decisión discutible o no documentada.
+:::
+
+**Resultado de la réplica.** La tabla 1 y las figuras 1 a 3 se reproducen en R. Los intervalos de la tabla 2 se reproducen, dentro del error de simulación, solo con un bootstrap **ponderado**, distinto del que está en el *do-file* ([D7](#d7)). Las conclusiones sobre dominancia de Lorenz de los ejercicios 4 y 5 se apoyan en 99 percentiles y no se cumplen en las colas con los datos tal como se usaron ([D12](#d12), [D15](#d15)).
+
+| N° | Ej. | Tipo | Discrepancia |
+|----|-----|------|--------------|
+| [D1](#d1) | Intro | Error | La EPH no es representativa a nivel nacional |
+| [D2](#d2) | Intro | Imprecisión | Las 47.789 observaciones son posteriores a los filtros, que operan por hogar |
+| [D3](#d3) | Enunciado | Imprecisión | El encabezado dice 2018 |
+| [D4](#d4) | 1 | Imprecisión | Buhmann et al. aparece fechado en 1998 |
+| [D5](#d5) | 1 | Error | El Gini no es monótono en θ |
+| [D6](#d6) | 1 | Metodológica | Coeficiente de menores de un año que no figura en la tabla del INDEC |
+| [D7](#d7) | 2 | Error | El *do-file* hace el bootstrap sin ponderadores y no genera la tabla 2 |
+| [D8](#d8) | 2 | Metodológica | Se remuestrean personas y no hogares |
+| [D9](#d9) | 2 | Imprecisión | "Estadísticamente significativos" no informa nada sobre un Gini |
+| [D10](#d10) | 3 | Imprecisión | La dominancia compara participaciones, no ingresos acumulados |
+| [D11](#d11) | 4 | Error | El código 999 de horas se usa como si fueran horas trabajadas |
+| [D12](#d12) | 4 | Error | La curva de los hombres no está arriba en "todos los valores observados" |
+| [D13](#d13) | 4 | Metodológica | La dominancia no es estadísticamente firme en toda la distribución |
+| [D14](#d14) | 4 | Metodológica | Se descartan sin aviso los ocupados con cero horas en la semana |
+| [D15](#d15) | 5 | Error | La curva de los formales no está arriba en todo el soporte |
+| [D16](#d16) | 5 | Metodológica | Los ejercicios 4 y 5 miden distinto el ingreso laboral |
+
+# Datos y funciones
+
+```{r datos}
+base <- read_dta("Datos/usu_individual_t119.dta") |> zap_labels()
+names(base) <- tolower(names(base))
+d <- base |>
+  mutate(dec = suppressWarnings(as.numeric(deccfr))) |>
+  filter(!is.na(dec), dec >= 1, dec <= 10, !nro_hogar %in% c(51, 71))
+
+# Escala de adulto equivalente del INDEC, como en el do-file
+escala <- function(edad, hombre, menor1 = 0.315) {
+  ae <- rep(NA_real_, length(edad))
+  ae[edad < 1] <- menor1
+  ninos <- c(.37, .46, .51, .55, .60, .64, .66, .68, .69)
+  for (a in 1:9) ae[edad == a] <- ninos[a]
+  v <- c(.79, .82, .85, .90, .96, 1.00, 1.03, 1.04)
+  m <- c(.70, .72, .74, .76, .76, .77, .77, .77)
+  for (a in 10:17) { ae[edad == a & hombre] <- v[a - 9]; ae[edad == a & !hombre] <- m[a - 9] }
+  desde <- c(18, 30, 46, 61, 76); hasta <- c(29, 45, 60, 75, Inf)
+  v <- c(1.02, 1.00, 1.00, .83, .74); m <- c(.76, .77, .76, .67, .63)
+  for (k in 1:5) {
+    i <- edad >= desde[k] & edad <= hasta[k]
+    ae[i & hombre] <- v[k]; ae[i & !hombre] <- m[k]
+  }
+  ae
+}
+d$ae <- escala(d$ch06, d$ch04 == 1)
+d <- d |> group_by(codusu, nro_hogar) |> mutate(aes = sum(ae), miembros = n()) |> ungroup()
+d$hogar <- as.integer(factor(paste(d$codusu, d$nro_hogar)))
+H <- max(d$hogar)
+c(base_individual = nrow(base), muestra = nrow(d), hogares = H, sin_escala = sum(is.na(d$ae)))
+```
+
+```{r funciones}
+# Réplica de comando_gini.do (admite pesos de remuestreo)
+gini <- function(y, w = rep(1, length(y))) {
+  k <- w > 0 & y > 0; y <- y[k]; w <- w[k]; o <- order(y); y <- y[o]; w <- w[o]
+  N <- sum(w); mu <- sum(w * y) / N; i <- cumsum(w) - (w - 1) / 2
+  1 + 1 / N - 2 / (mu * N^2) * sum(w * y * (N - i + 1))
+}
+ife <- function(theta) d$itf / d$aes^theta
+
+# Curva de Lorenz
+lorenz <- function(y, w) {
+  o <- order(y)
+  data.frame(p = c(0, cumsum(w[o]) / sum(w)), L = c(0, cumsum((w * y)[o]) / sum(w * y)))
+}
+Lp <- function(curva, p) approx(curva$p, curva$L, p, ties = "ordered")$y
+# Método del do-file: mayor L observado con p_i <= p
+Lescalon <- function(curva, p) sapply(p, function(q) max(curva$L[-1][curva$p[-1] <= q]))
+# Diferencia entre dos curvas en TODOS sus quiebres (comparación exacta)
+exacta <- function(A, B) {
+  g <- sort(unique(c(A$p, B$p))); g <- g[g > 0 & g < 1 - 1e-12]
+  data.frame(p = g, dif = Lp(A, g) - Lp(B, g))
+}
+resumen_dom <- function(A, B, nombres) {
+  q <- 1:99 / 100; e <- exacta(A, B)
+  s1 <- sign(Lescalon(A, q) - Lescalon(B, q)); s2 <- sign(Lp(A, q) - Lp(B, q))
+  tab <- data.frame(
+    Comparacion = c("99 percentiles, método del do-file", "99 percentiles, interpolando",
+                    "Todos los quiebres de ambas curvas"),
+    Puntos = c(99, 99, nrow(e)),
+    A = c(sum(s1 > 0), sum(s2 > 0), sum(e$dif > 0)),
+    B = c(sum(s1 < 0), sum(s2 < 0), sum(e$dif < 0)))
+  kable(tab, align = "lrrr", col.names = c("Comparación", "Puntos", paste(nombres, "arriba")))
+}
+curvas <- function(A, B, nombres) {
+  par(mar = c(7, 4.5, 1, 1), las = 1)
+  plot(A$p, A$L, type = "l", col = "red", lwd = 1.5, xlab = "p", ylab = "L(p)")
+  grid(); lines(B$p, B$L, col = "blue", lty = 2, lwd = 1.5); lines(c(0, 1), c(0, 1))
+  legend("bottom", inset = c(0, -0.42), legend = c(nombres, "LPI"), col = c("red", "blue", "black"),
+         lty = c(1, 2, 1), lwd = 2, horiz = TRUE, xpd = TRUE, bty = "n")
+}
+
+# Bootstrap por hogar de la diferencia L_A(p) - L_B(p) en los 99 percentiles
+boot_dom <- function(dat, en_a, en_b, y, w, B = 1000) {
+  q <- 1:99 / 100; set.seed(12345)
+  sapply(1:B, function(b) {
+    veces <- tabulate(sample.int(H, H, TRUE), H)[dat$hogar]
+    a <- en_a & veces > 0; bb <- en_b & veces > 0
+    Lp(lorenz(y[a], (w * veces)[a]), q) - Lp(lorenz(y[bb], (w * veces)[bb]), q)
+  })
+}
+grafico_dif <- function(A, B, M, ylab) {
+  q <- 1:99 / 100; lo <- apply(M, 1, quantile, .025); hi <- apply(M, 1, quantile, .975)
+  par(mar = c(4.5, 5, 1, 1), las = 1)
+  plot(q, Lp(A, q) - Lp(B, q), type = "n", ylim = range(lo, hi, 0), xlab = "p", ylab = "")
+  title(ylab = ylab, line = 3.8)
+  polygon(c(q, rev(q)), c(lo, rev(hi)), col = "#d9e6f2", border = NA)
+  lines(q, Lp(A, q) - Lp(B, q), lwd = 1.5); abline(h = 0, col = "#90353b")
+}
+significativos <- function(M) list(a = which(apply(M, 1, quantile, .025) > 0),
+                                   b = which(apply(M, 1, quantile, .975) < 0))
+```
+
+# Introducción {-}
+
+Para los cálculos de este trabajo, se consideró la base de microdatos de la EPH del primer trimestre de 2019 elaborada por el INDEC, <mark>la cual es representativa a nivel nacional</mark> <mark>y comprende 47.789 observaciones</mark>.^[Texto original: "Se omiten aquellas observaciones que no presentan ingresos positivos, que no han dado respuesta sobre sus niveles de ingresos o que pertenecen a hogares secundarios".]
+
+::: {.disc .error #d1}
+**D1.** La EPH continua es una encuesta **urbana** (31 aglomerados). No es representativa del total nacional: "Argentina" debe leerse como "total de aglomerados urbanos relevados" (`r num(sum(d$pondih))` personas expandidas).
+:::
+
+::: {.disc .impr #d2}
+**D2.** La base individual tiene **`r num(nrow(base))`** observaciones; `r num(nrow(d))` es la muestra **después** de los filtros. El filtro de ingresos se aplica por **hogar** (`deccfr`): quedan `r num(sum(d$p47t == 0))` personas con ingreso individual nulo.
+:::
+
+::: {.disc .impr #d3}
+**D3.** El PDF de enunciados está encabezado "Economía de la Distribución **2018**", aunque pide usar la EPH del primer trimestre de 2019, como los trabajos anteriores del curso 2019.
+:::
+
+# Ejercicio 1
+
+::: {.enunciado}
+Computar el coeficiente de Gini sobre la distribución del ingreso familiar equivalente; emplear la fórmula de Buhmann et al. (1988) con la escala de adulto equivalente oficial del INDEC y coeficientes de economías de escala internas al hogar de 0, 0,8 y 1.
+:::
+
+En la tabla 1, se presenta el coeficiente de Gini sobre la distribución del ingreso familiar equivalente (IFE) con la escala de adulto equivalente oficial del INDEC, empleando la fórmula de <mark>Buhmann et al. (1998)</mark>, para diferentes valores del coeficiente de economías de escala internas al hogar ($\theta$). Esta fórmula resulta ser la siguiente:
+
+$$x_{ih} = \frac{Y_h}{\left(\sum_{j \in h} a_{jh}\right)^{\theta}},$$
+
+donde $x_{ih}$ es el ingreso per cápita familiar equivalente del individuo $i$ del hogar $h$, $Y_h$ es el ingreso total familiar del hogar $h$, $a_{jh}$ es el valor de un adulto equivalente del individuo $j$ perteneciente al hogar $h$ y $\theta$ mide el grado de economías de escala en el consumo del hogar $h$.^[$\theta = 0$: economías de escala plenas; $\theta = 1$: ausencia de economías de escala.]
+
+::: {.disc .impr #d4}
+**D4.** La referencia es de **1988** (así figura en el enunciado y en el título de la tabla 1).
+:::
+
+Se puede observar que, <mark>cuanto mayores son las economías de escala (cuanto menor es $\theta$), menor es el nivel de desigualdad</mark> (reflejado por un Gini menor), considerando el IFE. <mark>Esta reducción se puede explicar, principalmente, por el tamaño de los hogares</mark>, considerando que las familias que tienen menores ingresos son más grandes (mayor natalidad y familias extendidas) y, por lo tanto, el impacto relativo de las economías de escala es mayor en los hogares de menores ingresos.
+
+```{r tabla1}
+thetas <- c(0, .8, 1)
+g1 <- sapply(thetas, function(t) gini(ife(t), d$pondih))
+t1 <- data.frame(" " = "Gini", t(num(g1, 4)), check.names = FALSE)
+kable(t1, col.names = c("", "θ = 0", "θ = 0,8", "θ = 1"), align = "lrrr",
+      caption = "Tabla 1. Coeficiente de Gini para diferentes niveles de economías de escala.")
+dif1 <- max(abs(round(g1, 4) - c(.3880, .4168, .4415)))
+```
+
+Control: diferencia máxima con la tabla 1 del PDF: `r num(dif1, 4)`.
+
+```{r ej1-curva}
+rejilla <- seq(0, 1, .002)
+gt <- sapply(rejilla, function(t) gini(ife(t), d$pondih))
+tmin <- rejilla[which.min(gt)]; vuelve <- max(rejilla[gt <= gt[1]])
+par(mar = c(4.5, 4.5, 1, 1), las = 1)
+plot(rejilla, gt, type = "l", lwd = 1.5, xlab = expression(theta), ylab = "Gini"); grid()
+points(thetas, g1, pch = 19, col = "#90353b"); points(tmin, min(gt), pch = 17, col = "#1a476f", cex = 1.3)
+```
+
+**Gráfico agregado.** Gini del IFE para todo θ entre 0 y 1. Círculos: valores de la tabla 1; triángulo: mínimo.
+
+```{r ej1-tamano}
+# Tamaño medio del hogar por decil de IPCF y de ITF
+decil_de <- function(y) {
+  o <- order(y); k <- integer(length(y))
+  k[o] <- pmin(10, ceiling(cumsum(d$pondih[o]) / (sum(d$pondih) / 10))); k
+}
+tam <- sapply(list(IPCF = d$ipcf, ITF = d$itf), function(y) {
+  k <- decil_de(y); tapply(d$miembros * d$pondih, k, sum) / tapply(d$pondih, k, sum) })
+kable(data.frame(Decil = 1:10, IPCF = num(tam[, 1], 2), ITF = num(tam[, 2], 2)), align = "r",
+      col.names = c("Decil", "Ordenando por IPCF", "Ordenando por ITF"),
+      caption = "Miembros por hogar (agregado en la réplica).")
+```
+
+::: {.disc .error #d5}
+**D5.** La relación vale para los tres valores tabulados, pero **no es monótona**. El Gini **baja** cuando θ sube de 0 a `r num(tmin, 2)` (mínimo `r num(min(gt), 4)`, menor que el `r num(g1[1], 4)` de θ = 0) y solo supera de nuevo ese nivel a partir de θ ≈ `r num(vuelve, 2)`. La explicación por tamaño del hogar también depende de cómo se defina "menores ingresos": los hogares pobres son más grandes si se ordena por ingreso **per cápita** (`r num(tam[1, 1], 1)` miembros en el decil 1 contra `r num(tam[10, 1], 1)` en el 10), pero más **chicos** si se ordena por ingreso **total** (`r num(tam[1, 2], 1)` contra `r num(tam[10, 2], 1)`). Esta segunda relación es la que hace que corregir algo por tamaño reduzca la desigualdad cuando se parte de θ = 0.
+:::
+
+```{r ej1-escala}
+g_alt <- sapply(c(.28, .35), function(a) {
+  aes <- ave(escala(d$ch06, d$ch04 == 1, a), d$hogar, FUN = sum)
+  sapply(c(.8, 1), function(t) gini(d$itf / aes^t, d$pondih)) })
+```
+
+::: {.disc .metodo #d6}
+**D6.** La tabla del INDEC informa 0,28 (6 a 9 meses) y 0,35 (9 a 12 meses), y no da valor para menores de 6 meses. El *do-file* asigna **0,315** (el promedio) a las `r sum(d$ch06 < 1)` personas menores de un año, sin mencionarlo. El efecto es despreciable: con 0,28 o 0,35 el Gini de θ = 1 queda entre `r num(min(g_alt[2, ]), 4)` y `r num(max(g_alt[2, ]), 4)`.
+:::
+
+# Ejercicio 2
+
+::: {.enunciado}
+Computar intervalos de confianza para los coeficientes de Gini del punto anterior empleando la técnica de bootstrap con 200 replicaciones.
+:::
+
+En la tabla 2, se presentan intervalos de confianza para los coeficientes de Gini mostrados anteriormente, empleando la técnica de bootstrap^[Es un método de remuestreo que se utiliza para aproximar la distribución en el muestreo de un estadístico. En este caso, se usa para construir intervalos de confianza.] con 200 replicaciones. Se puede observar que, para cada uno de los parámetros de economía de escala propuestos, <mark>los coeficientes de Gini calculados anteriormente son estadísticamente significativos</mark>. Por otra parte, se puede notar que no es trivial la elección de $\theta$, ya que no hay una superposición entre los intervalos de confianza estimados.
+
+```{r tabla2}
+# Gini y error estándar bootstrap. tipo: sin ponderar, personas ponderadas u hogares
+boot_gini <- function(y, tipo, B = 200) {
+  w <- if (tipo == "sin") rep(1, length(y)) else d$pondih
+  o <- order(y); ys <- y[o]; ws <- w[o]; h <- d$hogar[o]; n <- length(y)
+  set.seed(12345)
+  r <- replicate(B, {
+    veces <- if (tipo == "hogar") tabulate(sample.int(H, H, TRUE), H)[h]
+             else tabulate(sample.int(n, n, TRUE), n)
+    gini(ys, ws * veces)
+  })
+  g <- gini(y, w); se <- sd(r)
+  list(g = g, se = se, ic = g + c(-1.96, 1.96) * se, rep = r)
+}
+tipos <- c(sin = "Do-file: personas, sin ponderar",
+           pond = "Personas, ponderado con pondih",
+           hogar = "Hogares completos, ponderado")
+bt <- lapply(names(tipos), function(t) lapply(thetas, function(th) boot_gini(ife(th), t)))
+names(bt) <- names(tipos)
+pdf_ic <- rbind(c(.3815, .3930), c(.4107, .4219), c(.4352, .4467))
+ic <- function(v) paste0("[", num(v[1], 4), "; ", num(v[2], 4), "]")
+t2 <- rbind(
+  c("PDF, tabla 2", apply(pdf_ic, 1, ic)),
+  t(sapply(names(tipos), function(t) c(tipos[t], sapply(bt[[t]], function(b) ic(b$ic))))))
+kable(t2, row.names = FALSE, col.names = c("Intervalo de 95%", "θ = 0", "θ = 0,8", "θ = 1"),
+      align = "lrrr", caption = "Tabla 2. Intervalos de confianza bootstrap (200 replicaciones).")
+
+se_pdf <- apply(pdf_ic, 1, diff) / (2 * 1.96)
+se_tab <- rbind("PDF (implícito)" = se_pdf,
+                t(sapply(names(tipos), function(t) sapply(bt[[t]], `[[`, "se"))))
+rownames(se_tab)[-1] <- tipos
+kable(data.frame(Metodo = rownames(se_tab), matrix(num(se_tab, 4), 4)), align = "lrrr",
+      col.names = c("Error estándar", "θ = 0", "θ = 0,8", "θ = 1"))
+g_sin <- sapply(bt$sin, `[[`, "g")
+razon <- sapply(1:3, function(j) bt$hogar[[j]]$se / bt$pond[[j]]$se)
+```
+
+R y Stata usan generadores de números aleatorios distintos, por lo que los extremos de un bootstrap no coinciden exactamente.
+
+::: {.disc .error #d7}
+**D7.** El *do-file* ejecuta `bootstrap r(gini), reps(200) seed(12345): gini ife00`, **sin** `[w=pondih]`. Eso calcula el Gini sin ponderar (`r paste(num(g_sin, 4), collapse = ", ")`), distinto del de la tabla 1, y produce intervalos que no son los de la tabla 2. Los intervalos publicados están centrados cerca de los Gini **ponderados** y su ancho coincide con el de un bootstrap ponderado de personas. Por lo tanto, la tabla 2 es compatible con la tabla 1, pero **no se obtiene con el código entregado**.
+:::
+
+::: {.disc .metodo #d8}
+**D8.** El IFE es igual para todos los miembros de un hogar y la EPH selecciona viviendas, no personas. Remuestrear personas trata como independientes observaciones que no lo son. Remuestreando **hogares**, el error estándar es entre `r num(min(razon), 1)` y `r num(max(razon), 1)` veces mayor. Los intervalos siguen **sin superponerse**, de modo que esa conclusión se mantiene.
+:::
+
+```{r ej2-diferencias}
+set.seed(3)
+dg <- replicate(500, {
+  veces <- tabulate(sample.int(H, H, TRUE), H)[d$hogar]
+  diff(sapply(thetas, function(t) gini(ife(t), d$pondih * veces)))
+})
+icd <- apply(dg, 1, quantile, c(.025, .975))
+```
+
+::: {.disc .impr #d9}
+**D9.** Un Gini no puede ser negativo y vale cero solo si todos tienen el mismo ingreso, por lo que decir que es "estadísticamente significativo" no aporta información. Lo relevante es el contraste **entre** valores de θ. Con un bootstrap pareado por hogares (500 replicaciones), la diferencia entre θ = 0,8 y θ = 0 tiene intervalo `r ic(icd[, 1])` y entre θ = 1 y θ = 0,8, `r ic(icd[, 2])`: ambas son distintas de cero.
+:::
+
+# Ejercicio 3
+
+::: {.enunciado}
+Comprobar si existe dominancia de Lorenz entre Ushuaia y Posadas. Emplear el ingreso per cápita familiar como proxy de bienestar individual.
+:::
+
+Para afirmar que existe dominancia en sentido de Lorenz, se debe cumplir que la distribución de alguna ciudad no es inferior que la distribución de la otra en ningún porcentaje acumulado de la población (valor del soporte).
+
+En la figura 1, se presentan las curvas de Lorenz para Ushuaia y para Posadas, construidas a partir del ingreso per cápita familiar (IPCF). Se puede observar que, en este caso, no existe dominancia de Lorenz de alguna distribución respecto a la otra, ya que no se cumple lo dicho anteriormente. También se observa que, aproximadamente, del 1 al 22% de la población más pobre, la curva de Posadas está por encima de la curva de Ushuaia y, del 23 al 99%, esto se invierte y la curva de Lorenz de Ushuaia está por encima de la de Posadas. Sin embargo, se puede advertir que Ushuaia posee una distribución más igualitaria que Posadas en la mayor parte del soporte.
+
+Por otra parte, se puede determinar analíticamente si existe dominancia en sentido de Lorenz al comparar, en diferentes valores del soporte, <mark>el ingreso acumulado</mark> de cada distribución. En este caso, habrá dominancia de Lorenz si, en todos los valores observados, el ingreso acumulado de una ciudad no es inferior al ingreso acumulado de la otra. Al realizar este ejercicio para las distribuciones de Ushuaia y de Posadas, también se concluye que no existe dominancia de Lorenz.
+
+```{r fig1}
+po <- d$aglomerado == 7; us <- d$aglomerado == 31
+Po <- lorenz(d$ipcf[po], d$pondih[po]); Us <- lorenz(d$ipcf[us], d$pondih[us])
+curvas(Po, Us, c("Posadas", "Ushuaia"))
+```
+
+**Figura 1.** Curva de Lorenz del IPCF para Ushuaia y Posadas.
+
+```{r ej3}
+resumen_dom(Po, Us, c("Posadas", "Ushuaia"))
+e3 <- exacta(Po, Us); cruce <- min(e3$p[e3$dif < 0 & e3$p > .05])
+M3 <- boot_dom(d, po, us, d$ipcf, d$pondih)
+grafico_dif(Po, Us, M3, "L Posadas - L Ushuaia"); s3 <- significativos(M3)
+```
+
+**Gráfico agregado.** Diferencia entre las curvas, con banda puntual de 95% (bootstrap por hogares, 1.000 replicaciones).
+
+Sin discrepancias en la conclusión: las curvas se cruzan en p ≈ `r num(cruce, 3)` (Gini `r num(gini(d$ipcf[po], d$pondih[po]), 3)` en Posadas y `r num(gini(d$ipcf[us], d$pondih[us]), 3)` en Ushuaia). El cruce además tiene respaldo muestral: Posadas está significativamente arriba en los percentiles `r rangos(s3$a)` y Ushuaia en los percentiles `r rangos(s3$b)`.
+
+::: {.disc .impr #d10}
+**D10.** La dominancia de Lorenz compara la **participación** acumulada en el ingreso total, $L(p)$, no el ingreso acumulado. Comparar ingresos acumulados (que dependen de la media y del tamaño de cada ciudad) correspondería a otro criterio, como la curva de Lorenz generalizada si se divide por la población. El *do-file* compara correctamente las participaciones.
+:::
+
+# Ejercicio 4 (Opcional)
+
+::: {.enunciado}
+Comprobar si existe dominancia de Lorenz entre los ingresos laborales horarios de hombres y de mujeres.
+:::
+
+En la figura 2, se presentan las curvas de Lorenz para hombres y para mujeres, construidas a partir del ingreso laboral horario (ILH). Visualmente, no es posible determinar si existe dominancia de Lorenz de alguna distribución respecto a la otra. Se puede observar que la curva de Lorenz de los hombres es más igualitaria que la de las mujeres en la parte central de la figura, pero no es posible afirmar lo mismo en los extremos. Por consiguiente, al igual que se hizo anteriormente, conviene verificar esto analíticamente. Al realizar este ejercicio para las distribuciones de hombres y de mujeres, se concluye que existe dominancia de Lorenz, siendo la distribución de los hombres la que domina en sentido de Lorenz a la distribución de las mujeres, ya que, <mark>en todos los valores observados, el ingreso acumulado del primer grupo no es inferior al ingreso acumulado del segundo</mark>.
+
+```{r fig2}
+# ILH = ingreso / (horas semanales x 4). Se descartan los no definidos y los nulos
+horario <- function(ingreso) { y <- ingreso / (d$pp3e_tot * 4); y[!is.finite(y) | y == 0] <- NA; y }
+d$ilh <- horario(d$p21)
+x <- filter(d, !is.na(ilh))
+h <- x$ch04 == 1; m <- x$ch04 == 2
+Hm <- lorenz(x$ilh[h], x$pondiio[h]); Mu <- lorenz(x$ilh[m], x$pondiio[m])
+curvas(Hm, Mu, c("Hombres", "Mujeres"))
+```
+
+**Figura 2.** Curva de Lorenz del ILH para hombres y mujeres.
+
+```{r ej4}
+resumen_dom(Hm, Mu, c("Hombres", "Mujeres"))
+e4 <- exacta(Hm, Mu); mal4 <- e4[e4$dif < 0, ]
+limpio <- x$pp3e_tot != 999
+Hm2 <- lorenz(x$ilh[h & limpio], x$pondiio[h & limpio]); Mu2 <- lorenz(x$ilh[m & limpio], x$pondiio[m & limpio])
+e4b <- exacta(Hm2, Mu2)
+M4 <- boot_dom(x, h, m, x$ilh, x$pondiio)
+grafico_dif(Hm, Mu, M4, "L Hombres - L Mujeres")
+s4 <- significativos(M4); todas4 <- mean(colSums(M4 <= 0) == 0)
+n999 <- table(factor(x$ch04[x$pp3e_tot == 999], levels = 1:2))
+```
+
+**Gráfico agregado.** Diferencia entre las curvas, con banda puntual de 95% (bootstrap por hogares).
+
+::: {.disc .error #d11}
+**D11.** `pp3e_tot = 999` es el código de **no respuesta** en horas, no una cantidad de horas. Hay `r sum(n999)` personas (`r n999[1]` hombres y `r n999[2]` mujer) con 3.996 horas mensuales y un ILH artificialmente bajo, entre \$`r num(min(x$ilh[x$pp3e_tot == 999]), 1)` y \$`r num(max(x$ilh[x$pp3e_tot == 999]), 1)` por hora (la mediana es \$`r num(median(x$ilh))`). Deben excluirse.
+:::
+
+::: {.disc .error #d12}
+**D12.** El *do-file* solo compara los percentiles 1 a 99. En la comparación completa, la curva de las **mujeres** queda arriba en `r nrow(mal4)` quiebres, todos entre p = `r num(min(mal4$p), 5)` y p = `r num(max(mal4$p), 5)`. La diferencia es diminuta y se debe a [D11](#d11): excluyendo el código 999, los hombres quedan arriba en `r if (all(e4b$dif > 0)) "todos" else "casi todos"` los quiebres (`r sum(e4b$dif < 0)` excepciones). La **conclusión de dominancia es correcta una vez depurados los datos**, pero no con los datos usados.
+:::
+
+::: {.disc .metodo #d13}
+**D13.** No se evalúa la variabilidad muestral. La diferencia entre hombres y mujeres es significativamente positiva solo en los percentiles `r rangos(s4$a)`, y los hombres quedan arriba en los 99 percentiles a la vez en el `r pct(todas4, 0)` de las replicaciones. La dominancia es una propiedad de esta muestra; en la parte alta no puede afirmarse para la población.
+:::
+
+```{r ej4-cero}
+cero <- d$estado == 1 & d$p21 > 0 & d$pp3e_tot %in% 0
+nc <- table(factor(d$ch04[cero], levels = 1:2))
+```
+
+::: {.disc .metodo #d14}
+**D14.** La división por cero horas elimina a **`r num(sum(cero))`** ocupados con ingreso positivo que no trabajaron en la semana de referencia (`r num(nc[1])` hombres y `r num(nc[2])` mujeres), por ejemplo por licencias. El texto no lo informa, y la exclusión es relativamente más frecuente entre las mujeres.
+:::
+
+# Ejercicio 5
+
+::: {.enunciado}
+Comprobar si existe dominancia de Lorenz entre los ingresos laborales horarios de asalariados formales e informales.
+:::
+
+En la figura 3, se presentan las curvas de Lorenz para asalariados formales e informales, construidas a partir del ingreso laboral horario (ILH). Se puede observar que <mark>la curva de los asalariados formales está por encima de la curva de los informales en todos los valores del soporte</mark>. Por lo tanto, existe dominancia de Lorenz, siendo la distribución de los asalariados formales la que domina en sentido de Lorenz a la distribución de los informales. Esto implica que la distribución del ingreso de los trabajadores formales es menos desigual en comparación con la distribución del ingreso de los informales.
+
+Al igual que se hizo en los dos ejercicios previamente, se verifica esto analíticamente. En este caso, habrá dominancia de Lorenz si, en todos los valores observados, el ingreso acumulado de los asalariados formales no es inferior al ingreso acumulado de los informales. Al realizar este ejercicio para las distribuciones de asalariados formales e informales, también se concluye que existe dominancia de Lorenz, siendo la distribución de los asalariados formales la que domina en sentido de Lorenz a la distribución de los informales, ya que, <mark>en todos los valores observados, el ingreso acumulado del primer grupo no es inferior al ingreso acumulado del segundo</mark>.
+
+```{r fig3}
+d$ilh_s <- horario(d$pp08d1)
+z <- filter(d, !is.na(ilh_s), pp07h %in% 1:2)
+f <- z$pp07h == 1; i <- z$pp07h == 2
+curva_z <- function(sel) lorenz(z$ilh_s[sel], z$pondiio[sel])
+Fo <- curva_z(f); In <- curva_z(i)
+curvas(Fo, In, c("Formales", "Informales"))
+```
+
+**Figura 3.** Curva de Lorenz del ILH para asalariados formales e informales.
+
+```{r ej5}
+resumen_dom(Fo, In, c("Formales", "Informales"))
+e5 <- exacta(Fo, In); mal5 <- e5[e5$dif < 0, ]
+abajo <- mal5[mal5$p < .5, ]; arriba <- mal5[mal5$p > .5, ]
+ext <- which.max(z$ilh_s)
+depurado <- z$pp3e_tot != 999
+sin999 <- exacta(curva_z(f & depurado), curva_z(i & depurado))
+sinext <- depurado & seq_len(nrow(z)) != ext
+limpio5 <- exacta(curva_z(f & sinext), curva_z(i & sinext))
+casos <- data.frame(
+  Datos = c("Como en el PDF", "Sin el código 999", "Sin el código 999 ni la observación máxima"),
+  Violaciones = c(nrow(mal5), sum(sin999$dif < 0), sum(limpio5$dif < 0)),
+  Minimo = c(min(e5$dif), min(sin999$dif), min(limpio5$dif)))
+kable(casos |> mutate(Minimo = num(Minimo, 6)), align = "lrr",
+      col.names = c("Muestra", "Quiebres con informales arriba", "Mínimo de L formales - L informales"),
+      caption = "Comparación exacta (agregada en la réplica).")
+M5 <- boot_dom(z, f, i, z$ilh_s, z$pondiio)
+grafico_dif(Fo, In, M5, "L Formales - L Informales")
+s5 <- significativos(M5); todas5 <- mean(colSums(M5 <= 0) == 0)
+```
+
+**Gráfico agregado.** Diferencia entre las curvas, con banda puntual de 95% (bootstrap por hogares).
+
+::: {.disc .error #d15}
+**D15.** Con los datos usados las curvas **se cruzan en los dos extremos**: los informales quedan arriba para p entre `r num(min(abajo$p), 4)` y `r num(max(abajo$p), 4)`, y para p mayor que `r num(min(arriba$p), 4)`, donde la diferencia llega a `r num(-100 * min(e5$dif), 2)` puntos. En sentido estricto **no hay dominancia**. Las causas son datos atípicos: abajo, el código 999 (`r sum(z$pp3e_tot == 999)` observaciones, todas formales) y arriba, una sola observación formal con \$`r num(z$pp08d1[ext])` mensuales y `r z$pp3e_tot[ext]` hora semanal (ILH de \$`r num(z$ilh_s[ext])`). Sin ellas, los formales quedan arriba en todos los quiebres. La conclusión depende de esa depuración, que el trabajo no hace.
+
+Respaldo muestral: la diferencia es significativamente positiva en los percentiles `r rangos(s5$a)`, y los formales quedan arriba en los 99 percentiles a la vez en el `r pct(todas5, 0)` de las replicaciones.
+:::
+
+```{r ej5-p21}
+w <- filter(d, !is.na(ilh), cat_ocup == 3, pp07h %in% 1:2)
+e5p <- exacta(lorenz(w$ilh[w$pp07h == 1], w$pondiio[w$pp07h == 1]),
+              lorenz(w$ilh[w$pp07h == 2], w$pondiio[w$pp07h == 2]))
+```
+
+::: {.disc .metodo #d16}
+**D16.** El ejercicio 4 usa `p21` (ingreso de la ocupación principal) y el 5 usa `pp08d1`, que no incluye otros conceptos del asalariado como comisiones, propinas o aguinaldo. Ambas variables difieren en el `r pct(mean(z$pp08d1 != z$p21))` de la muestra del ejercicio 5. Con `p21` el resultado es similar: los informales quedan arriba en `r sum(e5p$dif < 0)` quiebres, en la cola superior.
+:::
+
+# Verificación contra las figuras de Stata
+
+Los archivos `.gph` guardan todas las observaciones graficadas por Stata. El bloque siguiente calcula la diferencia vertical máxima entre esas curvas y las de R.
+
+```{r verificacion}
+leer_gph <- function(archivo) {
+  b <- readBin(archivo, "raw", file.size(archivo))
+  ini <- grepRaw("sersetreadwrite", b, all = TRUE, fixed = TRUE)
+  fin <- grepRaw("<EndSersetData>", b, all = TRUE, fixed = TRUE)
+  lapply(seq_along(ini), function(k) {
+    i <- ini[k]
+    nv <- readBin(b[i + 18:21], "integer", size = 4, endian = "little")
+    n  <- readBin(b[i + 22:25], "integer", size = 4, endian = "little")
+    tam <- unname(c("255" = 8, "254" = 4)[as.character(as.integer(b[i + 25 + seq_len(nv)]))])
+    mat <- matrix(b[(fin[k] - 2 - n * sum(tam)):(fin[k] - 3)], nrow = sum(tam))
+    desde <- cumsum(c(0, tam))
+    # Primera variable: L(p). Segunda: p
+    lapply(seq_len(nv), function(j)
+      readBin(as.vector(mat[desde[j] + seq_len(tam[j]), ]), "double", n, size = tam[j], endian = "little"))
+  })
+}
+ruta <- sprintf("Figuras/Figura %d.gph", 1:3)
+if (all(file.exists(ruta))) {
+  pares <- list(list(Po, Us), list(Hm, Mu), list(Fo, In))
+  ver <- bind_rows(lapply(1:3, function(k) {
+    s <- leer_gph(ruta[k])
+    data.frame(Figura = k, Grupo = 1:2,
+      Obs_Stata = sapply(1:2, function(j) length(s[[j]][[1]])),
+      Obs_R = sapply(pares[[k]], nrow) - 1,
+      Dif = sapply(1:2, function(j) max(abs(Lp(pares[[k]][[j]], pmin(s[[j]][[2]], 1)) - s[[j]][[1]]))))
+  }))
+  salida <- kable(ver |> mutate(Dif = format(Dif, scientific = TRUE, digits = 2)), align = "r",
+        col.names = c("Figura", "Curva", "Obs. Stata", "Obs. R", "Máxima diferencia"))
+} else salida <- "No se encontraron los archivos .gph; se omite la verificación."
+salida
+```
+
+```{r sesion}
+sessionInfo()
+```

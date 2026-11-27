@@ -1,0 +1,1609 @@
+---
+title: "Trabajo Final — Réplica en R"
+subtitle: "Evolución de la pobreza monetaria en Colombia: un análisis de descomposiciones y microsimulaciones. Maestría en Economía UNLP - Economía de la Distribución. Autor original: Juan Menduiña"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+    self_contained: true
+    code_folding: hide
+---
+
+```{css, echo=FALSE}
+mark { background: #ffe27a; padding: 0 2px; }
+.disc { border-left: 6px solid; border-radius: 4px; padding: 10px 14px; margin: 14px 0; font-size: 0.95em; }
+.disc p:last-child { margin-bottom: 0; }
+.error { border-color: #c0392b; background: #fdecea; }
+.impr  { border-color: #d68910; background: #fef5e7; }
+.metodo{ border-color: #2874a6; background: #eaf2f8; }
+table { font-size: 0.8em; width: 100%; display: block; overflow-x: auto; }
+td, th { padding: 2px 6px !important; }
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, fig.width = 9, fig.height = 4.5, dpi = 110)
+```
+
+# Cómo leer este documento {-}
+
+El texto es el del PDF *Menduiña, J. - Evolución de la pobreza monetaria en Colombia*. Las tablas y figuras se reconstruyen en R. Lo <mark>resaltado</mark> es una frase o un número con alguna discrepancia, explicada en un recuadro cercano:
+
+::: {.disc .error}
+**Error**: la afirmación contradice los resultados, las fuentes o el código, o el cálculo es incorrecto.
+:::
+
+::: {.disc .impr}
+**Imprecisión**: redacción, rótulo o formato que puede inducir a error.
+:::
+
+::: {.disc .metodo}
+**Observación metodológica**: el resultado depende de una decisión discutible o no documentada.
+:::
+
+**Alcance de la réplica.** La carpeta del trabajo **no incluye los microdatos** (`Datos/.dta/` no está). Las tablas y la mayoría de las figuras se rehacen a partir de los **resultados guardados** en `.res/` y `.fig/`: esto verifica que el artículo transcribe bien lo que produjo Stata y que sus afirmaciones son coherentes con esas cifras, pero **no vuelve a estimar** la pobreza, las descomposiciones, las regresiones ni las simulaciones. Las densidades de las figuras 5 y A9 se muestran con las imágenes originales. Como excepción, la figura A14 conserva los ingresos individuales de 2018, con los que se comprueban el Gini nacional, la pobreza extrema de 2,9% citada en la introducción (ver el [control de las cifras](#control-de-las-cifras)) y varios puntos de los recuadros. Las observaciones sobre el código surgen de leer los *do-files*.
+
+**Resultado.** Ver el [control de las cifras](#control-de-las-cifras): las tablas coinciden con los resultados guardados salvo dos celdas de la tabla 16. Los problemas principales están en la implementación de las microsimulaciones ([D28](#d28), [D29](#d29), [D32](#d32)), en la descomposición RIF ([D16](#d16), [D23](#d23), [D26](#d26)), en las densidades sin ponderar ([D19](#d19)) y en varias afirmaciones del texto que las propias tablas contradicen.
+
+| N° | Sección | Tipo | Discrepancia |
+|----|---------|------|--------------|
+| [D1](#d1) | Resumen, 1 y 6 | Error | El efecto redistribución no redujo la pobreza en todas las ciudades |
+| [D2](#d2) | Varias | Imprecisión | Erratas y una referencia mal fechada |
+| [D3](#d3) | 3.2 | Metodológica | Variables definidas de una forma que el texto no explica |
+| [D4](#d4) | 3.2 | Error | La informalidad cayó 1,8 puntos, no 4,4 |
+| [D5](#d5) | 3.2 | Error | Las ayudas suben en el área rural y bajan en las demás |
+| [D6](#d6) | Tabla 2 | Imprecisión | El encabezado de la tabla 2 dice "Var. ($)" y son porcentajes |
+| [D7](#d7) | 3.3 | Metodológica | El do-file entregado no genera todos los resultados publicados |
+| [D8](#d8) | 3.3 | Error | En 2002-2005 el área rural no tuvo la mejor reducción |
+| [D9](#d9) | 3.3 | Metodológica | La significatividad ignora el diseño muestral y no puede verificarse |
+| [D10](#d10) | Tabla 7 | Imprecisión | La participación rural no siempre supera a la de las ciudades |
+| [D11](#d11) | Tabla 8 | Imprecisión | Barranquilla no superaba el 8,5% de pobreza extrema |
+| [D12](#d12) | Tabla 8 | Error | Bogotá no estaba entre las tres ciudades con menor pobreza extrema |
+| [D13](#d13) | Tabla 10 | Error | El 31,4% corresponde solo a primaria completa |
+| [D14](#d14) | Tablas 10 y B7 | Imprecisión | Categorías del jefe de hogar mal rotuladas o incompletas |
+| [D15](#d15) | 4.1 | Error | Las expresiones (4.4)-(4.6) no son un Shapley de tres factores |
+| [D16](#d16) | 4.2 | Error | El contrafactual descrito es el inverso del que se reporta |
+| [D17](#d17) | 4.2 | Error | El término de error de la fórmula (4.13) está mal escrito |
+| [D18](#d18) | 4.3 | Error | Signo equivocado en (4.23) |
+| [D19](#d19) | Figuras 5 y A9 | Error | Las densidades se estiman sin ponderadores |
+| [D20](#d20) | 5.1 | Imprecisión | En el área rural el efecto redistribución disminuyó en 2008-2018 |
+| [D21](#d21) | Tabla 14 | Metodológica | Participaciones crecientes no demuestran mayor impacto en los más pobres |
+| [D22](#d22) | 5.2 | Error | La participación laboral femenina no está en la descomposición |
+| [D23](#d23) | 5.2 | Error | El ingreso no laboral entra en pesos corrientes |
+| [D24](#d24) | Tabla 16 | Error | El efecto composición no explica la mayor parte en todos los casos no rurales |
+| [D25](#d25) | 5.2 | Imprecisión | No todas las características contribuyeron a reducir la pobreza |
+| [D26](#d26) | Tabla 16 | Error | Dos celdas no coinciden y ocultan un efecto estructura positivo |
+| [D27](#d27) | Tabla 16 | Metodológica | Los totales de la descomposición no igualan el cambio observado |
+| [D28](#d28) | 5.3 | Error | No se reduce 5 puntos la tasa de desempleo |
+| [D29](#d29) | 5.3 | Error | El efecto de la educación sobre el salario nunca se aplica |
+| [D30](#d30) | 5.3 | Imprecisión | El patrón "mayor impacto en los más pobres" tiene más excepciones |
+| [D31](#d31) | 5.3 | Error | En el área rural el escenario desemp reduce menos que secc |
+| [D32](#d32) | 5.3 | Error | La transferencia no se financia: los débitos superan a lo entregado |
+| [D33](#d33) | 5.3 | Metodológica | Quedan fuera los mayores que no trabajan y se usa una línea nacional |
+| [D34](#d34) | Figura 8 | Imprecisión | En trnsfr quedan 11 percentiles bajo el eje, no 10 |
+| [D35](#d35) | 6 | Error | El ingreso rural equivale al 33,97% del de las ciudades |
+
+# Datos y funciones {-}
+
+```{r datos}
+library(haven); library(readxl); library(knitr)
+res <- "Datos/.res"
+mat <- function(f) { d <- suppressMessages(read_excel(file.path(res, f)))
+  matrix(as.numeric(unlist(d)), nrow(d), dimnames = list(NULL, names(d))) }
+hoja <- function(f, s) suppressMessages(as.data.frame(read_excel(file.path(res, f), sheet = s, col_names = FALSE)))
+areas <- c("tn", "urb", "resturb", "rur"); an <- c("Total nacional", "Principales ciudades", "Resto urbano", "Rural")
+ab <- c("TN", "PC", "RU", "R")
+anios <- c(2002:2005, 2008:2018); ia <- anios - 2001
+ciudades <- c("Barranquilla", "Bogotá", "Bucaramanga", "Cali", "Cartagena", "Cúcuta", "Ibagué", "Manizales",
+              "Medellín", "Montería", "Pasto", "Pereira", "Villavicencio")
+ind <- c("Incidencia", "Brecha", "Severidad"); lin <- c("Pobreza", "Pobreza extrema")
+periodos <- c("2002-2005", "2008-2018", "2002-2018")
+# FGT por área (filas: FGT0-2 de pobreza y de pobreza extrema) y población
+fgt <- lapply(setNames(areas, areas), function(a) mat(sprintf("FGT/FGT_%s.xlsx", a))[, ia])
+pob <- mat("FGT/Población.xlsx")[, ia]
+# FGT por ciudad: [ciudad, alfa, línea, año]
+FC <- array(NA, c(13, 3, 2, 15))
+for (j in seq_along(anios)) for (l in 1:2)
+  FC[, , l, j] <- as.matrix(read_dta(sprintf("%s/FGT/FGT_%s_c_%d.dta", res, c("p", "i")[l], anios[j])))
+# Descomposición KS: [efecto C-R-L-T, área o ciudad, alfa, línea, período]
+ks <- function(a, l, area, per) unlist(read_dta(sprintf("%s/KS/KS_FGT%d_%s_%s_%s.dta", res, a, c("p", "i")[l], area, per)))
+K <- array(NA, c(4, 4, 3, 2, 3)); KC <- array(NA, c(4, 13, 3, 2, 3))
+for (p in 1:3) for (l in 1:2) for (a in 0:2) {
+  for (j in 1:4) K[, j, a + 1, l, p] <- ks(a, l, areas[j], periodos[p])
+  for (j in 1:13) KC[, j, a + 1, l, p] <- ks(a, l, paste0("c", j), periodos[p])
+}
+# Gini, características de los hogares, simulaciones
+gini_t <- mat("Gini/Gini.xlsx")[, ia]
+car <- lapply(setNames(areas, areas), function(a)
+  mat(sprintf("Características/Características_%s.xlsx", a))[, c(1, 4, 7, 14, 17)])
+# Los archivos por área no traen 2015: el total nacional de ese año está solo en el libro resumen
+car$tn[, 4] <- suppressWarnings(as.numeric(hoja("Características.xlsx", 1)[3:28, 5]))
+sims <- c("secc", "desemp", "trnsfr")
+sim <- lapply(setNames(sims, sims), function(s) sapply(areas, function(a)
+  mat(sprintf("Simulaciones/sim-ipcug_%s_%s.xlsx", s, a))))      # 12 filas: 6 originales y 6 simuladas
+# Salidas de oaxaca_rif (outreg2)
+rif <- function(a, l, area, w = 1) {
+  x <- readLines(sprintf("%s/RIF/RIF_FGT%d_%s_%s_wgt%d.txt", res, a, c("p", "i")[l], area, w), encoding = "UTF-8", warn = FALSE)
+  s <- strsplit(x, "\t"); lab <- sapply(s, function(z) if (length(z)) z[1] else "")
+  i <- which(nzchar(lab) & !grepl("^[(]|VARIABLES|Observ|Standard|[*]", lab))
+  col7 <- function(k) c(s[[k]][-1], rep("", 7))[1:7]
+  num0 <- function(v) suppressWarnings(as.numeric(gsub("[()*]", "", v)))
+  est <- t(sapply(i, function(k) num0(col7(k)))); se <- t(sapply(i, function(k) num0(col7(k + 1))))
+  est_ <- t(sapply(i, function(k) { v <- col7(k); ifelse(grepl("[*]", v), sub("^[^*]*", "", v), "") }))
+  rownames(est) <- rownames(se) <- rownames(est_) <- lab[i]; list(est = est, se = se, ast = est_)
+}
+primero <- function(m, fila) m[fila, which(!is.na(m[fila, ]) & m[fila, ] != "")[1]]
+
+# Lector de los datos guardados en las figuras de Stata (.gph)
+leer_gph <- function(archivo) {
+  b <- readBin(archivo, "raw", file.size(archivo))
+  i <- grepRaw("sersetreadwrite", b, fixed = TRUE); fin <- grepRaw("<EndSersetData>", b, fixed = TRUE)
+  cab <- rawToChar(b[grepRaw("<BeginSerset>", b, fixed = TRUE):(i - 1)])
+  nom <- regmatches(cab, gregexpr('[.]name = `"[^"]*"', cab, useBytes = TRUE))[[1]]
+  nom <- substr(nom, 11, nchar(nom, "bytes") - 1)
+  nv <- readBin(b[i + 18:21], "integer", size = 4, endian = "little")
+  n  <- readBin(b[i + 22:25], "integer", size = 4, endian = "little")
+  tipo <- as.integer(b[i + 25 + seq_len(nv)])
+  tam <- unname(c("255" = 8, "254" = 4, "253" = 4, "252" = 2, "251" = 1)[as.character(tipo)])
+  m <- matrix(b[(fin - 2 - n * sum(tam)):(fin - 3)], nrow = sum(tam)); desde <- cumsum(c(0, tam))
+  s <- lapply(seq_len(nv), function(j) { r <- as.vector(m[desde[j] + seq_len(tam[j]), ])
+    v <- if (tipo[j] >= 254) readBin(r, "double", n, size = tam[j], endian = "little")
+         else readBin(r, "integer", n, size = tam[j], signed = TRUE, endian = "little")
+    if (tipo[j] == 254) v[v > 1.7e38] <- NA
+    if (tipo[j] == 255) v[v > 8.9e307] <- NA
+    v })
+  setNames(s, nom)
+}
+gph <- function(n) leer_gph(sprintf("Datos/.fig/Figura %s.gph", n))
+# Ingresos individuales de 2018 guardados en la figura A14: logaritmo del ipcug y ponderador relativo
+indiv <- lapply(c(orig = "a", secc = "b", desemp = "c", trnsfr = "d"), function(k) {
+  s <- gph(sprintf("A14 (%s)", k)); w <- diff(c(0, s[[1]])); y <- exp(s[[2]]); y[is.na(y)] <- 0
+  list(l = s[[2]], y = y, w = w, F = s[[1]]) })
+
+```
+
+```{r cifras-pdf}
+# Líneas de las tablas tal como figuran en el PDF (pdftotext -raw)
+pdf_txt <- list(
+`1` = c("Tabla 1. Caracterización económica y sociodemográfica de los hogares en Colombia 2002-2018.", "Variable", "[I] [II] [III] [IV] [V] [VI]", "2002 2005 2008 2015 2018 Var. (%)", "ipcug 598.237 641.156 700.606 841.419 846.094 41,4", "(1.304.752) (1.142.612) (1.261.827) (1.348.672) (1.363.432)", "Ingreso no", "laboral", "302.847 322.638 355.180 379.985 376.210 24,2", "(1.290.028) (1.033.448) (1.340.291) (1.143.848) (1.120.106)", "Miembros 4,128 4,004 3,710 3,386 3,310 -19,8", "(2,055) (2,026) (1,929) (1,794) (1,770)", 
+"Mujeres 0,505 0,504 0,501 0,496 0,497 -1,7", "(0,238) (0,244) (0,259) (0,274) (0,276)", "Niños 0,577 0,553 0,511 0,457 0,439 -23,9", "(0,494) (0,497) (0,500) (0,498) (0,496)", "Educación 6,764 7,169 7,223 8,805 9,161 35,4", "(3,960) (4,038) (4,089) (4,358) (4,341)", "Jefe mujer 0,257 0,278 0,298 0,351 0,360 40,3", "(0,437) (0,448) (0,457) (0,477) (0,480)", "Jefe edad 0,150 0,145 0,153 0,153 0,155 3,3", "(0,357) (0,352) (0,360) (0,360) (0,362)", "Jefe", "cuentapropista", "0,339 0,335 0,344 0,357 0,355 4,8", 
+"(0,473) (0,472) (0,475) (0,479) (0,478)", "PLF 0,416 0,410 0,404 0,486 0,480 15,3", "(0,381) (0,384) (0,392) (0,403) (0,405)", "Desempleo 0,137 0,103 0,099 0,081 0,086 -37,2", "(0,265) (0,236) (0,236) (0,216) (0,222)", "IL --- --- 0,413 0,398 0,395 -4,4", "--- --- (0,451) (0,443) (0,447)", "Ayudas 0,622 0,616 0,610 0,609 0,586 -5,8", "(0,485) (0,486) (0,488) (0,488) (0,493)", "Fuente: Elaboración propia en base a MESEP-DANE. Notas: (i) Los datos en paréntesis corresponden a los desvíos"),
+`2` = c("Tabla 2. Caracterización económica y sociodemográfica de los hogares por área geográfica en", "Colombia 2002 y 2018.", "Variable", "Principales ciudades Resto urbano Rural", "2002 2018", "Var.", "($)", "2002 2018", "Var.", "($)", "2002 2018", "Var.", "($)", "ipcug 862.316 1.140.521 32,3 453.318 722.931 59,5 275.554 387.428 40,6", "(1.576.665) (1.696.114) (1.209.751) (1.070.542) (504.622) (520.506)", "Ingreso no", "laboral", "474.426 525.401 10,7 195.486 315.554 61,4 109.079 141.245 29,5", 
+"(1.756.113) (1.419.999) (711.953) (832.043) (526.857) (560.232)", "Miembros 3,971 3,218 -19,0 4,153 3,343 -19,5 4,394 3,462 -21,2", "(1,940) (1,714) (2,079) (1,798) (2,202) (1,838)", "Mujeres 0,523 0,513 -1,9 0,513 0,507 -1,1 0,463 0,447 -3,4", "(0,240) (0,280) (0,240) (0,277) (0,226) (0,260)", "Niños 0,529 0,390 -26,4 0,609 0,471 -22,7 0,627 0,499 -20,4", "(0,499) (0,488) (0,488) (0,499) (0,484) (0,500)", "Educación 8,393 10,601 26,3 6,344 9,251 45,8 4,203 5,912 40,7", "(3,932) (4,026) (3,474) (4,152) (2,947) (3,440)", 
+"Jefe mujer 0,290 0,391 35,1 0,278 0,397 42,7 0,169 0,239 41,4", "(0,454) (0,488) (0,448) (0,489) (0,375) (0,427)", "Jefe edad 0,148 0,151 1,7 0,148 0,156 4,9 0,155 0,163 5,1", "(0,355) (0,358) (0,356) (0,363) (0,362) (0,369)", "Jefe", "cuentapropista", "0,281 0,286 1,5 0,371 0,376 1,3 0,407 0,474 16,4", "(0,450) (0,452) (0,483) (0,484) (0,491) (0,499)", "PLF 0,481 0,532 10,7 0,398 0,480 20,6 0,314 0,362 15,3", "(0,376) (0,397) (0,373) (0,399) (0,376) (0,407)", "Desempleo 0,159 0,098 -38,2 0,140 0,098 -29,8 0,094 0,043 -53,6", 
+"(0,279) (0,233) (0,270) (0,236) (0,227) (0,162)", "IL --- 0,275 -8,1* --- 0,451 -5,2* --- 0,566 0,9*", "--- (0,404) --- (0,457) --- (0,448)", "Ayudas 0,587 0,504 -14,1 0,673 0,645 -4,1 0,626 0,676 8,0", "(0,492) (0,500) (0,469) (0,478) (0,484) (0,468)", "Fuente: Elaboración propia en base a MESEP-DANE. Notas: (i) Los datos en paréntesis corresponden a los desvíos"),
+`3` = c("Tabla 3. Indicadores de pobreza FGT por área geográfica en Colombia 2002-2018.", "Año", "Incidencia (FGT0) Brecha (FGT1) Severidad (FGT2)", "TN PC RU R TN PC RU R TN PC RU R", "2002 49,4 35,9 59,3 60,9 21,7 13,8 27,4 28,6 12,6 7,4 16,3 17,4", "2003 47,7 36,4 57,0 56,3 20,3 14,0 25,6 25,1 11,5 7,5 14,8 14,8", "2004 47,4 34,2 57,6 58,3 19,8 12,9 25,0 25,9 11,1 6,8 14,0 15,0", "2005 45,0 32,2 54,3 56,4 18,4 11,6 23,1 24,7 10,1 5,9 12,9 14,2", "2008 42,0 26,9 52,1 57,1 18,4 9,7 24,4 26,8 10,8 5,1 14,7 16,5", 
+"2009 40,2 25,6 50,7 54,3 16,7 9,1 22,1 24,0 9,5 4,8 12,8 14,1", "2010 37,2 23,2 47,4 50,3 15,1 8,3 19,8 21,9 8,5 4,4 11,1 12,7", "2011 34,0 20,6 43,8 46,9 13,4 6,9 18,1 19,6 7,2 3,4 10,0 10,9", "2012 32,7 18,9 42,2 46,8 12,9 6,4 17,4 19,5 7,0 3,2 9,6 11,0", "2013 30,6 17,5 40,4 42,8 11,8 5,9 16,2 17,3 6,4 3,0 8,9 9,6", "2014 28,5 15,9 37,3 41,4 10,8 5,2 14,6 16,6 5,8 2,7 7,9 9,2", "2015 27,8 15,4 36,8 40,3 10,3 5,1 13,9 15,7 5,4 2,6 7,2 8,5", "2016 28,0 15,9 37,8 38,6 10,3 5,2 14,4 14,9 5,5 2,7 7,7 8,1", 
+"2017 26,9 15,9 36,6 36,0 9,7 5,1 13,7 13,4 5,1 2,6 7,2 7,1", "2018 27,0 16,2 36,1 36,1 9,8 5,3 13,4 13,8 5,2 2,8 7,0 7,5", "Fuente: Elaboración propia en base a MESEP-DANE. Nota: Las columnas por cada indicador indican las áreas"),
+`4` = c("Tabla 4. Indicadores de pobreza extrema FGT por área geográfica en Colombia 2002-2018.", "Año", "Incidencia (FGT0) Brecha (FGT1) Severidad (FGT2)", "TN PC RU R TN PC RU R TN PC RU R", "2002 17,6 7,4 19,6 32,8 6,7 2,7 6,9 13,2 3,7 1,6 3,7 7,4", "2003 15,6 7,3 16,6 28,6 5,7 2,6 6,0 10,8 3,1 1,5 3,2 5,8", "2004 14,8 6,5 15,2 29,0 5,4 2,4 5,2 10,8 2,8 1,4 2,6 5,7", "2005 13,8 5,6 14,3 27,8 4,8 1,9 4,7 10,2 2,5 1,1 2,3 5,4", "2008 16,4 5,6 19,2 33,0 6,7 2,1 7,6 14,1 4,0 1,3 4,4 8,3", "2009 14,4 5,2 16,4 29,0 5,5 2,0 6,0 11,4 3,0 1,2 3,2 6,3", 
+"2010 12,3 4,6 13,2 25,5 4,6 1,8 4,6 9,9 2,5 1,1 2,4 5,4", "2011 10,6 3,5 11,9 22,6 3,8 1,3 4,1 8,2 2,0 0,8 2,1 4,3", "2012 10,4 3,3 11,4 22,8 3,8 1,2 4,0 8,4 2,1 0,7 2,2 4,5", "2013 9,1 3,0 10,3 19,1 3,3 1,2 3,6 6,9 1,8 0,8 2,0 3,7", "2014 8,1 2,7 8,6 18,0 3,0 1,1 3,1 6,6 1,7 0,7 1,7 3,5", "2015 7,9 2,7 8,1 18,0 2,9 1,2 2,7 6,3 1,6 0,8 1,5 3,3", "2016 8,5 2,9 9,4 18,1 3,1 1,2 3,4 6,5 1,7 0,8 1,9 3,4", "2017 7,4 2,8 8,4 15,4 2,7 1,2 2,9 5,3 1,5 0,8 1,6 2,7", "2018 7,2 2,9 7,8 15,4 2,7 1,3 2,8 5,6 1,6 0,9 1,5 3,0", 
+"Fuente: Elaboración propia en base a MESEP-DANE. Nota: Las columnas por cada indicador indican las áreas"),
+`5` = c("Tabla 5. Variación de los indicadores de pobreza FGT por área geográfica en Colombia 2002-2018.", "Puntos porcentuales.", "Período", "Incidencia (FGT0) Brecha (FGT1) Severidad (FGT2)", "TN PC RU R TN PC RU R TN PC RU R", "2002-2005 -4,4 -3,7 -5,0 -4,5 -3,3 -2,2 -4,3 -3,9 -2,5 -1,5 -3,4 -3,2", "2008-2018 -15,0 -10,7 -16,1 -21,0 -8,5 -4,3 -10,9 -13,0 -5,6 -2,3 -7,7 -9,0", "2002-2018 -22,4 -19,7 -23,3 -24,9 -11,9 -8,5 -14,0 -14,8 -7,4 -4,7 -9,2 -9,9", "Fuente: Elaboración propia en base a MESEP-DANE. Notas: (i) Las columnas por cada indicador indican las áreas"
+),
+`6` = c("Tabla 6. Variación de los indicadores de pobreza extrema FGT por área geográfica en Colombia", "2002-2018. Puntos porcentuales.", "Período", "Incidencia (FGT0) Brecha (FGT1) Severidad (FGT2)", "TN PC RU R TN PC RU R TN PC RU R", "2002-2005 -3,8 -1,8 -5,3 -5,0 -1,9 -0,8 -2,3 -3,0 -1,2 -0,5 -1,4 -2,0", "2008-2018 -9,2 -2,7 -11,4 -17,6 -4,0 -0,8 -4,9 -8,5 -2,4 -0,4 -2,9 -5,3", "2002-2018 -10,4 -4,6 -11,8 -17,4 -4,0 -1,4 -4,2 -7,6 -2,1 -0,7 -2,2 -4,3", "Fuente: Elaboración propia en base a MESEP-DANE. Notas: (i) Las columnas por cada indicador indican las áreas"
+),
+`7` = c("Tabla 7. Participación de cada área geográfica en los indicadores de pobreza FGT en Colombia", "2002-2018. Valores porcentuales.", "Año Indicador", "Principales", "ciudades", "Resto urbano Rural Total nacional", "2002", "Incidencia 32,2 35,6 32,1 100,0", "Brecha 28,2 37,4 34,3 100,0", "Severidad 26,0 38,2 35,8 100,0", "2003", "Incidencia 34,0 35,7 30,4 100,0", "Brecha 30,6 37,6 31,8 100,0", "Severidad 28,8 38,4 32,9 100,0", "2004", "Incidencia 32,2 36,6 31,2 100,0", "Brecha 28,9 37,9 33,1 100,0", 
+"Severidad 27,4 38,2 34,5 100,0", "2005", "Incidencia 32,0 36,6 31,4 100,0", "Brecha 28,3 38,1 33,7 100,0", "Severidad 26,2 38,6 35,2 100,0", "2008", "Incidencia 28,8 38,1 33,0 100,0", "Brecha 23,7 40,8 35,5 100,0", "Severidad 21,0 41,9 37,1 100,0", "2009", "Incidencia 28,6 38,9 32,5 100,0", "Brecha 24,6 40,8 34,6 100,0", "Severidad 22,7 41,6 35,7 100,0", "2010", "Incidencia 28,2 39,5 32,3 100,0", "Brecha 24,7 40,6 34,6 100,0", "Severidad 23,4 40,7 35,9 100,0", "2011", "Incidencia 27,4 40,0 32,6 100,0", 
+"Brecha 23,3 42,1 34,7 100,0", "Severidad 21,5 42,9 35,6 100,0", "2012", "Incidencia 26,2 40,2 33,6 100,0", "Brecha 22,4 42,1 35,5 100,0", "Severidad 20,6 42,6 36,8 100,0", "2013", "Incidencia 26,0 41,4 32,6 100,0", "Brecha 22,8 43,1 34,1 100,0", "Severidad 21,6 43,6 34,8 100,0", "2014", "Incidencia 25,3 41,1 33,6 100,0", "Brecha 22,0 42,4 35,6 100,0", "Severidad 20,8 42,7 36,5 100,0", "2015", "Incidencia 25,1 41,6 33,3 100,0", "Brecha 22,6 42,4 35,0 100,0", "Severidad 22,1 42,0 35,9 100,0", "2016", 
+"Incidencia 25,8 42,7 31,5 100,0", "Brecha 22,9 44,1 33,0 100,0", "Severidad 22,0 44,4 33,6 100,0", "2017", "Incidencia 27,2 42,4 30,4 100,0", "Brecha 24,4 44,1 31,5 100,0", "Severidad 23,8 44,4 31,8 100,0", "2018", "Incidencia 27,3 42,5 30,2 100,0", "Brecha 24,7 43,5 31,8 100,0", "Severidad 24,2 43,1 32,6 100,0", "Fuente: Elaboración propia en base a MESEP-DANE."),
+`8` = c("Tabla 8. Incidencia de la pobreza y de la pobreza extrema por ciudades principales en Colombia", "2002-2018.", "Pobreza (FGT0)", "Ciudad 2002 2003 2004 2005 2008 2009 2010 2011 2012 2013 2014 2015 2016 2017 2018", "Barranquilla 43,1 48,8 45,9 44,1 43,3 42,4 39,5 34,8 30,4 29,1 25,5 22,0 21,7 20,0 21,1", "Bogotá 31,3 31,8 28,7 26,6 19,6 18,3 15,5 13,1 11,6 10,2 10,1 10,4 11,6 12,4 12,4", "Bucaramanga 33,5 34,0 31,3 31,1 19,1 13,9 10,8 10,7 10,4 10,3 8,4 9,1 10,6 12,0 14,5", "Cali 33,1 33,4 31,6 30,1 28,4 28,3 26,1 25,1 23,1 21,9 19,1 16,5 15,4 15,5 15,7", 
+"Cartagena 47,7 43,6 45,0 37,7 40,2 38,5 34,2 33,4 32,7 29,2 26,6 26,2 29,1 27,0 25,9", "Cúcuta 52,9 57,0 55,2 55,2 42,2 38,2 39,2 33,9 32,4 31,3 33,1 32,9 33,4 33,5 36,2", "Ibagué 38,2 40,0 43,0 39,5 32,6 28,7 26,6 22,0 21,3 18,6 16,4 17,5 17,3 18,4 18,1", "Manizales 37,0 39,5 40,5 36,5 31,2 27,3 23,9 19,3 17,6 16,2 15,7 13,9 14,6 13,8 11,9", "Medellín 36,1 34,5 31,6 29,4 25,0 23,9 22,0 19,2 17,7 16,1 14,7 14,3 14,1 13,4 13,9", "Montería 48,7 50,8 50,6 46,9 40,5 38,4 39,5 37,2 36,9 34,8 20,9 25,2 31,0 28,2 27,5", 
+"Pasto 44,7 46,8 46,2 45,7 39,4 42,3 42,6 40,0 36,8 30,5 26,9 25,3 23,0 20,2 25,4", "Pereira 32,1 29,6 29,6 28,7 27,5 28,4 26,6 21,5 21,9 24,0 18,1 17,7 16,4 12,7 14,6", "Villavicencio 33,9 35,7 32,3 34,8 26,7 27,6 25,3 23,0 21,6 19,5 17,1 16,6 19,8 19,5 18,1", "Pobreza extrema (FGT0)", "Barranquilla 8,5 10,7 8,5 7,8 10,0 8,3 7,4 5,4 3,8 4,2 3,6 2,4 2,8 2,4 2,2", "Bogotá 7,0 6,9 6,0 4,7 3,4 3,2 2,6 2,0 2,0 1,6 1,9 2,0 2,3 2,4 2,5", "Bucaramanga 6,1 5,2 4,7 4,8 2,6 1,7 1,2 1,1 1,2 1,2 1,1 1,3 1,2 1,4 1,6", 
+"Cali 6,1 5,3 5,3 5,0 7,4 7,4 6,4 5,3 5,3 4,4 3,3 3,4 3,2 3,5 3,4", "Cartagena 9,5 7,5 6,9 4,7 6,9 6,8 6,2 4,7 5,9 5,8 4,3 4,0 5,5 4,1 3,4", "Cúcuta 11,1 13,2 13,2 11,3 7,9 6,8 8,4 5,7 5,1 6,0 5,7 6,9 7,0 5,3 7,0", "Ibagué 8,4 9,6 10,4 8,5 7,3 5,1 4,3 2,7 2,8 2,5 2,3 2,6 2,4 2,6 3,0", "Manizales 7,3 8,3 9,0 7,6 6,8 6,7 4,7 2,3 2,4 2,6 2,2 1,7 2,5 2,1 2,1", "Medellín 7,9 6,7 5,6 5,0 6,2 6,2 5,6 4,0 3,5 3,0 2,8 3,3 2,9 2,4 2,7", "Montería 9,5 11,2 9,9 9,3 6,6 5,9 6,7 6,4 6,3 6,5 1,4 2,1 4,3 5,5 3,9", 
+"Pasto 10,8 11,3 10,4 11,7 10,1 10,5 11,5 8,6 8,0 4,4 4,1 4,2 3,2 2,9 4,2", "Pereira 4,0 3,0 3,3 3,7 4,8 4,6 3,8 2,2 3,0 5,1 2,5 2,1 1,8 0,8 1,7", "Villavicencio 7,4 6,8 5,3 6,2 5,2 5,4 4,8 4,0 3,9 3,1 2,8 3,1 4,7 4,5 3,9", "Fuente: Elaboración propia en base a MESEP-DANE."),
+`9` = c("Tabla 9. Variación de la incidencia de la pobreza y de la pobreza extrema por ciudades principales", "en Colombia 2002-2018. Puntos porcentuales.", "Ciudad", "Pobreza (FGT0) Pobreza extrema (FGT0)", "2002-2005 2008-2018 2002-2018 2002-2005 2008-2018 2002-2018", "Barranquilla 1,0 -22,3** -22,0** -0,6** -7,8** -6,2**", "Bogotá -4,7** -7,2** -18,9** -2,3** -0,8** -4,5**", "Bucaramanga -2,4** -4,6** -19,0** -1,2** -1,0** -4,5**", "Cali -3,0** -12,7** -17,4** -1,1** -3,9** -2,7**", "Cartagena -10,0** -14,3** -21,8** -4,8** -3,5** -6,1**", 
+"Cúcuta 2,3** -6,0** -16,7** 0,2 -0,9** -4,1**", "Ibagué 1,3** -14,5** -20,0** 0,1 -4,3** -5,4**", "Manizales -0,5** -19,3** -25,1** 0,3 -4,7** -5,2**", "Medellín -6,8** -11,1** -22,3** -2,9** -3,5** -5,2**", "Montería -1,8** -13,0** -21,2** -0,3 -2,7** -5,6**", "Pasto 1,1 -13,9** -19,2** 0,8** -5,9** -6,6**", "Pereira -3,4** -12,9** -17,5** -0,3 -3,0** -2,3**", "Villavicencio 0,9 -8,7** -15,9** -1,2** -1,3** -3,6**", "Fuente: Elaboración propia en base a MESEP-DANE. Nota: ** cambio significativo al 5%."
+),
+`10` = c("Tabla 10. Incidencia de la pobreza según características del jefe de hogar por área geográfica en", "Colombia 2002 y 2018.", "Característica del jefe de hogar", "2002 2018 Variación (p.p.)", "TN PC RU R TN PC RU R TN PC RU R", "Sexo", "Hombre 49,7 35,3 59,1 61,4 25,7 14,8 33,5 34,7 -24,0 -20,6 -25,6 -26,7", "Mujer 48,3 37,5 60,0 58,2 29,6 18,5 40,3 40,5 -18,7 -19,0 -19,8 -17,6", "Edad", "[0,25] 55,3 48,3 64,0 57,0 32,6 22,8 40,5 37,4 -22,8 -25,5 -23,5 -19,6", "[26,35] 57,0 46,1 65,5 65,3 32,9 21,3 42,8 41,2 -24,1 -24,8 -22,7 -24,1", 
+"[36,45] 52,3 37,6 62,8 65,5 30,2 19,3 38,1 39,4 -22,1 -18,3 -24,8 -26,2", "[46,55] 43,2 29,7 53,5 57,3 25,0 14,1 33,9 33,9 -18,2 -15,5 -19,6 -23,4", "[56,65] 43,7 29,6 53,8 55,8 21,6 12,4 30,8 30,4 -22,2 -17,2 -22,9 -25,4", "[65+] 45,5 30,2 55,9 57,4 20,9 10,6 30,5 31,0 -24,6 -19,5 -25,4 -26,4", "Nivel", "educativo", "Prim. incomp. 67,0 56,6 73,8 67,8 41,1 25,8 52,4 41,9 -25,9 -30,8 -21,5 -25,9", "Prim. comp. 55,4 45,1 65,0 60,0 31,4 20,6 42,0 35,3 -24,0 -24,5 -23,0 -24,6", "Sec. incomp. 49,7 44,1 61,4 47,1 30,7 21,4 42,5 32,9 -19,0 -22,7 -18,9 -14,2", 
+"Sec. comp. 31,9 26,5 42,6 31,1 23,0 16,6 32,5 27,0 -8,9 -9,9 -10,1 -4,0", "Sup. incomp. 15,7 11,2 28,6 19,4 13,4 9,1 19,5 16,2 -2,2 -2,0 -9,1 -3,2", "Sup. comp. 9,2 6,7 13,7 18,6 4,0 2,9 6,3 6,1 -5,2 -3,8 -7,5 -12,6", "Estado", "ocupacional", "Ocupado 48,9 34,6 58,2 60,6 25,7 14,8 33,9 34,6 -23,1 -19,8 -24,3 -26,0", "Desocupado 67,9 59,4 78,3 75,9 49,0 39,7 60,9 51,8 -18,9 -19,7 -17,4 -24,1", "Inactivo 44,7 31,2 57,2 58,1 27,5 15,7 38,4 43,1 -17,2 -15,5 -18,9 -15,1", "Categoría", "ocupacional", 
+"Asalariado 35,2 29,2 48,3 31,0 12,3 9,9 18,3 9,1 -22,9 -19,3 -29,9 -21,9", "Cuenta propia o", "patrón", "56,9 39,3 63,9 71,6 35,4 20,2 42,5 46,0 -21,5 -19,1 -21,3 -25,6", "Fuente: Elaboración propia en base a MESEP-DANE. Notas: (i) Las columnas por cada año indican las áreas geográficas,"),
+`11` = c("Tabla 11. Incidencia de la pobreza según características del hogar por área geográfica en Colombia", "2002 y 2018.", "Característica del hogar", "2002 2018 Variación (p.p.)", "TN PC RU R TN PC RU R TN PC RU R", "Número de", "niños menores", "a 12 años de", "edad", "Ninguno 27,4 17,4 37,9 39,7 13,9 7,9 20,4 20,5 -13,5 -9,5 -17,5 -19,2", "Uno 43,4 32,7 54,3 51,8 25,0 15,4 34,2 31,1 -18,3 -17,3 -20,1 -20,7", "Dos 57,1 47,6 64,5 63,2 39,7 27,5 49,9 44,9 -17,4 -20,1 -14,6 -18,3", "Tres o más 81,2 73,3 84,3 84,6 65,0 53,0 73,0 67,4 -16,2 -20,3 -11,4 -17,2", 
+"Número de", "ocupados", "Ninguno 58,1 48,0 67,8 66,1 42,1 31,0 51,0 54,3 -16,1 -17,0 -16,8 -11,8", "Uno 59,5 47,1 68,5 67,8 35,1 24,4 43,5 41,1 -24,4 -22,7 -25,0 -26,7", "Dos o más 42,0 28,1 51,6 56,1 20,1 10,1 28,8 30,4 -21,9 -18,1 -22,8 -25,7", "Número de", "miembros", "Uno 16,8 11,3 22,6 19,3 9,9 6,8 11,8 13,8 -7,0 -4,5 -10,8 -5,6", "Dos 24,8 13,2 35,4 37,3 12,8 7,4 17,3 19,7 -12,0 -5,8 -18,1 -17,5", "Tres 33,6 24,3 43,0 44,2 18,2 10,0 26,6 25,0 -15,4 -14,2 -16,4 -19,2", "Cuatro o más 55,0 41,2 65,0 65,5 34,0 21,2 44,4 43,1 -21,0 -20,0 -20,6 -22,4", 
+"Fuente: Elaboración propia en base a MESEP-DANE. Notas: (i) Las columnas por cada año indican las áreas geográficas,"),
+`12` = c("Tabla 12. Coeficiente de Gini por área geográfica en Colombia 2002-2018.", "Año Total nacional", "Principales", "ciudades", "Resto urbano Rural", "2002 0,571 0,547 0,492 0,523", "2003 0,553 0,536 0,485 0,467", "2004 0,558 0,541 0,471 0,437", "2005 0,556 0,538 0,482 0,462", "2008 0,564 0,526 0,518 0,486", "2009 0,556 0,520 0,514 0,467", "2010 0,559 0,527 0,501 0,469", "2011 0,548 0,515 0,495 0,457", "2012 0,538 0,498 0,498 0,464", "2013 0,538 0,504 0,493 0,445", "2014 0,537 0,503 0,488 0,461", 
+"2015 0,521 0,486 0,474 0,453", "2016 0,516 0,484 0,469 0,457", "2017 0,507 0,476 0,467 0,455", "2018 0,515 0,485 0,476 0,445", "Fuente: Elaboración propia en base a MESEP-DANE."),
+`13` = c("Tabla 13. Descomposición KS del cambio en los indicadores de pobreza y de pobreza extrema FGT", "por área geográfica en Colombia 2002-2018. Puntos porcentuales.", "Período Indicador Área", "Pobreza Pobreza extrema", "C R L T C R L T", "2002-2005", "Incidencia", "TN -11,6 -1,1 8,2 -4,4 -6,4 -2,0 4,6 -3,8", "PC -10,7 -0,9 7,9 -3,7 -3,2 -1,0 2,5 -1,8", "RU -14,0 0,4 8,5 -5,0 -9,3 -1,3 5,3 -5,3", "R -7,6 -5,3 8,4 -4,5 -6,3 -6,0 7,2 -5,0", "Brecha", "TN -6,7 -1,4 4,8 -3,3 -2,5 -1,2 1,8 -1,9", 
+"PC -5,1 -0,9 3,7 -2,2 -1,0 -0,5 0,8 -0,8", "RU -9,2 -0,6 5,6 -4,3 -3,4 -1,0 2,1 -2,3", "R -5,0 -4,6 5,7 -3,9 -2,9 -3,5 3,4 -3,0", "Severidad", "TN -4,3 -1,3 3,1 -2,5 -1,4 -0,8 1,0 -1,2", "PC -2,9 -0,7 2,1 -1,5 -0,5 -0,4 0,4 -0,5", "RU -6,3 -0,9 3,8 -3,4 -1,7 -0,8 1,1 -1,4", "R -3,4 -3,7 3,9 -3,2 -1,7 -2,3 2,0 -2,0", "2008-2018", "Incidencia", "TN -24,4 -5,3 14,7 -15,0 -11,6 -5,0 7,5 -9,2", "PC -19,1 -5,0 13,3 -10,7 -4,7 -1,8 3,8 -2,7", "RU -28,1 -3,1 15,2 -16,1 -15,4 -4,9 8,9 -11,4", "R -34,3 -2,8 16,1 -21,0 -25,8 -4,4 12,6 -17,6", 
+"Brecha", "TN -12,1 -4,0 7,6 -8,5 -4,4 -2,5 3,0 -4,0", "PC -7,6 -2,3 5,5 -4,3 -1,4 -0,6 1,2 -0,8", "RU -16,3 -3,7 9,0 -10,9 -5,7 -2,7 3,5 -4,9", "R -19,3 -3,3 9,6 -13,0 -11,1 -3,0 5,7 -8,5", "Severidad", "TN -7,4 -3,0 4,8 -5,6 -2,4 -1,6 1,6 -2,4", "PC -4,0 -1,3 3,0 -2,3 -0,7 -0,3 0,6 -0,4", "RU -10,5 -3,2 6,0 -7,7 -3,0 -1,9 1,9 -2,9", "R -12,5 -2,9 6,5 -9,0 -6,4 -2,2 3,4 -5,3", "2002-2018", "Incidencia", "TN -43,4 -4,7 25,7 -22,4 -24,9 -4,2 18,6 -10,4", "PC -37,8 -6,3 24,4 -19,7 -14,0 -3,2 12,6 -4,6", 
+"RU -48,8 -0,8 26,4 -23,3 -31,8 -1,5 21,6 -11,8", "R -46,1 -5,8 27,0 -24,9 -37,1 -6,2 25,9 -17,4", "Brecha", "TN -24,4 -3,4 15,9 -11,9 -10,4 -2,1 8,5 -4,0", "PC -17,9 -3,5 12,9 -8,5 -4,8 -1,2 4,5 -1,4", "RU -31,0 -1,0 18,1 -14,0 -13,3 -0,9 10,1 -4,2", "R -28,6 -4,7 18,5 -14,8 -17,8 -3,5 13,7 -7,6", "Severidad", "TN -16,0 -2,5 11,1 -7,4 -5,8 -1,3 5,0 -2,1", "PC -10,5 -2,3 8,1 -4,7 -2,4 -0,7 2,3 -0,7", "RU -21,6 -1,0 13,3 -9,2 -7,4 -0,6 5,9 -2,2", "R -19,8 -3,7 13,6 -9,9 -10,8 -2,3 8,7 -4,3", "Fuente: Elaboración propia en base a MESEP-DANE. Notas: (i) En la columna “Área”, se tiene total nacional (TN),"
+),
+`14` = c("Tabla 14. Participación de los efectos crecimiento, redistribución y línea en la reducción de la", "pobreza por área geográfica en Colombia 2002-2018. Valores porcentuales.", "Indicador Área", "Pobreza Pobreza extrema", "C R L T C R L T", "Incidencia", "TN 194,1 20,9 -115,0 100,0 239,4 40,1 -179,5 100,0", "PC 191,7 32,1 -123,7 100,0 305,3 69,0 -274,3 100,0", "RU 210,0 3,5 -113,5 100,0 270,0 13,1 -183,1 100,0", "R 185,7 23,1 -108,8 100,0 212,7 35,6 -148,3 100,0", "Brecha", "TN 205,6 28,6 -134,2 100,0 261,6 51,6 -213,2 100,0", 
+"PC 210,7 41,4 -152,0 100,0 328,7 84,9 -313,6 100,0", "RU 221,7 7,4 -129,1 100,0 319,6 21,8 -241,3 100,0", "R 193,4 31,7 -125,1 100,0 234,7 45,5 -180,2 100,0", "Severidad", "TN 215,2 33,9 -149,1 100,0 273,6 59,3 -232,9 100,0", "PC 225,5 49,2 -174,7 100,0 336,3 93,2 -329,5 100,0", "RU 233,8 10,4 -144,2 100,0 342,6 29,4 -272,0 100,0", "R 200,2 36,9 -137,2 100,0 250,5 52,4 -202,9 100,0", "Fuente: Elaboración propia en base a MESEP-DANE. Notas: (i) En la columna “Área”, se tiene total nacional (TN),"
+),
+`15` = c("Tabla 15. Descomposición KS del cambio en la incidencia de la pobreza y de la pobreza extrema", "por ciudades principales en Colombia 2002-2018. Puntos porcentuales.", "Ciudad", "Pobreza (FGT0) Pobreza extrema (FGT0)", "C R L T C R L T", "Barranquilla -41,2 -9,2 28,4 -22,0 -17,4 -5,3 16,5 -6,2", "Bogotá -33,3 -7,3 21,7 -18,9 -11,1 -3,5 10,1 -4,5", "Bucaramanga -42,3 -4,9 28,2 -19,0 -14,7 -3,2 13,3 -4,5", "Cali -33,9 -7,1 23,6 -17,4 -11,7 -2,9 12,0 -2,7", "Cartagena -47,5 -2,7 28,4 -21,8 -22,9 -1,7 18,6 -6,1", 
+"Cúcuta -42,5 -4,1 29,9 -16,7 -20,8 -1,4 18,1 -4,1", "Ibagué -42,3 -3,9 26,1 -20,0 -15,9 -2,9 13,3 -5,4", "Manizales -45,0 -4,0 23,8 -25,1 -15,0 -2,3 12,2 -5,2", "Medellín -39,4 -6,9 24,0 -22,3 -13,9 -3,8 12,5 -5,2", "Montería -42,2 -7,8 28,9 -21,2 -18,4 -4,2 16,9 -5,6", "Pasto -41,3 -2,8 24,9 -19,2 -20,7 -2,3 16,3 -6,6", "Pereira -38,2 -6,7 27,4 -17,5 -11,3 -2,5 11,5 -2,3", "Villavicencio -41,5 0,4 25,2 -15,9 -16,3 -0,0 12,7 -3,6", "Fuente: Elaboración propia en base a MESEP-DANE. Notas: (i) Las columnas indican el efecto crecimiento (C), el efecto"
+),
+`16` = c("Tabla 16. Descomposición RIF del cambio en los indicadores de pobreza y de pobreza extrema FGT", "por área geográfica en Colombia 2002-2018.", "Indicador Área", "Pobreza Pobreza extrema", "C E T C E T", "Incidencia", "TN", "-0,129*** -0,099*** -0,228*** -0,056*** -0,051*** -0,107***", "(0,001) (0,001) (0,001) (0,000) (0,001) (0,001)", "PC", "-0,113*** -0,087*** -0,200*** -0,028*** -0,019*** -0,047***", "(0,001) (0,001) (0,001) (0,000) (0,001) (0,000)", "RU", "-0,183*** -0,054*** -0,237*** -0,068*** -0,054*** -0,121***", 
+"(0,001) (0,002) (0,002) (0,001) (0,002) (0,002)", "R", "-0,087*** -0,170*** -0,257*** -0,066*** -0,114*** -0,181***", "(0,003) (0,003) (0,003) (0,002) (0,003) (0,003)", "Brecha", "TN", "-0,059*** -0,063*** -0,122*** -0,023*** -0,018*** -0,041***", "(0,000) (0,000) (0,000) (0,000) (0,000) (0,000)", "PC", "-0,045*** -0,042*** -0,087*** -0,013*** -0,003*** -0,015***", "(0,000) (0,000) (0,000) (0,000) (0,000) (0,000)", "RU", "-0,090*** -0,054*** -0,143*** -0,024*** -0,018*** -0,043***", "(0,001) (0,001) (0,001) (0,000) (0,001) (0,001)", 
+"R", "-0,052*** -0,101*** -0,153*** -0,034*** -0,046*** -0,080***", "(0,001) (0,002) (0,002) (0,001) (0,001) (0,001)", "Severidad", "TN", "-0,036*** -0,041*** -0,077*** -0,014*** -0,008*** -0,022***", "(0,000) (0,000) (0,000) (0,000) (0,000) (0,000)", "PC", "-0,025*** -0,023*** -0,048*** -0,008*** -0,000*** -0,008***", "(0,000) (0,000) (0,000) (0,000) (0,000) (0,000)", "RU", "-0,053*** -0,042*** -0,095*** -0,014*** -0,008*** -0,022***", "(0,000) (0,001) (0,001) (0,000) (0,001) (0,001)", "R", "-0,037*** -0,066*** -0,103*** -0,022*** -0,023*** -0,045***", 
+"(0,001) (0,001) (0,001) (0,001) (0,001) (0,001)", "Fuente: Elaboración propia en base a MESEP-DANE. Notas: (i) Desvíos estándar robustos entre paréntesis. (ii)"),
+`17` = c("Tabla 17. Indicadores de pobreza y de pobreza extrema FGT por área geográfica en escenario", "original y en escenarios contrafácticos para Colombia 2018.", "Área Indicador ipcug", "ipcug_secc ipcug_desemp ipcug_trnsfr", "Nivel Var. Nivel Var. Nivel Var.", "TN", "Pobreza", "Incidencia 27,0 25,1 -7,2 24,6 -8,8 26,7 -1,2", "Brecha 9,8 8,9 -9,3 8,6 -12,5 9,7 -1,6", "Severidad 5,2 4,7 -10,5 4,4 -15,5 5,1 -2,0", "Pobreza", "extrema", "Incidencia 7,2 6,4 -12,2 6,2 -14,3 7,1 -2,2", "Brecha 2,7 2,4 -12,4 2,2 -19,9 2,7 -2,6", 
+"Severidad 1,6 1,4 -12,3 1,2 -24,4 1,5 -2,6", "PC", "Pobreza", "Incidencia 16,2 15,2 -6,1 14,1 -12,9 16,0 -1,1", "Brecha 5,3 4,9 -7,7 4,4 -18,1 5,3 -1,5", "Severidad 2,8 2,5 -8,7 2,1 -23,0 2,7 -1,8", "Pobreza", "extrema", "Incidencia 2,9 2,6 -8,9 2,1 -25,3 2,8 -2,2", "Brecha 1,3 1,1 -9,5 0,8 -33,4 1,2 -2,5", "Severidad 0,9 0,8 -9,9 0,5 -39,0 0,8 -2,6", "RU", "Pobreza", "Incidencia 36,1 34,3 -4,9 32,9 -8,7 35,7 -1,1", "Brecha 13,4 12,4 -7,4 11,7 -13,2 13,2 -1,6", "Severidad 7,0 6,4 -8,7 5,9 -16,7 6,9 -1,9", 
+"Pobreza", "extrema", "Incidencia 7,8 6,9 -11,8 6,4 -17,9 7,6 -2,0", "Brecha 2,8 2,5 -9,9 2,0 -25,9 2,7 -2,5", "Severidad 1,5 1,4 -8,9 1,0 -31,5 1,5 -2,2", "R", "Pobreza", "Incidencia 36,1 32,0 -11,4 34,2 -5,2 35,6 -1,3", "Brecha 13,8 12,0 -13,1 12,8 -7,1 13,6 -1,9", "Severidad 7,5 6,4 -14,2 6,9 -8,4 7,3 -2,3", "Pobreza", "extrema", "Incidencia 15,4 13,3 -13,7 14,2 -7,6 15,0 -2,4", "Brecha 5,6 4,8 -15,4 5,1 -9,8 5,5 -2,8", "Severidad 3,0 2,6 -16,0 2,7 -11,2 3,0 -2,8", "Fuente: Elaboración propia en base a MESEP-DANE. Notas: (i) secc indica el ipcug obtenido después de cambiar el nivel"
+),
+`B1` = c("Tabla B1. Participación de cada área geográfica en la población en Colombia 2002-2018. Valores", "porcentuales.", "Año", "Principales", "ciudades", "Resto urbano Rural Total nacional", "2002 44,32 29,63 26,05 100,00", "2003 44,45 29,86 25,69 100,00", "2004 44,57 30,07 25,36 100,00", "2005 44,69 30,26 25,04 100,00", "2008 44,98 30,73 24,29 100,00", "2009 45,06 30,86 24,08 100,00", "2010 45,14 31,00 23,86 100,00", "2011 45,22 31,12 23,67 100,00", "2012 45,28 31,21 23,51 100,00", "2013 45,34 31,32 23,34 100,00", 
+"2014 45,40 31,42 23,17 100,00", "2015 45,45 31,52 23,02 100,00", "2016 45,50 31,62 22,88 100,00", "2017 46,06 31,19 22,75 100,00", "2018 45,57 31,80 22,63 100,00", "Fuente: Elaboración propia en base a MESEP-DANE."),
+`B2` = c("Tabla B2. Participación de cada área geográfica en los indicadores de pobreza extrema FGT en", "Colombia 2002-2018. Valores porcentuales.", "Año Indicador", "Principales", "ciudades", "Resto urbano Rural Total nacional", "2002", "Incidencia 18,7 32,8 48,5 100,0", "Brecha 17,9 30,6 51,5 100,0", "Severidad 18,7 29,5 51,8 100,0", "2003", "Incidencia 20,9 31,9 47,2 100,0", "Brecha 20,1 31,4 48,5 100,0", "Severidad 20,7 31,2 48,1 100,0", "2004", "Incidencia 19,6 30,7 49,6 100,0", "Brecha 20,1 28,9 51,1 100,0", 
+"Severidad 21,7 27,6 50,7 100,0", "2005", "Incidencia 18,3 31,3 50,5 100,0", "Brecha 17,9 29,1 53,0 100,0", "Severidad 19,0 27,5 53,5 100,0", "2008", "Incidencia 15,3 35,9 48,8 100,0", "Brecha 14,0 34,9 51,1 100,0", "Severidad 14,3 34,6 51,1 100,0", "2009", "Incidencia 16,3 35,2 48,5 100,0", "Brecha 16,3 33,7 50,0 100,0", "Severidad 17,6 32,7 49,7 100,0", "2010", "Incidencia 17,1 33,4 49,5 100,0", "Brecha 17,7 31,2 51,1 100,0", "Severidad 19,5 29,6 51,0 100,0", "2011", "Incidencia 14,8 34,8 50,4 100,0", 
+"Brecha 15,3 33,4 51,3 100,0", "Severidad 17,0 32,8 50,2 100,0", "2012", "Incidencia 14,4 34,1 51,4 100,0", "Brecha 14,7 33,0 52,3 100,0", "Severidad 15,8 32,8 51,4 100,0", "2013", "Incidencia 15,0 35,7 49,3 100,0", "Brecha 16,9 34,2 49,0 100,0", "Severidad 19,2 33,6 47,2 100,0", "2014", "Incidencia 14,9 33,4 51,7 100,0", "Brecha 16,6 32,2 51,2 100,0", "Severidad 19,2 32,1 48,8 100,0", "2015", "Incidencia 15,6 32,2 52,2 100,0", "Brecha 18,7 30,0 51,2 100,0", "Severidad 22,7 29,1 48,2 100,0", "2016", 
+"Incidencia 15,7 35,3 49,0 100,0", "Brecha 18,0 34,5 47,5 100,0", "Severidad 20,8 34,6 44,7 100,0", "2017", "Incidencia 17,3 35,3 47,4 100,0", "Brecha 20,6 34,1 45,3 100,0", "Severidad 24,7 34,1 41,2 100,0", "2018", "Incidencia 17,9 34,1 48,0 100,0", "Brecha 21,0 32,2 46,9 100,0", "Severidad 24,9 30,9 44,2 100,0", "Fuente: Elaboración propia en base a MESEP-DANE."),
+`B3` = c("Tabla B3. Brecha de la pobreza y de la pobreza extrema por ciudades principales en Colombia 2002-", "2018.", "POBREZA (FGT1)", "Ciudad 2002 2003 2004 2005 2008 2009 2010 2011 2012 2013 2014 2015 2016 2017 2018", "Barranquilla 16,3 19,4 17,2 16,4 16,2 14,8 13,9 11,5 9,4 9,2 7,8 6,1 5,9 5,6 5,9", "Bogotá 12,5 12,7 11,1 9,6 6,6 6,2 5,1 4,1 3,7 3,2 3,4 3,6 3,9 4,1 4,3", "Bucaramanga 12,0 12,0 10,5 10,8 5,8 3,8 3,0 3,0 3,0 2,9 2,3 2,7 2,9 3,4 4,1", "Cali 12,2 12,0 11,3 10,5 11,0 11,1 10,1 9,1 8,6 7,9 6,5 5,8 5,0 5,2 5,4", 
+"Cartagena 17,9 15,9 16,0 12,3 13,9 13,3 12,0 10,8 11,2 10,3 8,7 8,1 9,7 8,5 7,8", "Cúcuta 20,4 23,2 23,1 21,5 15,1 13,4 15,1 11,6 11,0 11,4 11,8 11,8 12,1 11,4 12,8", "Ibagué 14,6 15,9 17,4 15,1 12,0 9,8 9,0 6,7 6,8 5,8 5,2 5,4 5,2 5,6 5,9", "Manizales 14,1 15,4 16,3 14,0 11,7 10,6 8,5 6,0 5,6 5,3 5,2 4,3 4,8 4,3 4,0", "Medellín 14,1 13,1 11,6 10,3 9,5 9,3 8,4 6,9 6,2 5,8 5,1 5,3 5,0 4,5 4,8", "Montería 18,8 20,3 20,0 18,4 14,0 12,9 13,7 13,2 13,0 12,3 5,6 6,9 9,5 9,9 9,0", "Pasto 18,5 19,1 18,3 18,5 15,4 16,5 17,3 15,0 13,7 10,1 8,7 8,1 6,9 6,1 8,3", 
+"Pereira 10,5 9,3 9,1 9,2 9,3 9,4 8,8 6,4 6,8 8,8 5,7 5,3 4,4 3,2 4,2", "Villavicencio 12,8 13,3 11,4 12,6 9,7 9,8 9,0 7,8 7,6 6,6 5,6 5,8 7,2 7,0 6,5", "POBREZA EXTREMA (FGT1)", "Barranquilla 2,4 3,1 2,4 2,3 3,0 2,5 2,3 1,7 1,2 1,3 1,1 0,8 0,8 0,6 0,6", "Bogotá 2,8 2,7 2,5 1,7 1,3 1,4 1,1 0,7 0,8 0,7 0,8 1,0 1,1 1,2 1,3", "Bucaramanga 2,2 1,8 1,5 1,8 0,9 0,6 0,4 0,5 0,5 0,6 0,4 0,6 0,5 0,7 0,7", "Cali 2,2 1,9 1,9 1,8 3,1 3,0 2,9 2,2 2,1 2,0 1,6 1,5 1,3 1,4 1,5", "Cartagena 2,5 2,1 1,9 1,1 1,9 2,0 2,1 1,3 2,0 2,2 1,6 1,4 2,0 1,4 1,1", 
+"Cúcuta 3,5 4,1 4,6 3,7 2,6 2,5 3,3 2,2 2,0 2,4 2,4 2,8 2,8 2,0 2,8", "Ibagué 2,9 3,6 3,8 3,0 2,5 1,7 1,3 1,0 0,9 0,9 0,8 0,8 0,9 1,0 1,1", "Manizales 2,8 2,8 3,6 2,9 2,8 2,6 1,9 0,8 0,8 0,8 0,8 0,9 1,1 0,9 1,0", "Medellín 3,1 2,6 2,3 1,7 2,8 2,6 2,4 1,6 1,3 1,4 1,2 1,5 1,4 1,2 1,2", "Montería 2,8 3,1 2,9 2,8 1,8 1,7 2,0 2,0 2,0 2,0 0,4 0,7 1,4 2,3 1,3", "Pasto 3,3 3,2 2,9 3,4 2,8 3,1 3,6 2,5 2,4 1,3 1,4 1,4 0,9 0,9 1,3", "Pereira 1,3 1,1 1,1 1,1 1,5 1,5 1,3 0,8 1,0 2,2 1,0 0,8 0,6 0,3 0,7", 
+"Villavicencio 2,7 2,6 1,9 2,5 2,2 2,2 2,0 1,9 1,9 1,6 1,5 1,4 2,3 2,3 1,9", "Fuente: Elaboración propia en base a MESEP-DANE."),
+`B4` = c("Tabla B4. Severidad de la pobreza y de la pobreza extrema por ciudades principales en Colombia", "2002-2018.", "POBREZA (FGT2)", "Ciudad 2002 2003 2004 2005 2008 2009 2010 2011 2012 2013 2014 2015 2016 2017 2018", "Barranquilla 8,3 10,1 8,7 8,2 8,3 7,3 6,9 5,5 4,2 4,3 3,6 2,6 2,6 2,4 2,5", "Bogotá 7,0 7,0 6,1 5,0 3,3 3,2 2,6 2,0 1,9 1,6 1,8 1,9 2,1 2,2 2,4", "Bucaramanga 6,3 6,0 5,2 5,5 2,7 1,7 1,3 1,4 1,3 1,4 1,1 1,3 1,3 1,6 1,9", "Cali 6,4 6,1 5,8 5,3 6,2 6,3 5,8 4,9 4,7 4,3 3,4 3,1 2,6 2,8 2,9", 
+"Cartagena 9,0 7,8 7,7 5,6 6,6 6,4 6,0 5,0 5,5 5,4 4,2 3,9 4,9 4,0 3,6", "Cúcuta 10,6 12,5 12,7 11,4 7,6 6,8 8,1 5,9 5,6 6,1 6,2 6,4 6,4 5,7 6,8", "Ibagué 7,9 8,9 9,7 8,1 6,3 4,9 4,4 3,1 3,1 2,7 2,5 2,5 2,4 2,7 2,9", "Manizales 7,6 8,3 9,1 7,6 6,3 5,8 4,5 2,8 2,7 2,6 2,6 2,2 2,4 2,2 2,2", "Medellín 7,8 7,0 6,1 5,2 5,4 5,3 4,8 3,7 3,3 3,1 2,8 3,0 2,8 2,4 2,6", "Montería 9,7 10,6 10,4 9,6 6,7 6,1 6,7 6,4 6,4 6,2 2,2 2,8 4,4 5,1 4,3", "Pasto 10,0 10,1 9,6 9,9 8,0 8,6 9,5 7,6 7,0 4,7 4,2 3,9 3,1 2,8 3,9", 
+"Pereira 4,9 4,3 4,2 4,3 4,5 4,6 4,3 2,9 3,2 4,8 2,8 2,5 1,9 1,3 1,9", "Villavicencio 6,8 7,0 5,8 6,6 5,2 5,2 4,8 4,1 4,1 3,5 3,1 3,1 4,0 4,0 3,6", "POBREZA EXTREMA (FGT2)", "Barranquilla 1,1 1,4 1,1 1,1 1,5 1,2 1,1 0,8 0,6 0,7 0,5 0,4 0,4 0,3 0,3", "Bogotá 1,8 1,7 1,6 1,0 0,8 0,9 0,7 0,4 0,5 0,5 0,6 0,7 0,8 0,9 1,0", "Bucaramanga 1,3 0,9 0,8 1,0 0,5 0,3 0,2 0,4 0,3 0,4 0,3 0,4 0,3 0,5 0,5", "Cali 1,3 1,0 1,1 1,0 2,0 1,8 1,9 1,4 1,2 1,3 1,1 1,1 0,8 0,9 1,0", "Cartagena 1,0 0,9 0,8 0,5 0,8 1,0 1,1 0,6 1,1 1,3 0,9 0,8 1,2 0,8 0,6", 
+"Cúcuta 1,8 2,0 2,4 1,9 1,4 1,4 1,9 1,3 1,2 1,5 1,5 1,9 1,8 1,2 1,8", "Ibagué 1,5 2,0 2,1 1,6 1,4 0,9 0,6 0,6 0,5 0,5 0,5 0,4 0,5 0,6 0,7", "Manizales 1,7 1,6 2,1 1,7 1,7 1,5 1,1 0,5 0,4 0,4 0,5 0,6 0,7 0,6 0,8", "Medellín 1,8 1,5 1,4 1,0 1,8 1,6 1,5 1,0 0,8 0,9 0,8 1,0 0,9 0,8 0,8", "Montería 1,3 1,3 1,3 1,4 0,9 0,8 1,0 1,0 1,1 1,0 0,2 0,4 0,7 1,4 0,7", "Pasto 1,5 1,4 1,3 1,5 1,2 1,5 1,8 1,2 1,1 0,6 0,7 0,8 0,4 0,5 0,7", "Pereira 0,6 0,7 0,6 0,6 0,8 0,9 0,8 0,4 0,5 1,4 0,7 0,5 0,3 0,2 0,4", 
+"Villavicencio 1,5 1,6 1,1 1,6 1,5 1,5 1,3 1,3 1,3 1,2 1,1 1,0 1,6 1,6 1,4", "Fuente: Elaboración propia en base a MESEP-DANE."),
+`B5` = c("Tabla B5. Variación de la brecha de la pobreza y de la pobreza extrema por ciudades principales", "en Colombia 2002-2018. Puntos porcentuales.", "Ciudad", "Pobreza (FGT1) Pobreza extrema (FGT1)", "2002-2005 2008-2018 2002-2018 2002-2005 2008-2018 2002-2018", "Barranquilla 0,1 -10,3** -10,4** -0,1 -2,4** -1,8**", "Bogotá -2,9** -2,3** -8,3** -1,1** 0,0 -1,6**", "Bucaramanga -1,2** -1,7** -8,0** -0,4** -0,1 -1,5**", "Cali -1,8** -5,6** -6,8** -0,5** -1,6** -0,7**", "Cartagena -5,6** -6,1** -10,1** -1,4** -0,8** -1,4**", 
+"Cúcuta 1,1** -2,2** -7,6** 0,2 0,2 -0,7**", "Ibagué 0,5 -6,2** -8,8** 0,1 -1,4** -1,8**", "Manizales -0,1 -7,6** -10,0** 0,1 -1,8** -1,8**", "Medellín -3,8** -4,7** -9,2** -1,3** -1,6** -1,9**", "Montería -0,4 -5,0** -9,8** 0,0 -0,5 -1,6**", "Pasto 0,0 -7,1** -10,2** 0,1 -1,4** -1,9**", "Pereira -1,3** -5,1** -6,3** -0,2 -0,8** -0,6**", "Villavicencio -0,1 -3,2** -6,3** -0,2 -0,3 -0,8**", "Fuente: Elaboración propia en base a MESEP-DANE. Nota: ** cambio significativo al 5%."),
+`B6` = c("Tabla B6. Variación de la severidad de la pobreza y de la pobreza extrema por ciudades principales", "en Colombia 2002-2018. Puntos porcentuales.", "Ciudad", "Pobreza (FGT2) Pobreza extrema (FGT2)", "2002-2005 2008-2018 2002-2018 2002-2005 2008-2018 2002-2018", "Barranquilla 0,0 -5,9** -5,8** 0,0 -1,3** -0,8**", "Bogotá -2,0** -1,0** -4,7** -0,8** 0,1 -0,9**", "Bucaramanga -0,8** -0,8** -4,4** -0,2** 0,0 -0,7**", "Cali -1,2** -3,3** -3,5** -0,3** -1,0** -0,3**", "Cartagena -3,4** -3,0** -5,4** -0,5** -0,2** -0,4**", 
+"Cúcuta 0,7** -0,8** -3,8** 0,1 0,3** -0,1**", "Ibagué 0,2 -3,4** -5,0** 0,1 -0,7** -0,9**", "Manizales 0,0 -4,1** -5,5** 0,0 -1,0** -1,0**", "Medellín -2,5** -2,8** -5,1** -0,8** -1,0** -1,0**", "Montería -0,1 -2,4** -5,4** 0,1 -0,2** -0,6**", "Pasto -0,1 -4,1** -6,1** 0,0 -0,5** -0,8**", "Pereira -0,6** -2,6** -3,0** 0,0 -0,4** -0,2**", "Villavicencio -0,2 -1,5** -3,2** 0,0 -0,1 -0,1**", "Fuente: Elaboración propia en base a MESEP-DANE. Nota: ** cambio significativo al 5%."),
+`B7` = c("Tabla B7. Incidencia de la pobreza extrema según características del jefe de hogar por área", "geográfica en Colombia 2002 y 2018.", "Característica del jefe de hogar", "2002 2018 Variación (p.p.)", "TN PC RU R TN PC RU R TN PC RU R", "Sexo", "Hombre 18,0 6,9 19,0 33,3 6,5 2,2 6,3 14,0 -11,4 -4,7 -12,7 -19,2", "Mujer 16,6 9,1 21,2 30,1 8,6 4,0 10,2 19,8 -8,0 -5,1 -11,0 -10,3", "Edad", "[0,25] 21,6 12,2 24,3 33,5 9,5 4,2 9,1 18,0 -12,1 -8,0 -15,3 -15,5", "[26,35] 21,0 11,1 23,2 34,5 9,4 4,0 10,4 18,3 -11,5 -7,1 -12,8 -16,2", 
+"[36,45] 19,2 6,8 23,1 36,3 8,0 3,5 8,0 16,4 -11,2 -3,3 -15,1 -19,9", "[46,55] 13,7 5,6 14,4 28,6 6,6 2,2 7,5 14,2 -7,1 -3,4 -6,8 -14,4", "[56,65] 15,5 6,5 16,7 28,2 5,4 2,2 6,0 12,6 -10,0 -4,4 -10,7 -15,6", "[65+] 16,6 6,1 16,1 34,0 5,2 1,8 5,5 12,5 -11,4 -4,2 -10,5 -21,5", "Nivel", "educativo", "Prim. incomp. 29,2 13,9 28,2 37,6 13,5 5,2 12,8 18,6 -15,7 -8,8 -15,4 -19,1", "Prim. comp. 19,0 9,2 21,7 31,1 8,1 3,3 8,3 14,3 -10,8 -5,9 -13,4 -16,7", "Sec. incomp. 13,8 9,1 18,4 22,8 7,5 3,7 9,5 13,1 -6,3 -5,5 -8,9 -9,7", 
+"Sec. comp. 6,2 3,8 8,5 15,5 4,9 2,6 6,3 11,6 -1,4 -1,2 -2,2 -3,9", "Sup. incomp. 2,9 1,9 6,7 0,0 2,7 1,9 3,6 5,6 -0,2 0,0 -3,1 5,6", "Sup. comp. 2,0 1,4 2,3 7,2 0,9 0,8 1,1 1,5 -1,1 -0,6 -1,2 -5,6", "Estado", "ocupacional", "Ocupado 16,7 5,9 18,0 31,6 6,2 1,7 6,1 14,2 -10,5 -4,2 -11,8 -17,4", "Desocupado 32,1 23,5 38,7 47,9 21,4 16,2 26,6 29,9 -10,6 -7,3 -12,1 -18,0", "Inactivo 16,3 6,8 19,0 35,8 8,3 3,7 9,3 20,7 -8,0 -3,1 -9,7 -15,0", "Categoría", "ocupacional", "Asalariado 5,8 2,7 11,0 6,9 1,0 0,6 1,6 1,0 -4,8 -2,0 -9,4 -6,0", 
+"Cuenta propia o", "patrón", "23,2 8,8 21,7 42,8 10,2 3,0 8,9 20,6 -13,0 -5,9 -12,9 -22,2", "Fuente: Elaboración propia en base a MESEP-DANE. Notas: (i) Las columnas por cada año indican las áreas geográficas,"),
+`B8` = c("Tabla B8. Incidencia de la pobreza extrema según características del hogar por área geográfica en", "Colombia 2002 y 2018.", "Característica del hogar", "2002 2018 Variación (p.p.)", "TN PC RU R TN PC RU R TN PC RU R", "Número de", "niños menores", "a 12 años de", "edad", "Ninguno 7,5 3,0 8,4 17,8 3,5 1,7 3,7 7,9 -4,1 -1,2 -4,7 -9,9", "Uno 12,3 5,3 12,7 26,2 5,6 2,4 6,2 11,3 -6,7 -2,9 -6,5 -15,0", "Dos 18,9 8,9 21,3 31,6 10,0 3,8 10,7 18,4 -8,9 -5,0 -10,6 -13,3", "Tres o más 38,4 21,6 38,4 52,0 23,6 10,9 22,1 35,5 -14,8 -10,7 -16,3 -16,5", 
+"Número de", "ocupados", "Ninguno 30,3 23,0 32,6 45,1 21,0 15,4 22,6 34,1 -9,3 -7,6 -10,0 -11,0", "Uno 22,8 10,2 25,4 39,0 9,5 3,6 10,2 17,7 -13,3 -6,6 -15,2 -21,3", "Dos o más 12,9 4,0 13,5 27,8 4,1 0,9 3,9 11,8 -8,8 -3,1 -9,5 -16,1", "Número de", "miembros", "Uno 6,3 4,1 7,9 8,3 4,3 3,4 4,1 6,8 -2,0 -0,7 -3,8 -1,5", "Dos 8,2 3,8 9,9 16,2 3,7 2,2 3,7 7,5 -4,6 -1,6 -6,1 -8,7", "Tres 9,1 4,8 9,3 19,7 4,6 2,4 5,0 9,6 -4,4 -2,4 -4,3 -10,1", "Cuatro o más 20,2 8,4 22,4 36,1 9,0 3,1 9,7 18,8 -11,2 -5,3 -12,7 -17,4", 
+"Fuente: Elaboración propia en base a MESEP-DANE. Notas: (i) Las columnas por cada año indican las áreas geográficas,"),
+`B9` = c("Tabla B9. Descomposición KS del cambio en la brecha de la pobreza y de la pobreza extrema por", "ciudades principales en Colombia 2002-2018.", "Ciudad", "Pobreza (FGT1) Pobreza extrema (FGT1)", "C R L T C R L T", "Barranquilla -20,7 -5,5 15,9 -10,4 -5,7 -2,0 5,9 -1,8", "Bogotá -14,9 -4,0 10,7 -8,3 -3,8 -1,5 3,7 -1,6", "Bucaramanga -19,6 -3,1 14,7 -8,0 -4,7 -1,4 4,6 -1,5", "Cali -15,2 -3,5 11,9 -6,8 -4,0 -0,9 4,2 -0,7", "Cartagena -25,5 -1,8 17,2 -10,1 -7,7 -0,5 6,8 -1,4", "Cúcuta -23,6 -2,0 18,1 -7,6 -7,2 -0,1 6,5 -0,7", 
+"Ibagué -20,4 -2,7 14,3 -8,8 -5,5 -1,2 4,9 -1,8", "Manizales -20,7 -2,4 13,1 -10,0 -4,9 -1,1 4,3 -1,8", "Medellín -18,6 -3,8 13,2 -9,2 -4,9 -1,5 4,5 -1,9", "Montería -22,4 -4,6 17,2 -9,8 -6,3 -1,5 6,2 -1,6", "Pasto -22,5 -2,2 14,5 -10,2 -7,4 -1,0 6,5 -1,9", "Pereira -16,7 -3,1 13,6 -6,3 -3,3 -0,8 3,5 -0,6", "Villavicencio -19,9 0,2 13,4 -6,3 -5,6 0,3 4,6 -0,8", "Fuente: Elaboración propia en base a MESEP-DANE. Notas: (i) Las columnas indican el efecto crecimiento (C), el efecto"),
+`B10` = c("Tabla B10. Descomposición KS del cambio en la severidad de la pobreza y de la pobreza extrema", "por ciudades principales en Colombia 2002-2018.", "Ciudad", "Pobreza (FGT2) Pobreza extrema (FGT2)", "C R L T C R L T", "Barranquilla -12,4 -3,7 10,3 -5,8 -2,6 -1,1 2,9 -0,8", "Bogotá -8,6 -2,6 6,5 -4,7 -1,9 -0,8 1,9 -0,9", "Bucaramanga -11,3 -2,2 9,1 -4,4 -2,2 -0,8 2,3 -0,7", "Cali -8,7 -2,1 7,3 -3,5 -2,0 -0,4 2,1 -0,3", "Cartagena -15,8 -1,1 11,6 -5,4 -3,6 -0,2 3,4 -0,4", "Cúcuta -14,9 -1,0 12,1 -3,8 -3,6 0,2 3,3 -0,1", 
+"Ibagué -12,2 -1,9 9,1 -5,0 -2,7 -0,7 2,5 -0,9", "Manizales -12,1 -1,8 8,3 -5,5 -2,4 -0,7 2,2 -1,0", "Medellín -11,0 -2,6 8,5 -5,1 -2,6 -0,8 2,4 -1,0", "Montería -13,8 -3,0 11,4 -5,4 -3,0 -0,7 3,0 -0,6", "Pasto -14,2 -1,7 9,8 -6,1 -3,7 -0,6 3,4 -0,8", "Pereira -9,2 -1,8 8,0 -3,0 -1,5 -0,3 1,6 -0,2", "Villavicencio -11,8 0,2 8,4 -3,2 -2,8 0,3 2,4 -0,1", "Fuente: Elaboración propia en base a MESEP-DANE. Notas: (i) Las columnas indican el efecto crecimiento (C), el efecto")
+)
+```
+
+```{r funciones-tablas}
+# Lectura de las cifras impresas en el PDF
+bloque <- function(t) pdf_txt[[t]]
+nums <- function(s) { t <- strsplit(gsub("[()]", " ", s), " +")[[1]]; t[grepl("^-?[0-9][0-9.]*(,[0-9]+)?[*]*$|^---$", t)] }
+val <- function(t) suppressWarnings(as.numeric(sub(",", ".", gsub("[.*]", "", t))))
+filas <- function(t, n) { b <- bloque(t); b <- b[!grepl("^Tabla|^Fuente|^Ciudad|^Año|^2002 2005", b)]
+  x <- lapply(b, nums); k <- lengths(x) == n; matrix(val(unlist(x[k])), sum(k), n, byrow = TRUE) }
+control <- list()
+num <- function(x, d = 1) { r <- formatC(round(x, 10) + 0, format = "f", digits = d, big.mark = ".", decimal.mark = ",")
+  r[is.na(x)] <- "---"; r }
+# Muestra el valor calculado; si difiere del PDF lo resalta e indica el valor impreso
+celdas <- function(calc, pdf, d, id) {
+  d <- matrix(d, nrow(calc), ncol(calc), byrow = TRUE)
+  mal <- !is.na(pdf) & (is.na(calc) | abs(calc - pdf) > 0.5 * 10^-d + 1e-6)
+  control[[id]] <<- rbind(control[[id]], c(sum(!is.na(pdf)), sum(mal)))
+  s <- matrix(mapply(num, calc, d), nrow(calc))
+  s[mal] <- paste0("<mark>", s[mal], " [PDF: ", mapply(num, pdf[mal], d[mal]), "]</mark>"); s
+}
+tab <- function(df, ...) kable(df, escape = FALSE, row.names = FALSE, align = c("l", rep("r", ncol(df) - 1)), ...)
+armar <- function(etq, m, cols) { d <- data.frame(etq, m, check.names = FALSE); names(d) <- cols; tab(d) }
+
+# Tablas 1 y 2: características de los hogares
+vars <- c("ipcug", "Ingreso no laboral", "Miembros", "Mujeres", "Niños", "Educación", "Jefe mujer", "Jefe edad",
+          "Jefe cuentapropista", "PLF", "Desempleo", "IL", "Ayudas")
+dv <- c(0, 0, rep(3, 11))
+variacion <- function(M, v) { f <- 2 * v - 1; 100 * (M[f, 5] / M[f, if (v == 12) 3 else 1] - 1) }
+leer_car <- function(t) { b <- bloque(t); x <- lapply(b[!grepl("^Tabla|^Fuente|^Colombia|^2002", b)], nums); x[lengths(x) >= 4] }
+t1 <- function() {
+  p <- leer_car("1"); out <- NULL
+  for (v in 1:13) { m <- p[[2 * v - 1]]; s <- p[[2 * v]]; pm <- rep(NA, 5); ps <- rep(NA, 5)
+    n <- if (v == 12) 3 else 5; pm[6 - n:1] <- val(head(m[m != "---"], n)); ps[6 - n:1] <- val(tail(s[s != "---"], n))
+    cm <- car$tn[2 * v - 1, ]; cs <- car$tn[2 * v, ]; if (v == 12) cm[1:2] <- cs[1:2] <- NA
+    a <- celdas(rbind(c(cm, variacion(car$tn, v))), rbind(c(pm, val(tail(m, 1)))), c(rep(dv[v], 5), 1), "1")
+    b <- celdas(rbind(cs), rbind(ps), rep(dv[v], 5), "1")
+    out <- rbind(out, c(vars[v], a), c("", paste0("(", b, ")"), "")) }
+  armar(out[, 1], out[, -1], c("Variable", 2002, 2005, 2008, 2015, 2018, "Var. (%)"))
+}
+t2 <- function() {
+  p <- leer_car("2"); out <- NULL
+  for (v in 1:13) { m <- p[[2 * v - 1]]; s <- p[[2 * v]]; fm <- NULL; fs <- NULL
+    for (a in 1:3) { M <- car[[a + 1]]; cm <- M[2 * v - 1, c(1, 5)]; cs <- M[2 * v, c(1, 5)]
+      if (v == 12) { cm[1] <- cs[1] <- NA; pm <- c(NA, val(m[3 * a - 1]), val(m[3 * a])); ps <- c(NA, val(s[s != "---"][a])) }
+      else { pm <- val(m[3 * a - 2:0]); ps <- val(s[2 * a - 1:0]) }
+      fm <- c(fm, celdas(rbind(c(cm, variacion(M, v))), rbind(pm), c(dv[v], dv[v], 1), "2"))
+      fs <- c(fs, paste0("(", celdas(rbind(cs), rbind(ps), rep(dv[v], 2), "2"), ")"), "") }
+    out <- rbind(out, c(vars[v], fm), c("", fs)) }
+  armar(out[, 1], out[, -1], c("Variable", paste(rep(ab[-1], each = 3), c("2002", "2018", "Var. (%)"))))
+}
+# Tablas 3 y 4: FGT por área
+t34 <- function(t, l) {
+  calc <- do.call(cbind, lapply(1:3, function(k) sapply(areas, function(a) fgt[[a]][(l - 1) * 3 + k, ])))
+  armar(anios, celdas(unname(calc), filas(t, 13)[, -1], rep(1, 12), t), c("Año", paste(rep(c("FGT0", "FGT1", "FGT2"), each = 4), ab)))
+}
+# Tablas 5 y 6: variaciones por área
+t56 <- function(t, l) {
+  calc <- do.call(cbind, lapply(1:3, function(k) sapply(areas, function(a) sapply(periodos, function(p) {
+    y <- as.numeric(strsplit(p, "-")[[1]]); f <- fgt[[a]][(l - 1) * 3 + k, ]; f[match(y[2], anios)] - f[match(y[1], anios)] }))))
+  armar(periodos, celdas(unname(calc), filas(t, 12), rep(1, 12), t), c("Período", paste(rep(c("FGT0", "FGT1", "FGT2"), each = 4), ab)))
+}
+# Tablas 7 y B2: participación de cada área
+participacion <- function(l) { r <- NULL
+  for (j in seq_along(anios)) for (k in 1:3) { f <- (l - 1) * 3 + k
+    v <- sapply(2:4, function(i) pob[i, j] * fgt[[areas[i]]][f, j]) / (pob[1, j] * fgt$tn[f, j]) * 100
+    r <- rbind(r, c(v, sum(v))) }
+  r }
+t7 <- function(t, l) { m <- celdas(participacion(l), filas(t, 4), rep(1, 4), t)
+  d <- data.frame(rep(anios, each = 3), rep(ind, 15), m); names(d) <- c("Año", "Indicador", an[-1], an[1]); tab(d) }
+tB1 <- function() { calc <- cbind(t(pob[2:4, ]) / pob[1, ] * 100, colSums(pob[2:4, ]) / pob[1, ] * 100)
+  armar(anios, celdas(unname(calc), filas("B1", 5)[, -1], rep(2, 4), "B1"), c("Año", an[-1], an[1])) }
+# Tablas 8, B3 y B4: ciudades por año
+t8 <- function(t, k) { p <- filas(t, 15); r <- list()
+  for (l in 1:2) r[[l]] <- armar(ciudades, celdas(FC[, k, l, ], p[(l - 1) * 13 + 1:13, ], rep(1, 15), t), c(paste0(lin[l], " (FGT", k - 1, ")"), anios))
+  asis_output(paste(c(r[[1]], "", r[[2]]), collapse = "\n")) }
+# Tablas 9, B5 y B6: variaciones por ciudad
+t9 <- function(t, k) {
+  calc <- t(sapply(1:13, function(i) unlist(lapply(1:2, function(l) sapply(periodos, function(p) {
+    y <- as.numeric(strsplit(p, "-")[[1]]); FC[i, k, l, match(y[2], anios)] - FC[i, k, l, match(y[1], anios)] })))))
+  armar(ciudades, celdas(unname(calc), filas(t, 6), rep(1, 6), t), c("Ciudad", paste(rep(c("Pobreza", "Extrema"), each = 3), periodos)))
+}
+# Tablas 10, 11, B7 y B8: perfiles
+perfil <- function(l, tipo) {
+  if (l == "i") { d <- hoja("FGT.xlsx", paste("Tabla", if (tipo == "cjh") 14 else 16))
+    m <- suppressWarnings(sapply(d[, 3:14], as.numeric)); return(unname(m[!is.na(m[, 1]) & m[, 1] != 2002, ])) }
+  m <- lapply(areas, function(a) mat(sprintf("FGT/FGT_%s_%s_%s.xlsx", l, tipo, a))[, c(1, 17)])
+  y02 <- sapply(m, function(x) x[, 1]); y18 <- sapply(m, function(x) x[, 2]); unname(cbind(y02, y18, y18 - y02))
+}
+e_jefe <- c(paste("Sexo:", c("hombre", "mujer")), paste("Edad:", c("[0,25]", "[26,35]", "[36,45]", "[46,55]", "[56,65]", "[65+]")),
+  paste("Educación:", c("prim. incomp.", "prim. comp.", "sec. incomp.", "sec. comp.", "sup. incomp.", "sup. comp.")),
+  paste("Estado:", c("ocupado", "desocupado", "inactivo")), paste("Categoría:", c("asalariado", "cuenta propia o patrón")))
+e_hogar <- c(paste("Niños menores de 12:", c("ninguno", "uno", "dos", "tres o más")),
+  paste("Ocupados:", c("ninguno", "uno", "dos o más")), paste("Miembros:", c("uno", "dos", "tres", "cuatro o más")))
+t10 <- function(t, l, tipo) armar(if (tipo == "cjh") e_jefe else e_hogar, celdas(perfil(l, tipo), filas(t, 12), rep(1, 12), t),
+  c("Característica", paste(rep(c("2002", "2018", "Var."), each = 4), ab)))
+t12 <- function() armar(anios, celdas(unname(t(gini_t)), filas("12", 5)[, -1], rep(3, 4), "12"), c("Año", an))
+# Tabla 13: KS por área
+t13 <- function() {
+  b <- bloque("13"); p <- t(sapply(b[grepl("^(TN|PC|RU|R) -?[0-9]", b)], function(s) val(nums(s)), USE.NAMES = FALSE))
+  calc <- NULL; for (q in 1:3) for (a in 1:3) for (j in 1:4) calc <- rbind(calc, c(K[, j, a, 1, q], K[, j, a, 2, q]))
+  m <- celdas(calc, p, rep(1, 8), "13")
+  d <- data.frame(rep(periodos, each = 12), rep(rep(ind, each = 4), 3), rep(ab, 9), m)
+  names(d) <- c("Período", "Indicador", "Área", paste("Pobreza", c("C", "R", "L", "T")), paste("Extrema", c("C", "R", "L", "T"))); tab(d)
+}
+t14 <- function() {
+  b <- bloque("14"); p <- t(sapply(b[grepl("(^| )(TN|PC|RU|R) -?[0-9]", b)], function(s) tail(val(nums(s)), 8), USE.NAMES = FALSE))
+  calc <- NULL; for (a in 1:3) for (j in 1:4) calc <- rbind(calc, 100 * c(K[, j, a, 1, 3] / K[4, j, a, 1, 3], K[, j, a, 2, 3] / K[4, j, a, 2, 3]))
+  d <- data.frame(rep(ind, each = 4), rep(ab, 3), celdas(calc, p, rep(1, 8), "14"))
+  names(d) <- c("Indicador", "Área", paste("Pobreza", c("C", "R", "L", "T")), paste("Extrema", c("C", "R", "L", "T"))); tab(d)
+}
+t15 <- function(t, k) armar(ciudades, celdas(t(rbind(KC[, , k, 1, 3], KC[, , k, 2, 3])), filas(t, 8), rep(1, 8), t),
+  c("Ciudad", paste("Pobreza", c("C", "R", "L", "T")), paste("Extrema", c("C", "R", "L", "T"))))
+t16 <- function() {
+  b <- bloque("16"); n3 <- function(s) val(regmatches(s, gregexpr("-?0,[0-9]{3}", s))[[1]])
+  est <- b[grepl("-?0,[0-9]{3}[*]", b)]; ee <- b[grepl("^[(]0,", b)]
+  pe <- t(sapply(est, n3, USE.NAMES = FALSE)); ps <- t(sapply(ee, n3, USE.NAMES = FALSE))
+  comp <- c("t_explained", "t_unexplained", "tdifference"); ce <- cs <- ca <- NULL
+  for (a in 0:2) for (j in areas) { r1 <- rif(a, 1, j); r2 <- rif(a, 2, j)
+    ce <- rbind(ce, unname(c(sapply(comp, function(v) primero(r1$est, v)), sapply(comp, function(v) primero(r2$est, v)))))
+    cs <- rbind(cs, unname(c(sapply(comp, function(v) primero(r1$se, v)), sapply(comp, function(v) primero(r2$se, v)))))
+    ca <- rbind(ca, unname(c(sapply(comp, function(v) primero(r1$ast, v)), sapply(comp, function(v) primero(r2$ast, v))))) }
+  A <- celdas(ce, pe, rep(3, 6), "16"); S <- celdas(cs, ps, rep(3, 6), "16")
+  A[] <- paste0(A, gsub("[*]", "&#42;", ca), "<br>(", S, ")")
+  d <- data.frame(rep(ind, each = 4), rep(ab, 3), A); names(d) <- c("Indicador", "Área", paste("Pobreza", c("C", "E", "T")), paste("Extrema", c("C", "E", "T"))); tab(d)
+}
+var17 <- function() { v <- NULL; for (j in 1:4) for (k in 1:6) v <- rbind(v, sapply(sims, function(s) as.numeric(100 * (sim[[s]][k + 6, j] / sim$secc[k, j] - 1))))
+  rownames(v) <- paste(rep(areas, each = 6), c("P0", "P1", "P2", "E0", "E1", "E2")); v }
+t17 <- function() {
+  b <- bloque("17"); p <- t(sapply(b[grepl("(Incidencia|Brecha|Severidad) [0-9]", b)], function(s) tail(val(nums(s)), 7), USE.NAMES = FALSE))
+  calc <- NULL; for (j in 1:4) for (k in 1:6) { base <- sim$secc[k, j]; r <- base
+    for (s in sims) r <- c(r, sim[[s]][k + 6, j], 100 * (sim[[s]][k + 6, j] / base - 1)); calc <- rbind(calc, unname(r)) }
+  d <- data.frame(rep(ab, each = 6), rep(rep(lin, each = 3), 4), rep(ind, 8), celdas(calc, p, rep(1, 7), "17"))
+  names(d) <- c("Área", "Línea", "Indicador", "ipcug", "secc", "Var. (%)", "desemp", "Var. (%)", "trnsfr", "Var. (%)"); tab(d)
+}
+
+```
+
+```{r funciones-figuras}
+col_a <- c("black", "#2874a6", "#d68910", "#1e8449"); col_ks <- c("#f4b400", "#1e9e50", "#0b1f5e")
+f_serie <- function(f) {
+  x <- 2002:2018; m <- sapply(areas, function(a) fgt[[a]][f, ][match(x, anios)])
+  par(mar = c(5, 3, 1, 1)); matplot(x, m, type = "n", ylim = c(0, max(m, na.rm = TRUE) * 1.08), xaxt = "n", xlab = "", ylab = "")
+  axis(1, x, las = 2)
+  for (j in 1:4) { lines(x[!is.na(m[, j])], m[!is.na(m[, j]), j], col = col_a[j], lwd = 2); points(x, m[, j], col = col_a[j], pch = 19, cex = .6) }
+  legend("bottomleft", an, col = col_a, lwd = 2, bty = "n", ncol = 4, cex = .85)
+}
+f_barras <- function(M, nombres, titulo, las = 1, cex = .75) {
+  b <- barplot(M, beside = TRUE, names.arg = nombres, col = c("#0b1f5e", "#f4b400"), main = titulo, las = las,
+               ylim = c(0, max(M) * 1.35), cex.names = .8)
+  text(b, M, num(M, 1), pos = 3, cex = cex, xpd = TRUE)
+  legend("top", c("2002", "2018"), fill = c("#0b1f5e", "#f4b400"), bty = "n", cex = .85, horiz = TRUE)
+}
+f_areas <- function(k) { par(mfrow = c(1, 2), mar = c(5, 3, 2, 1))
+  for (l in 1:2) f_barras(sapply(areas, function(a) fgt[[a]][(l - 1) * 3 + k, c(1, 15)]), c("TN", "PC", "RU", "R"), lin[l]) }
+f_ciudades <- function(k) { par(mfrow = c(2, 1), mar = c(6, 3, 2, 1))
+  for (l in 1:2) { o <- order(-FC[, k, l, 1]); f_barras(t(FC[o, k, l, c(1, 15)]), ciudades[o], lin[l], las = 2, cex = .55) } }
+# Barras apiladas de la descomposición KS (M: filas C, R, L)
+apiladas <- function(M, nombres, titulo, etiquetas = TRUE) {
+  n <- ncol(M); pos <- apply(pmax(M, 0), 2, sum); neg <- apply(pmin(M, 0), 2, sum)
+  plot(NA, xlim = c(.4, n + .6), ylim = range(neg, pos) * 1.1, xaxt = "n", xlab = "", ylab = "", main = titulo)
+  axis(1, 1:n, nombres, cex.axis = .8, padj = 0)
+  for (j in 1:n) { ap <- 0; an_ <- 0
+    for (e in 1:3) { v <- M[e, j]; y0 <- if (v >= 0) ap else an_; rect(j - .3, y0, j + .3, y0 + v, col = col_ks[e], border = NA)
+      if (etiquetas && abs(v) > diff(range(neg, pos)) * .03) text(j, y0 + v / 2, num(v, 1), cex = .7, col = if (e == 1) "black" else "white")
+      if (v >= 0) ap <- ap + v else an_ <- an_ + v } }
+  abline(h = 0, col = "grey60")
+}
+f_ks <- function(k) { par(mfrow = c(1, 2), mar = c(3, 3, 2, 1), oma = c(2, 0, 0, 0))
+  for (l in 1:2) apiladas(K[1:3, , k, l, 3], ab, lin[l])
+  par(fig = c(0, 1, 0, 1), oma = c(0, 0, 0, 0), mar = c(0, 0, 0, 0), new = TRUE); plot.new()
+  legend("bottom", c("Crecimiento", "Redistribución", "Línea"), fill = col_ks, horiz = TRUE, bty = "n", cex = .85) }
+f_ks_ciu <- function(k) { par(mfrow = c(3, 5), mar = c(2.5, 2.5, 2, .5))
+  for (j in 1:13) apiladas(cbind(KC[1:3, j, k, 1, 3], KC[1:3, j, k, 2, 3]), c("Pobreza", "Extrema"), ciudades[j])
+  plot.new(); legend("center", c("Crecimiento", "Redistribución", "Línea"), fill = col_ks, bty = "n") }
+f_cic <- function() { par(mfrow = c(1, 3), mar = c(4, 4, 2, 1))
+  for (k in 1:3) { s <- gph(paste0("8 (", letters[k], ")"))
+    plot(s$percentil, s$cambio, type = "l", ylim = range(s$cambio, 0), xlab = "Percentiles del ipcug",
+         ylab = "Variación % promedio", main = sims[k]); abline(h = 0, col = "red") } }
+f_cdf <- function() { par(mfrow = c(2, 2), mar = c(4, 4, 2, 1))
+  for (k in seq_along(indiv)) { z <- indiv[[k]]; i <- unique(c(seq(1, length(z$l), 300), length(z$l)))
+    plot(z$l[i], z$F[i], type = "l", xlab = "Logaritmo del ipcug", ylab = "Share de la población", main = names(indiv)[k])
+    abline(v = log(257432.5), col = "red") } }
+imagenes <- function(patron, letras, ancho) {
+  f <- sprintf("Datos/.fig/Figura %s (%s).png", patron, letras)
+  asis_output(paste0("<div>", paste(sprintf('<img src="%s" style="width:%s;display:inline-block"/>',
+    sapply(f, function(x) knitr::image_uri(x)), ancho), collapse = ""),
+    "</div><p><em>Imágenes originales de la carpeta <code>.fig</code>: no se recalculan porque requieren los microdatos.</em></p>")) }
+```
+
+```{r derivados}
+w1 <- which(KC[2, , , , 3] > 0, arr.ind = TRUE)
+r_pos <- paste(sprintf("%s (%s de %s: +%s)", ciudades[w1[, 1]], tolower(ind[w1[, 2]]), tolower(lin[w1[, 3]]),
+                       num(KC[2, , , , 3][w1], 2)), collapse = "; ")
+il <- car$tn[23, c(3, 5)]
+ayudas <- sapply(car[-1], variacion, v = 13); cp <- sapply(car[-1], variacion, v = 9)
+d0205 <- sapply(areas, function(a) fgt[[a]][, 4] - fgt[[a]][, 1])
+p7 <- participacion(1); anios_pc <- anios[p7[seq(1, 43, 3), 3] <= p7[seq(1, 43, 3), 1]]
+menores_e <- order(FC[, 1, 2, 1])[1:3]
+pj <- perfil("p", "cjh")
+w0 <- primero(rif(0, 1, "tn", 0)$est, "group_c"); w0se <- primero(rif(0, 1, "tn", 0)$est, "specif_err")
+vrif <- c("miembros_h", "p_muj", "niños_hog", "educ_hog", "jefe_mujer", "jefe_edad", "jefe_cp", "t_des", "ing_nolab_hog", "ayudas_hog")
+contrib <- do.call(cbind, lapply(1:2, function(l) do.call(cbind, lapply(0:2, function(a)
+  sapply(areas, function(j) rif(a, l, j)$est[vrif, 3])))))
+# Participaciones anotadas en scen-defn-desemp.do (filas: mujer, varón)
+casos <- rbind(c(7233383.9, 4302214.1, 3887596.3), c(2974894.6, 5213255.6, 6150738))
+obs_part <- casos / rowSums(casos)
+meta_part <- rbind(c(0.420751481, 0.303065632, 0.276182887), c(0.155579882, 0.389519854, 0.454900264))
+movidos <- sum((obs_part[, 1] - meta_part[, 1]) * rowSums(casos))
+cinco_pp <- 0.05 * sum(casos[, 2:3]) / (1 - 0.0968)
+V <- var17()
+cambian <- sapply(sims, function(s) { a <- indiv$orig$l; b <- indiv[[s]]$l
+  t0 <- table(round(a, 5)); t1 <- table(round(b, 5)); m <- pmin(as.vector(t0), as.vector(t1)[match(names(t0), names(t1))])
+  1 - (sum(m, na.rm = TRUE) + min(sum(is.na(a)), sum(is.na(b)))) / length(a) })
+totales <- sapply(indiv, function(z) as.numeric(sum(z$w * z$y) * pob[1, 15]))
+neto <- unname(totales["trnsfr"] - totales["orig"]); debitos <- 461172 * 257432.5
+f8c <- gph("8 (c)"); neg8 <- f8c$percentil[f8c$cambio < -1e-6]
+gini18 <- with(indiv$orig, { o <- order(y); k <- y[o] > 0; p <- w[o][k] / sum(w[o][k]); v <- y[o][k]
+  L <- cumsum(p * v) / sum(p * v); 1 - sum(p * (L + c(0, head(L, -1)))) })
+lip18 <- with(indiv$orig, sum(w[y < 1.9 * 1168.24 * 30]))
+# Densidad de 2018 con el ancho de banda de Stata, con y sin ponderadores
+ancho <- function(x, p) { o <- order(x); q <- function(a) approx(cumsum(p[o]) / sum(p), x[o], a, rule = 2, ties = "ordered")$y
+  m <- sum(p * x) / sum(p); n <- length(x); s <- sqrt(sum(p * (x - m)^2) / sum(p) * n / (n - 1))
+  0.9 * min(s, (q(.75) - q(.25)) / 1.349) / n^.2 }
+k <- !is.na(indiv$orig$l); lx <- indiv$orig$l[k]; wx <- indiv$orig$w[k] / sum(indiv$orig$w[k])
+dens_u <- density(lx, bw = ancho(lx, rep(1, length(lx))), kernel = "epanechnikov", n = 512)
+dens_p <- density(lx, weights = wx, bw = ancho(lx, wx), kernel = "epanechnikov", n = 512)
+pico_u <- max(dens_u$y); pico_p <- max(dens_p$y)
+bajo_u <- mean(indiv$orig$y < 257432.5); bajo_p <- sum(indiv$orig$w[indiv$orig$y < 257432.5])
+```
+
+# Resumen {-}
+
+*Juan Menduiña*[^1]
+
+Este trabajo estudia la influencia que han tenido, por un lado, el crecimiento de los ingresos, los cambios distributivos y la variación de los precios locales y, por otro lado, las características económicas y sociodemográficas de los hogares sobre la evolución de la pobreza monetaria en Colombia durante el período 2002-2018, considerando la heterogeneidad a lo largo del país. Primero, se descompone el cambio en la pobreza entre los efectos crecimiento, redistribución y línea de pobreza. Luego, se estima la contribución de factores microeconómicos al cambio en la pobreza mediante una descomposición basada en regresiones RIF (Recentered Influence Function). Por último, se realizan ejercicios de microsimulaciones, que exponen los potenciales efectos de diferentes escenarios contrafácticos propuestos sobre los niveles de pobreza monetaria. Así, se encuentra que el efecto crecimiento y el efecto redistribución tendieron a reducir la pobreza, en tanto que el efecto línea tendió a incrementarla, <mark><mark>patrón que se mantiene a lo largo de las diferentes áreas geográficas y de cada una de las principales ciudades</mark></mark>. Por otro lado, se obtiene que los cambios en las características de los hogares acontecidos en Colombia entre 2002 y 2018 se relacionaron positivamente con la reducción de la pobreza. Además, también se obtiene que aumentar tanto el nivel educativo como la tasa de empleo de la población tienen un efecto aliviador de la pobreza, con mayor impacto en los más pobres.
+
+*Palabras clave*: pobreza monetaria, descomposición, microsimulación, Colombia.
+
+## Abstract {-}
+
+This paper studies the influence, on the one hand, that income growth, distributional changes and local price variation and, on the other hand, the economic and socio-demographic characteristics of households on the evolution of monetary poverty in Colombia during the 2002-2018 period, considering the heterogeneity across the country. First, the change in poverty is decomposed between growth, redistribution and poverty line effects. Then, the contribution of microeconomic factors to the change in poverty is estimated by means of a decomposition based on RIF (Recentered Influence Function) regressions. Finally, micro-simulation exercises are carried out, which expose the potential effects of different counterfactual scenarios proposed on monetary poverty levels. Thus, it is found that the growth effect and the redistribution effect tended to reduce poverty, while the line effect tended to increase it, a pattern that is maintained throughout the different geographic areas and in each of the main cities. On the other hand, it is obtained that changes in household characteristics occurred in Colombia between 2002 and 2018 were positively related to poverty reduction. In addition, it is also obtained that increasing both the educational level and the employment rate of the population have an alleviating effect on poverty, with a greater impact on the poorest.
+
+*Keywords*: <mark>poverty monetary</mark>, decomposition, microsimulation, Colombia.
+
+::: {.disc .error #d1}
+**D1.** La afirmación se repite en el resumen, la introducción y las conclusiones, y contradice las tablas 15, B9 y B10. Entre 2002 y 2018 el efecto redistribución es **positivo** (aumenta la pobreza) en: `r r_pos`. El propio texto de la sección 5.1 lo reconoce para la incidencia en Villavicencio. Para las cuatro áreas geográficas el patrón sí se cumple.
+:::
+
+
+::: {.disc .impr #d2}
+**D2.** (a) *Keywords*: "poverty monetary" debe ser "monetary poverty". (b) Nota 8: "ECG" por "ECH". (c) Sección 2: "crecimiento el ingreso". (d) Sección 5.1: "las importancia". (e) Sección 3.3: "en las mayorías de los casos". (f) Sección 5.3: falta el signo % en "7,2". (g) Sección 3.3: la brecha de pobreza mide la distancia a la línea de forma **cardinal**, no ordinal. (h) Referencias: "Descomposition", "Standars"; y Shorrocks figura como 1999 (documento de trabajo) con el volumen, las páginas y el DOI de la publicación en *Journal of Economic Inequality* de 2013.
+:::
+
+
+# 1. Introducción {-}
+
+
+La pobreza es una condición socioeconómica de vulnerabilidad y carencia de recursos con efectos negativos en múltiples dimensiones. En su concepción más extendida, la pobreza es la incapacidad de un individuo para alcanzar un mínimo nivel de vida (Gasparini *et al*., 2013). De acuerdo con el Banco Mundial (2018), en 2015, el 10 por ciento de la población mundial vivía con menos de 1,9 dólares al día, en paridad de poder adquisitivo (PPA) de 2011.[^2] En el caso de Colombia, utilizando esta misma línea de pobreza monetaria extrema, en 2018, el 2,9 por ciento de su población vivía en condiciones de indigencia.
+
+
+Aunque la pobreza monetaria en Colombia se ha reducido de manera significativa en las últimas dos décadas, su distribución a lo largo de los territorios sigue siendo bastante heterogénea. La diferencia en las tasas de incidencia de la pobreza monetaria entre ciudades pequeñas y grandes es amplia. Por ejemplo, en 2018, en ciudades pequeñas como Quibdó y Riohacha, la tasa de incidencia superó el 47 por ciento, mientras que, en ciudades grandes como Bogotá y Medellín, estuvo por debajo del 14 por ciento (Departamento Administrativo Nacional de Estadística [DANE], 2019). Debido a estas heterogeneidades, entender los factores asociados a la dinámica de la pobreza monetaria desde una perspectiva agregada y regional es fundamental para la construcción de la política pública federal.
+
+
+El objetivo de este trabajo es estudiar la influencia que han tenido, por un lado, el crecimiento de los ingresos, los cambios distributivos y la variación de los precios locales y, por otro lado, las características económicas y sociodemográficas de los hogares sobre la evolución de la pobreza monetaria en Colombia durante el período 2002-2018, considerando la heterogeneidad a lo largo del país. Dado que los cambios temporales y espaciales en las líneas de pobreza reflejan el comportamiento de los precios locales, resulta interesante incorporar dicha fuente de heterogeneidad en el análisis, por lo que se utiliza una metodología que permite incorporar el papel de los precios locales en el análisis de los cambios en la pobreza monetaria en Colombia.
+
+
+La descomposición de los cambios en la pobreza monetaria, en términos de incidencia, brecha y severidad, se realiza con la metodología propuesta por Kolenikov y Shorrocks (2005). En esta descomposición, se estiman, para el agregado nacional, por región (principales ciudades / resto urbano / rural) y a nivel de cada una de las principales ciudades, los efectos crecimiento, redistribución y línea de pobreza. Luego, para profundizar sobre el papel de los factores microeconómicos, se estudia el cambio en la pobreza monetaria a partir de la metodología semiparamétrica de descomposición propuesta por Fortin *et al*. (2011), cuyo procedimiento combina una descomposición basada en regresiones RIF (*Recentered Influence Function*) (Firpo *et al*., 2009) con una estrategia de reponderación (DiNardo *et al*., 1996), que permite descomponer el cambio en la distribución de la pobreza más allá de la media. Esta metodología permite calcular la contribución sobre el cambio en la pobreza monetaria de cada covariable al “efecto composición” y al “efecto estructura” (Firpo *et al*., 2018). Finalmente, a través de ejercicios de microsimulaciones, se construyen escenarios contrafácticos en los que se modifican ciertas características de la población para observar su correlato con los niveles de pobreza monetaria.
+
+
+Como principales resultados, se encuentra que el efecto crecimiento y el efecto redistribución tendieron a reducir la pobreza, en tanto que el efecto línea tendió a incrementarla, <mark><mark>patrón que se mantiene a lo largo de las diferentes áreas geográficas y de cada una de las principales ciudades</mark></mark>. En todos los casos, el crecimiento de los ingresos fue superior al efecto redistribución y, en las principales ciudades con mayores niveles de pobreza, el efecto crecimiento se contrarrestó, en buena medida, por el efecto línea. Por otro lado, se obtiene que la disminución del número de miembros en el hogar, las mejoras en el nivel educativo de los hogares, la disminución de la tasa de desempleo en el hogar, el aumento de los ingresos no laborales y los cambios en la composición de los hogares acontecidos en Colombia entre 2002 y 2018 se relacionaron positivamente con la reducción de la pobreza y de la pobreza extrema. Además, también se obtiene que aumentar tanto el nivel educativo como la tasa de empleo de la población tienen un efecto aliviador de la pobreza y de la pobreza extrema, con mayor impacto en los más pobres.
+
+
+En este contexto, el trabajo realiza dos aportes a la literatura. En primer lugar, brinda nueva evidencia empírica sobre los cambios en la pobreza monetaria en Colombia durante un período de tiempo amplio y reciente, ofreciendo resultados a nivel de las principales ciudades, lo cual favorece la discusión de la pobreza monetaria desde un panorama local. En segundo lugar, permite identificar la relevancia de las características económicas y sociodemográficas de los hogares sobre la evolución de la pobreza monetaria en Colombia en el período considerado. La principal limitación del trabajo se relaciona con la ausencia de estimaciones de efectos causales.[^3]
+
+
+El resto del trabajo está estructurado de la siguiente manera. En la sección 2, se presenta la revisión de la literatura sobre las metodologías y los factores determinantes de la pobreza. En la sección 3, se presentan la fuente de datos, estadísticas descriptivas sobre características económicas y sociodemográficas de los hogares y la evolución de la pobreza monetaria en Colombia durante el período 2002-2018. En la sección 4, se describen las metodologías a emplear para las descomposiciones de los cambios en la pobreza monetaria y se presenta el procedimiento para los ejercicios de microsimulaciones. En la sección 5, se analizan los resultados obtenidos. Finalmente, en la sección 6, se concluye.
+
+
+# 2. Revisión de la literatura {-}
+
+
+Desde una noción unidimensional, la pobreza monetaria es el estado de privación en el cual se encuentran los individuos cuyos ingresos son insuficientes para alcanzar un mínimo nivel de vida. Ese nivel mínimo, generalmente, se denomina línea de pobreza y es el umbral frente al cual se contrasta el ingreso observado de los individuos para determinar si son pobres o no (Gasparini *et al*., 2013). Por lo tanto, los indicadores de pobreza son instrumentos empleados para cuantificar el número de individuos por debajo de la línea de pobreza. Esta masa de la población, ubicada por debajo del umbral de pobreza, gráficamente, está representada por la cola inferior de la función de densidad del ingreso.
+
+
+Por un lado, los cambios en la pobreza monetaria están relacionados con el <mark>crecimiento el ingreso</mark>, con la forma en que este ingreso se distribuye y con los movimientos en la línea de pobreza. Por otro lado, estos cambios se pueden relacionar con la evolución de los factores microeconómicos que determinan el nivel de ingreso de los hogares. Es así que, en la literatura especializada, existen, por lo menos, dos enfoques complementarios para estudiar los efectos de esos elementos sobre el cambio en el nivel de pobreza monetaria. Una posibilidad es utilizar un enfoque que se centre en los “determinantes agregados”, el cual se basa en que los cambios en la pobreza monetaria pueden ocurrir tanto como resultado de cambios en el ingreso (real) promedio como así también en la distribución del mismo. Si la línea de pobreza se mantiene constante, una economía en crecimiento con una distribución del ingreso estable terminará por reducir el número de individuos por debajo de la línea de pobreza. Alternativamente, si la economía no crece, la pobreza puede reducirse a través de un sistema de transferencias desde los ricos hacia los pobres que reduzca la desigualdad. Otra posibilidad es centrarse en los “determinantes sociodemográficos”, en donde metodologías de micro-descomposiciones permiten determinar qué cambios en las características de los hogares generarían, *céteris páribus*, reducciones significativas en el nivel de pobreza monetaria (Busso *et al*., 2005).
+
+
+Con base en el enfoque de “determinantes agregados”, una reducción del nivel de pobreza monetaria entre el período $t_1$ y $t_2$, manteniendo constante la línea de pobreza 𝑧, puede estar relacionada con el desplazamiento de la función de densidad del ingreso hacia la derecha (crecimiento del ingreso medio de los hogares),[^4] con un cambio en la forma de esta función que lleve a una mayor concentración del ingreso en torno a la media (reducción de la desigualdad del ingreso) o con una combinación de ambos eventos (Bracco *et al*., 2019). En este marco, las metodologías de descomposición permiten separar estadísticamente qué parte del cambio en la pobreza monetaria se debe al crecimiento del ingreso (manteniendo constante el nivel de desigualdad) y qué parte a su redistribución (manteniendo constante el nivel de ingreso). La contribución del crecimiento del ingreso se denomina “efecto crecimiento” y la contribución de su redistribución se denomina “efecto redistribución”.
+
+
+Dentro de este marco analítico, una de las primeras descomposiciones fue realizada por Kakwani (1990).[^5] Este autor propone una metodología estática[^6] y aditiva, que define el cambio en la pobreza como la suma de las elasticidades pobreza-ingreso y pobreza-desigualdad. La primera elasticidad se denomina “efecto crecimiento” y la segunda “efecto redistribución”. Dado que la distribución del ingreso en una economía puede afectarse por el crecimiento de éste, el efecto redistribución dependerá del nivel de variación introducido por el cambio en el ingreso sobre la curva de Lorenz, es decir, de la presión que ejerce el crecimiento del ingreso sobre el nivel de desigualdad.
+
+
+Sin embargo, Kakwani y Subbarao (1990) afirman que el vínculo entre la pobreza, el crecimiento y la desigualdad no es lineal ni se puede descomponer de forma exacta. Para estos autores, si el cambio en la pobreza entre dos períodos se descompone como la suma del efecto crecimiento y el efecto redistribución a partir de elasticidades, habrá una parte del cambio no explicada por ninguno de estos dos efectos, es decir, un residuo, el cual los autores interpretan como el efecto que tiene la interacción de la variación en el nivel de ingreso y la variación en el nivel de desigualdad sobre el cambio en la pobreza. Para descomponer el cambio en la pobreza, estos autores calculan el efecto crecimiento como el cambio en la pobreza debido al cambio en el ingreso, manteniendo constante la desigualdad, y el efecto redistribución como la diferencia entre el cambio real de la pobreza y el efecto crecimiento. De esta forma, el término residual es enviado al efecto redistribución y obtienen una descomposición dinámica, aditiva y exacta.
+
+
+No obstante, Datt y Ravallion (1992) afirman que asignar el término residual al efecto redistribución, como hacen Kakwani y Subbarao (1990), *“es completamente arbitrario y también da la falsa impresión de que la descomposición es exacta”* (Datt y Ravallion, 1992, p. 278). Por ello, proponen una metodología de descomposición dinámica, aditiva, pero no exacta, según la cual el cambio en la pobreza entre dos períodos es la suma del efecto crecimiento, el efecto redistribución y un término residual. Una crítica recurrente a esta metodología, señalada asimismo por los autores, es que el término residual puede llegar a ser tan grande como el efecto redistribución, lo cual es problemático en la medida en que tal metodología, que intenta explicar el cambio en la pobreza, puede terminar sin explicar una gran porción de éste.[^7]
+
+
+En el caso de las metodologías exactas, Jain y Tendulkar (1990) superan el problema de la elección de la base utilizando diferentes períodos de referencia en un proceso no simétrico. Luego, Kakwani (1997), desde un enfoque axiomático, propuso una descomposición dinámica, aditiva y exacta, que explica el cambio en la pobreza entre dos períodos como la suma del efecto crecimiento y el efecto redistribución. En esta metodología, independientemente del período que se elija como base para realizar la descomposición, el tamaño del efecto crecimiento y el efecto redistribución tienen que ser los mismos. Cuando una descomposición cumple esta propiedad, se dice que es simétrica.
+
+
+Diversos estudios han empleado estas metodologías de descomposición para América Latina. Por ejemplo, Cruces y Gasparini (2013) estudian los cambios en la pobreza monetaria entre 1990 y 2009 distinguiendo tres períodos. Encuentran que, en la década de 1990, en la mayoría de las economías, el crecimiento del ingreso favoreció la reducción de la pobreza en 4,8 puntos porcentuales, aunque el aumento de la desigualdad incrementó la pobreza en 0,7 puntos porcentuales. En la crisis de final de la década de 1990 y principios de la década de 2000, el efecto (de)crecimiento incrementó la pobreza en 2,3 puntos porcentuales, con un efecto redistribución casi nulo. En la década de 2000, la reducción de la pobreza en todos los países se debió a un mayor crecimiento y a mejoras en la redistribución.
+
+
+Por su parte, Medina y Galván (2014) aplicaron nueve metodologías de descomposición para estudiar la evolución de la pobreza en América Latina. Encuentran que, entre 1997 y 2007, el 79% del cambio en la pobreza se debió al efecto crecimiento y el 21% al efecto redistribución. No obstante, los resultados obtenidos difieren en función de la metodología implementada. De igual forma, existen diferencias entre países con relación a la contribución del efecto crecimiento y el efecto redistribución al cambio en la pobreza. Además, encuentran que el ritmo de caída de la pobreza frente al crecimiento del ingreso depende del nivel de desigualdad de cada país. Por otra parte, Azevedo *et al*. (2013), a través de microsimulaciones contrafactuales, encuentran que, entre 2000 y 2010, en diez economías latinoamericanas, el ingreso laboral es el principal factor asociado a la reducción de la pobreza.
+
+
+Para el caso de Colombia, Sánchez Torres (2015) y Obando Rozo y Andrián (2016) realizaron descomposiciones de los cambios en la pobreza monetaria entre 2002 y 2012, a partir de las metodologías de Kakwani (1997), Son (2003) y Datt y Ravallion (1992). Encuentran que la reducción de la pobreza en Colombia estuvo asociada al crecimiento medio de diversas fuentes de ingreso (principalmente, de los ingresos laborales) y al aumento de los niveles de ocupación (con la consiguiente reducción de la dependencia económica al interior de los hogares). De acuerdo con sus resultados, la contribución del efecto redistribución fue, prácticamente, nula.
+
+
+En otra dirección, la literatura económica presenta evidencia a favor de la relevancia de las características económicas, sociales y demográficas de los hogares para definir su nivel de ingreso. Variables como el número de miembros en el hogar, los años de educación promedio en el hogar y el tipo de vinculación al mercado laboral, entre otras, determinan la probabilidad de pobreza de los hogares. Por ejemplo, Núñez y Ramírez (2002) encuentran que, entre 1995 y 2000, el incremento de la pobreza en Colombia estuvo asociado al aumento del desempleo, a la mayor regresividad en la distribución del ingreso y a la inflación, mientras que los aumentos en el tipo de cambio real y en el salario mínimo real y las mejoras en la productividad tendieron a disminuir el nivel de privación. Por su parte, Domínguez Moreno (2011) encuentra que, si el jefe del hogar se encuentra en el sector informal del mercado laboral, el riesgo de que su hogar sea pobre se incrementa en un 125% con respecto a aquellos que se encuentran en el sector formal.
+
+
+Los estudios presentados anteriormente muestran la relevancia, por un lado, de la dinámica del crecimiento del ingreso y de su redistribución y, por otro lado, de las características económicas y sociodemográficas de los hogares sobre la evolución de la pobreza. Este trabajo avanza en la comprensión de los cambios en la pobreza monetaria en Colombia durante el período 2002-2018. Se implementa, por un lado, la metodología de descomposición propuesta por Kolenikov y Shorrocks (2005) y, por otro lado, la metodología de Fortin *et al*. (2011), las cuales son dinámicas, aditivas, exactas y simétricas. Por último, se realizan ejercicios de microsimulaciones. Para el caso de América Latina, la primera metodología ha sido aplicada previamente por el Banco Mundial (2011) y, para el caso de Colombia, por el Departamento Nacional de Planeación [DNP] (2018). En cuanto a la segunda metodología, nunca ha sido aplicada en el análisis de los cambios en la pobreza monetaria en Colombia.
+
+
+# 3. Datos y estadísticas descriptivas {-}
+
+
+## 3.1. Fuente de datos {-}
+
+
+La metodología para el cálculo de la pobreza monetaria en Colombia fue diseñada por la Misión para el Empalme de las Series de Empleo, Pobreza y Desigualdad [MESEP] (2012), constituida por DANE y el DNP. Esta metodología ofrece una medición actualizada y más precisa (técnica y empíricamente) de la pobreza monetaria en Colombia en tres aspectos. Primero, para la construcción de las líneas de pobreza, se utiliza una base estadística más reciente de los hábitos de consumo de los colombianos: la Encuesta Nacional de Ingresos y Gastos (ENIG) 2006-2007 (la anterior metodología utilizó la ENIG 1994-1995). Segundo, incorpora adelantos metodológicos recientes y ampliamente aceptados por expertos internacionales. Tercero, utiliza una medición más precisa del agregado de ingreso, omitiendo el Ajuste a Cuentas Nacionales que introduce sesgos no controlados en la distribución de los ingresos y en la composición de la pobreza (MESEP, 2012).
+
+
+La información que se utiliza a lo largo del trabajo proviene de los microdatos de la Encuesta Continua de Hogares (ECH) para el período 2002-2005 y de la Gran Encuesta Integrada de Hogares (GEIH) para el período 2008-2018, realizadas por el DANE.[^8] Las cifras entre 2002 y 2005 están empalmadas tomando como referencia la metodología utilizada por la encuesta que se aplica desde 2006 (la GEIH), trabajo realizado por la MESEP.[^9] A pesar de que hubo un cambio metodológico entre la ECH y la GEIH, el trabajo de la MESEP y la disponibilidad de las bases de ingresos empalmadas desde 2002 a 2018 hacen posible la comparabilidad entre las dos fuentes de datos.
+
+
+Este trabajo presentará resultados de la medición de la pobreza monetaria, es decir, la medición de la pobreza indirecta, según la clasificación de Amartya Sen. Esta cifra se construye a partir de la medición del ingreso per cápita de la unidad de gasto (*ipcug*), es decir, el ingreso corriente disponible de la unidad de gasto dividido por el total de integrantes de la misma, en donde la unidad de gasto está compuesta por los miembros del hogar diferentes al servicio doméstico y sus familiares, pensionistas y otros trabajadores(as) dedicados(as) al hogar.[^10] A su vez, este ingreso se compara con el costo monetario de adquirir una canasta de bienes alimentarios, en el caso de la pobreza monetaria extrema o indigencia, o con el costo monetario de adquirir una canasta de bienes alimentarios y no alimentarios mínimos para la subsistencia, en el caso de la pobreza monetaria moderada.
+
+
+En este trabajo, como criterio de identificación de los hogares pobres, se tomarán las líneas de pobreza monetaria estimadas por el DANE y, como se mencionó, como medida de comparación de los umbrales se tomará el *ipcug*, por lo que un individuo pertenece a un hogar pobre si su *ipcug* es menor que la línea de pobreza asociada.[^11] Entre 2002 y 2018 (no hay microdatos disponibles para 2006 y 2007), el *ipcug* y las líneas de pobreza de referencia están empalmadas a partir de la nueva metodología de la GEIH. La metodología de estimación de las líneas de pobreza que realiza el DANE tiene en cuenta las necesidades alimentarias, construidas a partir de la ENIG (2006-2007), y las necesidades no alimentarias, aproximadas a partir del coeficiente de Orshansky (relación entre gasto total y gasto en alimentos). Debido a que, en la estimación de las líneas de pobreza, se tienen en cuenta las heterogeneidades geográficas en precios, el acceso a alimentos y a bienes básicos y los niveles de consumo de los grupos de referencia, los umbrales de pobreza son diferentes según cada departamento, pero, principalmente, según el área geográfica sea urbana o rural.
+
+
+## 3.2. Caracterización económica y sociodemográfica de los hogares {-}
+
+
+En esta sección, se presentan estadísticas descriptivas sobre las características económicas y sociodemográficas de los hogares en Colombia para algunos años del período 2002-2018, las cuales están relacionadas con la probabilidad de pobreza de estos (ver Tabla 1). En particular, las variables analizadas son las siguientes: ingreso per cápita de la unidad de gasto, ingresos no laborales en el hogar, número de miembros en el hogar, porcentaje de mujeres en el hogar, *dummy* que indica si el hogar tiene algún niño menor a 12 años de edad, años de educación promedio en el hogar, *dummies* identificadoras de los hogares con jefes mujeres, jefes con 30 años de edad o menos y jefes cuentapropistas. También se incluyeron <mark>las tasas de participación laboral femenina, de desempleo y de informalidad laboral en el hogar</mark> y, finalmente, una variable binaria para identificar los hogares que reciben ayudas monetarias. Para todas estas variables, se computa el promedio para el año correspondiente.
+
+
+::: {.disc .metodo #d3}
+**D3.** Según `prepara_base_2.do`: (a) la **participación femenina** es mujeres activas sobre **todas** las mujeres del hogar, incluidas las niñas (no sobre las mujeres en edad de trabajar); (b) el **desempleo** del hogar queda sin definir cuando no hay miembros activos, así que esos hogares se excluyen del promedio; (c) la **informalidad** clasifica como informal a un cuentapropista según su **decil de ingreso** (deciles 1 a 6), lo que la relaciona mecánicamente con la pobreza.
+:::
+
+
+En primer lugar, se puede observar que tanto el *ipcug* como los ingresos no laborales en el hogar aumentan a lo largo del período, con una respectiva variación de 41,4% y 24,2% entre 2002 y 2018 (ver Tabla 1, Columna [VI]). Luego, se observa que, en 2018 respecto a 2002, los hogares son, en promedio, alrededor de 20% más pequeños y están alrededor de 35% más educados, en tanto que su tasa de desempleo se redujo alrededor de 37%. Además, en este período, en promedio, la tasa de participación laboral femenina (PLF) en el hogar aumentó 6,4 p.p. y la tasa de desempleo en el hogar se redujo 5,1 p.p., mientras que, entre 2008 y 2018,[^12] la tasa de informalidad laboral (IL) en el hogar <mark>se redujo 4,4 p.p.</mark> Es probable que estos dos factores contribuyan a explicar la reducción de la pobreza monetaria en Colombia durante el período de estudio.[^13] En cuanto a la composición del hogar, se tiene que la proporción de hogares con niños menores a 12 años de edad disminuyó alrededor de 24% y con ayudas alrededor de 6%,[^14] en tanto que la proporción de hogares con jefatura femenina aumentó considerablemente alrededor de 40%. Las demás características no presentan cambios importantes.
+
+
+::: {.disc .error #d4}
+**D4.** La tabla 1 va de `r num(il[1], 3)` a `r num(il[2], 3)`: una caída de **`r num(100 * (il[1] - il[2]), 1)` puntos porcentuales**. El 4,4 es la variación **porcentual** (relativa) de la columna [VI].
+:::
+
+
+Por otro lado, se presentan estas mismas estadísticas descriptivas pero por área geográfica y sólo para los años 2002 y 2018 (ver Tabla 2).[^15] En primer lugar, los menores niveles de ingreso se observan en el área rural. Luego, se observa que, en comparación a los hogares de las principales ciudades y a los del resto urbano, los hogares rurales tienen, en promedio, mayor cantidad de miembros, menos miembros mujeres, considerablemente menos años de educación, una menor tasa de desempleo y es menor la PLF, en tanto que la IL es más del doble que la correspondiente a los hogares de las principales ciudades. En cuanto a la composición del hogar, nuevamente en comparación a los hogares de las otras dos áreas, los hogares rurales tienen un menor porcentaje de mujeres y una mayor proporción de niños menores a 12 años de edad, en tanto que la proporción de hogares con jefatura femenina es considerablemente menor y con jefe cuentapropista considerablemente mayor. Las demás características no presentan diferencias significativas entre las áreas. <mark>En general, las variaciones en el período van en la misma dirección y tienen semejante cuantía</mark>, excepto en los ingresos no laborales (la variación en el resto urbano es sustancialmente mayor) y en la IL (ésta aumenta en el área rural y disminuye en el resto de las áreas).[^16]
+
+
+::: {.disc .error #d5}
+**D5.** Además de las dos excepciones citadas, la proporción de hogares con **ayudas** cambia `r num(ayudas[3], 1)`% en el área rural y `r num(ayudas[1], 1)`% y `r num(ayudas[2], 1)`% en las ciudades principales y el resto urbano. La magnitud tampoco es similar en **jefe cuentapropista**: `r num(cp[3], 1)`% en el área rural contra `r num(cp[1], 1)`% y `r num(cp[2], 1)`%.
+:::
+
+
+**Tabla 1.** Caracterización económica y sociodemográfica de los hogares en Colombia 2002-2018.
+
+```{r tabla-1, fig.height=4.5}
+t1()
+```
+
+
+**Tabla 2.** Caracterización económica y sociodemográfica de los hogares por área geográfica en Colombia 2002 y 2018.
+
+```{r tabla-2, fig.height=4.5}
+t2()
+```
+
+
+::: {.disc .impr #d6}
+**D6.** Las columnas de variación de la tabla 2 llevan el encabezado "Var. (\$)", pero son variaciones **porcentuales** (como aclara la nota). En esta réplica se rotulan "Var. (%)".
+:::
+
+
+## 3.3. Evolución de la pobreza monetaria en Colombia 2002-2018 {-}
+
+
+En este trabajo, el estudio de la pobreza monetaria y sus descomposiciones se abordará tomando como referencia los indicadores de pobreza FGT (Foster *et al*., 1984).[^17] Estos indicadores se construyen a partir de la relación entre los niveles de ingresos observados y el umbral de pobreza, para el grupo cuyo ingreso es inferior al umbral, como se presenta en (3.1):
+
+
+$$FGT(\alpha)=\frac{1}{N}\sum_{i=1}^{N}\left(1-\frac{x_i}{z_i}\right)^{\alpha}1(x_i<z_i),\;\alpha\geq 0 \tag{3.1}$$
+
+
+donde 𝑁 es el número total de individuos, $x_i$ es el ingreso del individuo 𝑖 (en este caso, el *ipcug*), $z_i$ es el umbral de pobreza que se toma como referencia para el individuo 𝑖, $1(x_i<z_i)$ es el indicador de identificación de los individuos pobres (para quienes el ingreso considerado es menor que el umbral de pobreza) y 𝛼 es el parámetro a partir del cual se indica el tipo de indicador FGT y la ponderación que recibe cada individuo pobre.[^18] El indicador y sus propiedades cambian en función del parámetro 𝛼. Cuando 𝛼 = 0, el indicador es equivalente a la proporción de pobres (“incidencia de la pobreza”), es decir, la proporción de individuos del total de población cuyo ingreso ($x_i$) es menor que el umbral de pobreza asociado ($z_i$). Cuando 𝛼 = 1, el FGT es un indicador conocido como “brecha de la pobreza” y tiene en cuenta, además de la proporción de pobres, las distancias de los ingresos de los individuos pobres a su correspondiente línea de pobreza, por lo que es un indicador que <mark>mide ordinalmente</mark> la distancia del ingreso promedio de los pobres respecto a los umbrales de pobreza considerados. A medida que el parámetro 𝛼 es más grande, hay una mayor ponderación de los individuos más pobres en el cálculo del indicador de pobreza FGT. Como aproximación a la “severidad de la pobreza”,[^19] se plantea el indicador FGT cuando 𝛼 = 2, el cual tiene en cuenta, además de la distancia entre el ingreso del individuo pobre y su línea de pobreza, una mayor ponderación de los individuos de menor ingreso dentro de los pobres. En la práctica, la mayoría de los investigadores usan el indicador FGT con parámetros 𝛼 = 0,1,2, siendo este último el que cumple, conjuntamente, con las propiedades de foco, monotonicidad y transferencia.[^20]
+
+
+La pobreza monetaria en Colombia entre 2002 y 2018 se ha reducido de manera significativa en cada una de las áreas geográficas consideradas tomando cualquier indicador de pobreza FGT, lo cual se observa en la Tabla 3. Para el agregado nacional, en 2002, la incidencia de la pobreza era de 49,4% y, en 2018, de 27,0%, en tanto que la brecha y la severidad de la pobreza pasaron de 21,7% a 9,8% y de 12,6% a 5,2%, respectivamente. Cuando desagregamos el total nacional, se observa que, a lo largo del período y para cada uno de los indicadores considerados, la pobreza es notablemente menor en las principales ciudades (ver Figura 1 para la incidencia de la pobreza).[^21] A su vez, se podría decir que el área rural es la que ha tenido los mayores niveles de pobreza.
+
+
+**Tabla 3.** Indicadores de pobreza FGT por área geográfica en Colombia 2002-2018.
+
+```{r tabla-3, fig.height=4.5}
+t34('3', 1)
+```
+
+
+::: {.disc .metodo #d7}
+**D7.** En `Trabajo Final.do`, los bloques de ciudades principales, resto urbano y rural guardan sus resultados en la matriz **`pob_tn`** en lugar de `pob_urb`, `pob_resturb` y `pob_rur`. Ejecutado tal como está, la serie nacional quedaría sobrescrita con la rural y las otras tres vacías. Los archivos de `.res/FGT/` son correctos (y coinciden con el PDF), de modo que se generaron con otra versión del código. Algo similar ocurre con la **columna 2015 de la tabla 1**: el bloque de caracterización conserva solo 2002, 2005, 2008 y 2018, y los archivos por área no traen ese año (figura únicamente en `Características.xlsx`).
+:::
+
+
+**Figura 1.** Incidencia de la pobreza por área geográfica en Colombia 2002-2018.
+
+```{r figura-1, fig.height=4.5}
+f_serie(1)
+```
+
+
+Cuando analizamos la pobreza monetaria extrema en este período, también se observa una reducción significativa en cada una de las áreas geográficas y para cada uno de los indicadores de pobreza extrema FGT (ver Tabla 4). Para el agregado nacional, en 2002, la incidencia de la pobreza extrema era de 17,6% y, en 2018, de 7,2%, en tanto que la brecha y la severidad de la pobreza extrema pasaron de 6,7% a 2,7% y de 3,7% a 1,6%, respectivamente. Análogamente al caso anterior, la pobreza extrema es notablemente menor en las principales ciudades, en tanto que el área rural es la que posee los mayores niveles de indigencia (ver Figura 2 para la incidencia de la pobreza extrema).[^22]
+
+
+**Tabla 4.** Indicadores de pobreza extrema FGT por área geográfica en Colombia 2002-2018.
+
+```{r tabla-4, fig.height=4.5}
+t34('4', 2)
+```
+
+
+**Figura 2.** Incidencia de la pobreza extrema por área geográfica en Colombia 2002-2018.
+
+```{r figura-2, fig.height=4.5}
+f_serie(4)
+```
+
+
+Para ver más claramente la reducción de la pobreza por área geográfica, se muestra la incidencia de la pobreza y de la pobreza extrema para los años 2002 y 2018 (ver Figura 3).[^23] La mayor reducción (en puntos porcentuales) se tiene en el área rural: 24,9 p.p. en el caso de la pobreza y 17,4 p.p. en el caso de la pobreza extrema. Sin embargo, acá, es importante notar la gran heterogeneidad imperante en Colombia a nivel regional en términos de los niveles de pobreza. En 2018, para el caso de la pobreza, la incidencia en el área rural fue 2,23 veces la de las principales ciudades, en tanto que, para la pobreza extrema, este valor asciende a 5,31. En 2002, estos valores eran 1,70 y 4,43, respectivamente, indicando que, si bien la reducción en puntos porcentuales fue mayor en el área rural, la caída relativa fue mayor en las principales ciudades, con lo cual estas brechas en las incidencias entre el área rural y las principales ciudades aumentaron entre 2002 y 2018. Conclusiones análogas se obtienen para la brecha y la severidad de la pobreza, no así para la brecha y la severidad de la pobreza extrema, en donde estas brechas se reducen entre 2002 y 2018 (ver Figuras A5 y A6 en el Apéndice).
+
+
+**Figura 3.** Incidencia de la pobreza y de la pobreza extrema por área geográfica en Colombia 2002 y 2018.
+
+```{r figura-3, fig.height=4.5}
+f_areas(1)
+```
+
+
+Adicionalmente, se computan las variaciones de los indicadores de pobreza y de pobreza extrema FGT por área geográfica para el período 2002-2018 y para los subperíodos 2002-2005 y 2008-2018 (ver Tablas 5 y 6).[^24] En primer lugar, se puede observar que, en ambos subperíodos, se reduce la pobreza, siendo mayor esta reducción (en puntos porcentuales) en el subperíodo 2008-2018. Al comparar entre áreas geográficas, acá, nuevamente, <mark>se observa que la mejor *performance* en términos de reducción de la pobreza y de la pobreza extrema (en puntos porcentuales) la tiene el área rural</mark>. Por último, cabe notar que <mark>todas las variaciones son estadísticamente significativas al 5%</mark>.[^25]
+
+
+::: {.disc .error #d8}
+**D8.** En 2002-2005 el **resto urbano** reduce más que el área rural en incidencia, brecha y severidad de la pobreza, y en incidencia de la pobreza extrema (tabla siguiente, en puntos porcentuales). La afirmación vale para 2008-2018 y 2002-2018.
+:::
+
+```{r d8-1}
+tab(data.frame(Indicador = c(paste(ind, "(pobreza)"), paste(ind, "(extrema)")), num(d0205, 2)[, 3:4]) |> setNames(c("Indicador, 2002-2005", an[3], an[4])))
+```
+
+
+::: {.disc .metodo #d9}
+**D9.** `fgt_bs` remuestrea **personas** de forma independiente (`bootstrap` sin `cluster()` ni `strata()`). Los miembros de un hogar tienen el mismo ingreso y la encuesta es estratificada y por conglomerados, como señala la nota 25, así que los errores estándar quedan **subestimados**. Además, la regla de intervalos que no se superponen es conservadora y distinta de un test de la diferencia. Los resultados del *bootstrap* no se guardaron: los asteriscos de las tablas 9, B5 y B6 no pueden reproducirse sin los microdatos.
+:::
+
+
+**Tabla 5.** Variación de los indicadores de pobreza FGT por área geográfica en Colombia 2002-2018.
+
+```{r tabla-5, fig.height=4.5}
+t56('5', 1)
+```
+
+
+**Tabla 6.** Variación de los indicadores de pobreza extrema FGT por área geográfica en Colombia 2002-2018. Puntos porcentuales.
+
+```{r tabla-6, fig.height=4.5}
+t56('6', 2)
+```
+
+
+Desde otro lugar, se presenta la participación de cada área geográfica en los indicadores de pobreza FGT para el período 2002-2018 (ver Tabla 7).[^26] A pesar de que, en el área rural, vive cerca de una cuarta parte de la población total colombiana (ver Tabla B1 en el Apéndice), <mark>su participación en los indicadores de pobreza es más alta que la de las principales ciudades</mark>, donde habita alrededor del 45% de la población.[^27] En línea con esto, un aspecto a destacar es que, en el área rural, se concentra la población de más bajos ingresos (ver Tabla 2), incluso dentro del conjunto de población pobre, lo que se evidencia en la alta participación de esta área en la severidad de la pobreza. Lo contrario sucede al ver la participación de las principales ciudades, que tienen mayor participación en la incidencia que lo que representan en la brecha y en la severidad, lo cual indica que, en las ciudades más grandes respecto a la situación del área rural, es menor la problemática de la población de muy bajos ingresos dentro de los pobres. Adicionalmente, se observa que la participación del área rural en los indicadores de pobreza no ha cambiado mucho en el período y se ubica alrededor del 32%, 34% y 35% de participación en los indicadores de incidencia, brecha y severidad de la pobreza, respectivamente. En contraste, entre 2002 y 2018, los cambios en la participación se presentaron entre las áreas urbanas, con una reducción de la participación en la pobreza en el caso de las principales ciudades y un aumento en el caso de los aglomerados urbanos más pequeños (resto urbano).
+
+
+::: {.disc .impr #d10}
+**D10.** En **incidencia**, la participación rural es menor o igual que la de las principales ciudades en `r paste(anios_pc, collapse = ", ")` (por ejemplo, 2002: `r num(p7[1, 3], 1)`% contra `r num(p7[1, 1], 1)`%). La afirmación se cumple en brecha y severidad.
+:::
+
+
+**Tabla 7.** Participación de cada área geográfica en los indicadores de pobreza FGT en Colombia 2002-2018. Valores porcentuales.
+
+```{r tabla-7, fig.height=4.5}
+t7('7', 1)
+```
+
+
+Para realizar una mirada más desagregada, se muestra la incidencia de la pobreza y de la pobreza extrema para las trece ciudades principales y sus áreas metropolitanas para el período 2002-2018 (ver Tabla 8).[^28] Se puede notar que la distribución de la pobreza es heterogénea a nivel de las principales ciudades. La ciudad más afectada es Cúcuta, en donde, en 2002, el 52,9% de la población de esta ciudad fronteriza con Venezuela era pobre y el 11,1% indigente (ver Figura 4). Ciudades de la costa atlántica, como Montería, Cartagena y Barranquilla, al igual que Pasto, en 2002, <mark>registraron tasas de incidencia de la pobreza superiores al 40,0% y de la pobreza extrema superiores al 8,5%</mark>. <mark>Aunque Bogotá, Pereira y Cali fueron las ciudades con menores niveles de incidencia de la pobreza y de la pobreza extrema en 2002</mark>, más del 30% de su población se ubicaba por debajo de la línea de pobreza. En general, el respectivo *“ranking”* de los indicadores de brecha y de severidad de la pobreza y de la pobreza extrema a nivel de las principales ciudades se corresponden con el caso de la incidencia (ver Figuras A7 y A8 en el Apéndice).
+
+
+::: {.disc .impr #d11}
+**D11.** La pobreza extrema de Barranquilla en 2002 era **`r num(FC[1, 1, 2, 1], 2)`%** (la tabla la redondea a 8,5).
+:::
+
+
+::: {.disc .error #d12}
+**D12.** Vale para la pobreza, no para la **extrema**: las tres menores en 2002 eran `r paste(sprintf("%s (%s%%)", ciudades[menores_e], num(FC[menores_e, 1, 2, 1], 2)), collapse = ", ")`. Bogotá tenía `r num(FC[2, 1, 2, 1], 1)`%.
+:::
+
+
+**Tabla 8.** Incidencia de la pobreza y de la pobreza extrema por ciudades principales en Colombia 2002-2018.
+
+```{r tabla-8, fig.height=4.5}
+t8('8', 1)
+```
+
+
+**Figura 4.** Incidencia de la pobreza y de la pobreza extrema por ciudades principales en Colombia 2002 y 2018.
+
+```{r figura-4, fig.height=7}
+f_ciudades(1)
+```
+
+
+En línea con la tabla anterior, se computan las variaciones de la incidencia de la pobreza y de la pobreza extrema por ciudades principales para el período 2002-2018 y para los subperíodos 2002-2005 y 2008-2018 (ver Tabla 9).[^29] Se puede observar que las mayores reducciones (en puntos porcentuales) en los niveles de incidencia de la pobreza para el período 2002-2018 se dieron en Manizales, Medellín y Barranquilla. Al considerar la incidencia de la pobreza extrema, las mayores reducciones, en este mismo período, se dieron en Pasto, Barranquilla y Cartagena, siendo estas tres ciudades de las cinco ciudades con mayores niveles de incidencia de la pobreza extrema en 2002 (ver Figura 4, Panel B). Adicionalmente, cabe notar que, excepto casos puntuales en el subperíodo 2002-2005, <mark>todas las variaciones son estadísticamente significativas al 5%</mark>.
+
+
+**Tabla 9.** Variación de la incidencia de la pobreza y de la pobreza extrema por ciudades principales en Colombia 2002-2018. Puntos porcentuales.
+
+```{r tabla-9, fig.height=4.5}
+t9('9', 1)
+```
+
+
+Seguidamente, con el fin de caracterizar la pobreza según perfiles del jefe de hogar, se presenta la incidencia de la pobreza según características del jefe de hogar por área geográfica para los años 2002 y 2018 (ver Tabla 10).[^30] Esta incidencia se calcula como el porcentaje del total de individuos que pertenecen a un hogar con características comunes en la jefatura. Por ejemplo, en 2018, para el agregado nacional, el 29,6% de los individuos que pertenecían a un hogar con jefatura femenina eran pobres, en tanto que este valor es 25,7% para los que pertenecían a un hogar con jefatura masculina. Se observa que, para todas las áreas geográficas, los perfiles del jefe de hogar que presentan mayor incidencia de la pobreza están relacionados con: el tener un nivel educativo bajo, estar desocupado y ser cuenta propia o patrón. Por ejemplo, en 2018, a nivel nacional, la incidencia de la pobreza de los hogares <mark>cuyo jefe de hogar no había alcanzado la secundaria era del 31,4%</mark>, cuando se encontraba desocupado era del 49,0% y cuando era cuenta propia o patrón era del 35,4%. Al considerar los cambios entre 2002 y 2018, observamos que las mayores reducciones se encuentran en los hogares cuyo jefe de hogar era hombre, tenía un nivel educativo bajo, se encontraba ocupado y era asalariado. A su vez, en la mayoría de los casos, no se encuentran grandes diferencias en estas variaciones entre áreas geográficas.
+
+
+::: {.disc .error #d13}
+**D13.** "No haber alcanzado la secundaria" incluye primaria incompleta (**`r num(pj[9, 5], 1)`%**) y completa (**`r num(pj[10, 5], 1)`%**). El 31,4% es solo la segunda categoría; la cifra del grupo conjunto debe estar entre ambas y no se calculó.
+:::
+
+
+Análogamente, se presenta la incidencia de la pobreza según características del hogar por área geográfica para los años 2002 y 2018 (ver Tabla 11).[^31] Esta incidencia se calcula como el porcentaje del total de individuos que pertenecen a un hogar con características comunes. Se observa que, en 2018, para el agregado nacional, el 65,0% de los individuos que vivían en hogares donde había tres o más niños menores a 12 años de edad, el 42,1% de los que pertenecían a un hogar en donde ningún miembro estaba ocupado y el 34,0% de los que pertenecían a un hogar de cuatro o más miembros eran pobres. Es importante rescatar que, en 2018, independientemente del área geográfica al que se haga referencia, se observa que los individuos que pertenecían a hogares en los que había tres o más niños menores a 12 años de edad presentaron niveles de incidencia de la pobreza que superaron el 50,0%, siempre superior a la media no condicionada del área geográfica. Al considerar los cambios entre 2002 y 2018, a nivel nacional, observamos que las mayores reducciones se encuentran en los hogares con un niño menor a 12 años de edad, con un ocupado y con cuatro o más miembros. A su vez, al igual que en el caso anterior, <mark>en las mayorías de los casos</mark>, no se encuentran grandes diferencias en estas variaciones entre áreas geográficas.
+
+
+**Tabla 10.** Incidencia de la pobreza según características del jefe de hogar por área geográfica en Colombia 2002 y 2018.
+
+```{r tabla-10, fig.height=4.5}
+t10('10', 'p', 'cjh')
+```
+
+
+::: {.disc .impr #d14}
+**D14.** (a) El grupo "[56,65]" es en el código **56 a 64** (`g_edad`), y así no se superpone con "[65+]". (b) "Asalariado" incluye solo obreros y empleados particulares y del gobierno (categorías 1 y 2): **excluye al empleo doméstico** (3), que en las microsimulaciones sí se trata como asalariado.
+:::
+
+
+**Tabla 11.** Incidencia de la pobreza según características del hogar por área geográfica en Colombia 2002 y 2018.
+
+```{r tabla-11, fig.height=4.5}
+t10('11', 'p', 'ch')
+```
+
+
+Finalmente, se presentan los coeficientes de Gini por área geográfica para el período 2002-2018 (ver Tabla 12).[^32] Se observa que, si bien, al contrastar 2002 y 2018, hay una reducción de la desigualdad, hay ascensos y descensos a lo largo del período, a diferencia de lo acontecido con los niveles de pobreza, que mostraron una reducción sistemática. Comparando entre áreas geográficas, a diferencia de lo que sucede con los niveles de pobreza, en este caso, la desigualdad es mayor en las principales ciudades, con un coeficiente de Gini igual a 0,485 para 2018, en comparación al 0,445 correspondiente al área rural para este mismo año.
+
+
+**Tabla 12.** Coeficiente de Gini por área geográfica en Colombia 2002-2018.
+
+```{r tabla-12, fig.height=4.5}
+t12()
+```
+
+
+# 4. Metodología {-}
+
+
+La metodología para estudiar los cambios en la pobreza monetaria en Colombia durante el período 2002-2018 se divide en tres partes. En primer lugar, se estudian los determinantes agregados del cambio en la pobreza monetaria, en donde, en particular, se aplica una descomposición que permite diferenciar entre efecto crecimiento, redistribución y línea de pobreza (Kolenikov y Shorrocks, 2005). En segundo lugar, se estudian los determinantes sociodemográficos, en donde se analiza la relevancia de las características económicas y sociodemográficas de los hogares en el cambio en la pobreza monetaria mediante una metodología semiparamétrica de descomposición basada en regresiones RIF (Fortin *et al*., 2011). Finalmente, se realizan ejercicios de microsimulaciones, que exponen los potenciales efectos de diferentes escenarios contrafácticos propuestos sobre los niveles de pobreza monetaria. A continuación, se describe cada etapa de la metodología.
+
+
+## 4.1. Descomposición de Kolenikov y Shorrocks (2005) {-}
+
+
+Los cambios en la pobreza monetaria es posible descomponerlos en factores asociados a los cambios de los ingresos, distributivos y de la línea de pobreza. En particular, el indicador de pobreza 𝑃 en un período 𝑡 puede expresarse como:
+
+
+$$P_t=F(z)=P(\mu_t,L_t,z_t) \tag{4.1}$$
+
+
+donde 𝜇 es el ingreso medio de los hogares, 𝐿 corresponde a la forma de la distribución del ingreso y 𝑧 es el valor de la línea de pobreza. Por lo tanto, en esta ecuación, se observa explícitamente que la pobreza puede cambiar ante un cambio en el ingreso medio (𝜇) y/o ante un cambio en la forma de la distribución (captada en 𝐿) y/o ante un cambio en la línea de pobreza (𝑧).
+
+
+Denotando $\Delta P = P_2 - P_1$ al cambio en la pobreza entre el período 1 y 2 y dada la expresión (4.1), el cambio en el indicador de pobreza entre estos dos períodos viene dado por:
+
+
+$$\Delta P=P(\mu_2,L_2,z_2)-P(\mu_1,L_1,z_1) \tag{4.2}$$
+
+
+que, a su vez, se puede descomponer en:
+
+
+$$\Delta P=\Delta P_C+\Delta P_R+\Delta P_L \tag{4.3}$$
+
+
+donde $\Delta P_C$, $\Delta P_R$ y $\Delta P_L$ son el “efecto crecimiento”, el “efecto redistribución” y el “efecto línea”, respectivamente, definidos formalmente como:[^33]
+
+
+$$\Delta P_C=\tfrac12\{[P(\mu_2,L_1,z_1)-P(\mu_1,L_1,z_1)]+[P(\mu_2,L_2,z_2)-P(\mu_1,L_2,z_2)]\} \tag{4.4}$$
+$$\Delta P_R=\tfrac12\{[P(\mu_2,L_2,z_2)-P(\mu_2,L_1,z_2)]+[P(\mu_1,L_2,z_1)-P(\mu_1,L_1,z_1)]\} \tag{4.5}$$
+$$\Delta P_L=\tfrac12\{[P(\mu_2,L_1,z_2)-P(\mu_2,L_1,z_1)]+[P(\mu_1,L_2,z_2)-P(\mu_1,L_2,z_1)]\} \tag{4.6}$$
+
+
+El primero describe el cambio en la pobreza correspondiente al cambio en el ingreso medio (manteniendo constante el nivel de desigualdad y la línea de pobreza), en tanto que el segundo describe el cambio en la pobreza correspondiente al cambio en el nivel de desigualdad (manteniendo constante el ingreso medio y la línea de pobreza). Por último, el efecto línea representa el cambio en la pobreza correspondiente al cambio en la línea de pobreza (manteniendo constante el ingreso medio y el nivel de desigualdad).[^34]
+
+
+Con el propósito de considerar las heterogeneidades regionales en precios en el análisis de los cambios en la pobreza monetaria, Kolenikov y Shorrocks (2005) proponen una metodología que, además de considerar los efectos crecimiento y redistribución, incorpora el efecto de los precios locales (o efecto línea de pobreza) a la descomposición. La propuesta se basa en dividir el ingreso real per cápita entre el ingreso nominal per cápita 𝜇 y la línea de pobreza 𝑧 (a nivel regional). De esta forma, se obtiene la contribución individual de tres componentes: el ingreso nominal medio, la desigualdad y la línea de pobreza. En este caso, este último efecto reflejaría el comportamiento del nivel de precios de las diferentes regiones.
+
+
+Las expresiones (4.4)-(4.6) resultan ser las contribuciones asociadas con el nivel y la distribución del ingreso <mark>en una descomposición de *Shapley* tridireccional del cambio en la pobreza</mark>. La reinterpretación descrita en Shorrocks (1999) considera los diversos factores (digamos, 𝑛 en total) que juntos determinan un indicador como el nivel general de pobreza y asigna a cada componente la contribución marginal promedio tomada sobre todas las 𝑛! posibles combinaciones en las que los componentes pueden “eliminarse” de forma secuencial.[^35] Es así que, debido a que el resultado de la descomposición depende de la elección de la categoría base, Kolenikov y Shorrocks (2005), en su propuesta, basados en Shorrocks (1999), utilizan el *Shapley-value* para solucionar este problema. Los atractivos particulares de esta técnica son que la descomposición siempre es exacta y que los factores se tratan simétricamente.
+
+
+::: {.disc .error #d15}
+**D15.** Como dice la nota 33, cada expresión promedia **dos** de las seis secuencias posibles; el valor de Shapley con tres factores promedia las **seis**. Las fórmulas suman exactamente el cambio total, pero no son el procedimiento que describe el párrafo. En Kolenikov y Shorrocks (2005) la frase se refiere a la descomposición de **dos** factores (nivel y distribución). Los cálculos usan `skdecomp`, presentado como un valor de Shapley: no es posible comprobar sin los microdatos cuál de las dos reglas produjo las tablas.
+:::
+
+
+El resultado final de esta metodología de descomposición es que los cambios en la pobreza monetaria se pueden asociar, exactamente, a tres componentes: un “efecto crecimiento” basado en los cambios de los ingresos nominales medios, un “efecto redistribución” basado en los cambios en los niveles de desigualdad y un “efecto línea de pobreza” que considera los cambios en los precios locales. Esta descomposición será estimada de acuerdo con la propuesta de Atuesta *et al*. (2012).
+
+
+En este trabajo, se realizará esta metodología debido a que permite incorporar el papel de la línea de pobreza y, dado que los cambios temporales y espaciales en las líneas de pobreza reflejan el comportamiento de los precios locales, resulta interesante incorporar dicha fuente de heterogeneidad, con el propósito de considerar las heterogeneidades regionales en precios en el análisis de los cambios en la pobreza monetaria en Colombia.
+
+
+## 4.2. Descomposición RIF {-}
+
+
+Para profundizar sobre el papel de los determinantes sociodemográficos, se estudia el cambio en la pobreza monetaria a partir de la metodología semiparamétrica de descomposición propuesta por Fortin *et al*. (2011), cuyo procedimiento combina una descomposición basada en regresiones RIF (*Recentered Influence Function*) (Firpo *et al*., 2009) con una estrategia de reponderación (DiNardo *et al*., 1996), que permite descomponer el cambio en la distribución de la pobreza más allá de la media. Esta metodología permite calcular la contribución sobre el cambio en la pobreza monetaria de cada covariable al efecto composición y al efecto estructura (Firpo *et al*., 2018).
+
+
+La metodología de reponderaciones permite computar el efecto agregado de cada uno de los componentes (composición y estructura) y también cuantificar el efecto aislado de las características en cada uno de estos componentes. Se comienza con la estrategia de reponderación (DiNardo *et al*., 1996). Formalmente, supóngase que 𝐹 es la función de distribución que describe la relación entre el ingreso per cápita de la unidad de gasto (𝑌) y un vector de características económicas y sociodemográficas del hogar (𝑋). También considérese 𝑡 como una variable binaria, cuyos valores 1 y 2 representan los períodos 1 y 2, respectivamente. La distribución acumulada de 𝑌, condicionada a cada período, se puede escribir como:
+
+
+$$F_{Y_k|t=k}=\int F_{Y_k|X,t=k}\,dF_{X|t=k} \tag{4.7}$$
+
+
+El cambio en el indicador de pobreza 𝑃 entre los períodos 1 y 2 se puede estimar empleando la distribución acumulada condicional de 𝑌 de la siguiente manera:
+
+
+$$\begin{aligned}\Delta P=P_2-P_1&=P(F_{Y_2|t=2})-P(F_{Y_1|t=1})\\&=P\left(\int F_{Y_2|X,t=2}dF_{X|t=2}\right)-P\left(\int F_{Y_1|X,t=1}dF_{X|t=1}\right)\end{aligned} \tag{4.8}$$
+
+
+La variación ∆𝑃 puede surgir debido a diferencias en la distribución de las características observadas de los hogares de uno a otro período (efecto composición) o a diferencias en la relación entre 𝑌 y 𝑋 (efecto estructura). Para estimar la magnitud de cada efecto, se plantea un escenario contrafactual, en el cual el estadístico de pobreza $P_{cf}$ se estima <mark>manteniendo los retornos a las características de 𝑡 = 1 con las características de 𝑡 = 2</mark>, como se presenta en (4.9). Es decir, se estima el nivel de pobreza monetaria que hubiera resultado en 𝑡 = 1 si los hogares tuvieran las características de los hogares en 𝑡 = 2.
+
+
+$$P_{cf}=P\left(F_{Y_1^{cf}|t=2}\right)=P\left(\int F_{Y_1^{cf}|X,t=1}dF_{X|t=2}\right) \tag{4.9}$$
+
+
+donde 𝑐𝑓 indica “contrafactual”. Una vez que se obtiene el escenario contrafactual, el cambio en el indicador de pobreza se descompone como se presenta en (4.10):
+
+
+$$\begin{aligned}\Delta P&=(P_2-P_{cf})+(P_{cf}-P_1)\\&=\left[P(F_{Y_2|t=2})-P(F_{Y_1^{cf}|t=2})\right]+\left[P(F_{Y_1^{cf}|t=2})-P(F_{Y_1|t=1})\right]\end{aligned} \tag{4.10}$$
+
+
+El primer término representa la brecha debida a la relación entre 𝑌 y 𝑋 (efecto estructura), en tanto que el segundo término representa la brecha debida a la diferencia en características (efecto composición). Para calcular (4.9), Fortin *et al*. (2011) proponen estimar la distribución contrafactual a través de una estimación de reponderación semiparamétrica. El proceso consiste en multiplicar la distribución de características $dF_{X|t=1}$ por un factor 𝛷(𝑋) con la intención de obtener una distribución de características igual a la del período 2, $dF_{X|t=2}$. El ponderador 𝛷(𝑋) es igual a:
+
+
+::: {.disc .error #d16}
+**D16.** La sección 4.2 define el contrafactual con **retornos de 2002 y características de 2018**. La tabla 16 usa las salidas `wgt(1)`, que según el *do-file* son **características de 2002 con retornos de 2018** (como sí describe la sección 5.2). El código también estima la versión descrita aquí (`wgt(0)`), pero su salida guarda una pobreza contrafactual nacional de **`r num(w0, 3)`** (con un error de especificación de `r num(w0se, 2)`), un resultado inverosímil que no se informa ni se discute.
+:::
+
+
+$$\Phi(X)=\frac{1-pr}{pr}\,\frac{prob(t=2|X)}{1-prob(t=2|X)} \tag{4.11}$$
+
+
+donde 𝑝𝑟 es la proporción de individuos en el período 2 y 𝑝𝑟𝑜𝑏(𝑡 = 2 | 𝑋) denota la probabilidad condicional de pertenecer a 𝑡 = 2 dadas las características 𝑋. Esa última probabilidad se calcula a partir de un modelo *logit* o *probit*, donde la variable dependiente es una *dummy* indicativa de la pertenencia del hogar al período 2. En este trabajo, se hará la estimación con un modelo *logit*.
+
+
+En cuanto a la descomposición desagregada, la extensión natural de la metodología previa es la propuesta por Fortin *et al*. (2011), basada en regresiones RIF. Esta metodología fue originalmente diseñada para computar el efecto parcial de un regresor sobre cualquier característica distributiva de 𝑌, medida por el indicador 𝑣(𝐹). La RIF es una transformación $\varphi_v(Y,F)$ definida para cada indicador 𝑣(𝐹) que satisfaga la propiedad de que $E[\varphi_v(Y,F)] = v(F)$. Luego, usando la ley de esperanzas iteradas, se tiene que $E\{E[\varphi_v(Y,F)|X]\} = v(F)$. Al suponer que la relación entre el valor esperado de la RIF y los regresores es lineal, se la puede escribir de la siguiente manera:
+
+
+$$E[\varphi_v(Y,F)|X]=X'\gamma_v \tag{4.12}$$
+
+
+y, por lo tanto, puede ser estimada mediante los métodos estándar de regresión. Entonces, suponiendo que la esperanza condicional de $\varphi_v(Y,F)$ puede modelarse como una función lineal de las covariables, Fortin *et al*. (2011) muestran que es posible estimar los 𝑣(𝐹) de $\Delta_X^v$ (efecto composición) y $\Delta_S^v$ (efecto estructura):
+
+
+$$\Delta_X^v=[E(X|A=2)-E(X|A=1)]'\gamma_v^1+R_v \tag{4.13}$$
+$$\Delta_S^v=E(X|A=2)'(\gamma_v^2-\gamma_v^c) \tag{4.14}$$
+$$\Delta_o^v=\Delta_X^v+\Delta_S^v \tag{4.15}$$
+
+
+donde $R_v = E(X|A=1)'(Y_v^2 - Y_v^c)$ <mark>representa el error de aproximación por el hecho de estar estimando de manera lineal</mark> el valor esperado de la RIF condicional en 𝑋. Esta representación tiene la ventaja de que permite cuantificar el aporte individual del cambio en cada característica observable dentro del vector 𝑋, debido a que es tan solo una combinación lineal de parámetros ($\gamma_v$) y características (𝑋). Además, como fue mencionado previamente, es posible estimar los parámetros por medio de los métodos usuales: para $\gamma_v^A$, con 𝐴 = 1,2, se utiliza mínimos cuadrados ordinarios, en tanto que $\gamma_v^c$ se obtiene también por el mismo método pero reponderando por 𝛷(𝑋).
+
+
+::: {.disc .error #d17}
+**D17.** En Fortin *et al.* (2011) el error de especificación del efecto composición es $R_v=E(X|A=c)'(\gamma_v^c-\gamma_v^1)$: usa **coeficientes** γ (no "Y") y la media **reponderada** de X (no la del período 1 con γ² − γᶜ). Falta además el **error de reponderación** del efecto estructura, $[E(X|A=2)-E(X|A=c)]'\gamma_v^c$. El código sí calcula ambos errores, y la tabla 16 los incluye dentro de C y E sin mostrarlos.
+:::
+
+
+## 4.3. Microsimulaciones {-}
+
+
+Esta metodología consiste en plantear diferentes escenarios contrafácticos basados en microsimulaciones. En términos generales, las microsimulaciones son modelos que utilizan información a nivel del agente microeconómico individual (individuos, hogares, firmas), por lo cual permiten obtener resultados de políticas económicas alternativas a nivel desagregado. Típicamente, se utilizan microdatos de una encuesta de hogares con información sobre características socioeconómicas del individuo, situación laboral e ingreso laboral. En consecuencia, se consideran las diferencias que muestran los microdatos entre individuos. En este trabajo, se realizan dos microsimulaciones paramétricas con comportamiento de los agentes económicos (es decir, que modifican sus elecciones), en las cuales se estima una ecuación de Mincer y un modelo de elección ocupacional. Adicionalmente, se realiza una microsimulación no paramétrica sin comportamiento de los agentes económicos (es decir, que no modifican sus elecciones), en la cual se buscan individuos “similares” en algún atributo para simular el cambio.
+
+
+Para realizar las dos primeras microsimulaciones, la variable dependiente de la ecuación de Mincer es el logaritmo del ingreso laboral (𝑙𝑖𝑙𝑎) y las variables independientes son la edad (y su cuadrado), una variable binaria que indica si el individuo es hombre, variables binarias por nivel educativo y, por último, una variable *dummy* que indica la categoría ocupacional (inactivo/desempleado/asalariado o no asalariado):[^36]
+
+
+$$\begin{aligned}lila_i={}&\beta_0+\beta_1 edad_i+\beta_2 edad_i^2+\beta_3 hombre_i+\beta_4 pric_i+\beta_5 seci_i+\beta_6 secc_i\\&+\beta_7 supi_i+\beta_8 supc_i+\beta_9 ocupdum3_i+u_i\end{aligned} \tag{4.16}$$
+
+
+A su vez, la estimación de la ecuación de Mincer se combina con un modelo de comportamiento para decisiones vinculadas al mercado laboral, las cuales dependen de características observables e inobservables. Para ello, se estima un modelo *logit* multinomial de elección ocupacional, en donde la variable dependiente es la decisión individual entre tres alternativas (no trabajar -inactivo/desempleado-, asalariado y no asalariado).[^37] Formalmente, para cada alternativa 𝑗, la función de utilidad individual (inobservable) se puede expresar como:
+
+
+$$U_j=V_j(X)+\varepsilon_j \tag{4.17}$$
+
+
+en donde $V_j(X)$ es el componente de utilidad que depende de las características observables y $\varepsilon_j$ es el componente de utilidad que depende de las características inobservables, que se supone aleatorio. Luego, se define una función para modelar la variable categórica de elección individual de ocupación (𝑌):
+
+
+$$Y=Y(X,\varepsilon) \tag{4.18}$$
+
+
+Por lo tanto, la decisión individual será aquella que maximice el nivel de utilidad, es decir:
+
+
+$$Y=j\iff U_j\geq U_k,\;\forall k\neq j \tag{4.19}$$
+
+
+En nuestro caso, con tres alternativas posibles, se tiene:
+
+
+$$Y=1\iff\begin{cases}U_1\geq U_2\\U_1\geq U_3\end{cases};\;Y=2\iff\begin{cases}U_2\geq U_1\\U_2\geq U_3\end{cases};\;Y=3\iff\begin{cases}U_3\geq U_1\\U_3\geq U_2\end{cases} \tag{4.20}$$
+
+
+Luego, se procede a definir:[^38]
+
+
+$$dU_{j1}=U_j-U_1,\;j=2,3 \tag{4.21}$$
+
+
+para poder expresar la regla de elección como:
+
+
+$$Y=1\iff\begin{cases}dU_{21}\leq0\\dU_{31}\leq0\end{cases};\;Y=2\iff\begin{cases}dU_{21}\geq0\\dU_{21}\geq dU_{31}\end{cases};\;Y=3\iff\begin{cases}dU_{31}\geq0\\dU_{31}\geq dU_{21}\end{cases} \tag{4.22}$$
+
+
+Suponiendo que $V_j(X) = X \ast \alpha_j$, se tiene:
+
+
+$$\begin{aligned}dU_{j1}&=U_j-U_1\\dU_{j1}&=(X\ast\alpha_j+\varepsilon_j)-(X\ast\alpha_1-\varepsilon_1)\\dU_{j1}&=X(\alpha_j-\alpha_1)+(\varepsilon_j-\varepsilon_1)\\dU_{j1}&=X\ast\lambda_{j,1}+r_{j,1},\;j=2,3\end{aligned} \tag{4.23}$$
+
+
+::: {.disc .error #d18}
+**D18.** La segunda línea debe ser $(X\alpha_j+\varepsilon_j)-(X\alpha_1+\varepsilon_1)$. Con el signo impreso no se obtiene $\varepsilon_j-\varepsilon_1$ de la línea siguiente.
+:::
+
+
+en donde $\lambda_{j,1} = \alpha_j - \alpha_1$ y $r_{j,1} = \varepsilon_j - \varepsilon_1$. Los parámetros $\alpha_j$ no pueden identificarse, pero sí los parámetros $\lambda_{j,1}$. Si se supone que los $\varepsilon_j$ son independientes entre sí y tienen una distribución doble exponencial, se llega al siguiente modelo *logit* multinomial:
+
+
+$$Pr(Y=j)=\frac{e^{X\ast\lambda_{j,1}}}{1+e^{X\ast\lambda_{2,1}}+e^{X\ast\lambda_{3,1}}},\;j=2,3 \tag{4.24}$$
+
+
+Luego, generando $\hat r_{2,1} = \varepsilon_2 - \varepsilon_1$ y $\hat r_{3,1} = \varepsilon_3 - \varepsilon_1$, se procede a calcular el nivel de utilidad como:
+
+
+$$dU_{j1}=X\ast\hat\lambda_{j,1}+\hat r_{j,1},\;j=2,3 \tag{4.25}$$
+
+
+y a evaluar cuál es la alternativa que elige el individuo cuando sigue la regla de elección descripta en (4.22). Dado que la elección individual de ocupación se modela como una función de características observables y parámetros (𝑌 = 𝑌(𝑋, 𝜆̂, 𝑟̂)), se pueden modificar una o más de las características incluidas en 𝑋 para simular cambios en 𝑌. Finalmente, los individuos reevalúan su utilidad de estar en una de las tres alternativas ocupacionales y seleccionan si moverse o no, en donde estas elecciones están determinadas por las características del individuo y del hogar.
+
+
+En síntesis, a efectos de este trabajo, estos ejercicios de microsimulaciones permiten comparar el nivel de pobreza monetaria original con los resultantes en los escenarios contrafactuales. De esta forma, se obtiene una aproximación empírica a los cambios que podrían realizarse a través de acciones de política económica que impacten en las características de los hogares para reducir los niveles de pobreza monetaria en Colombia.[^39]
+
+
+# 5. Resultados {-}
+
+
+## 5.1. Descomposición de Kolenikov y Shorrocks (2005) {-}
+
+
+Como se mencionó en la sección anterior, los cambios en la pobreza monetaria, dada la línea de pobreza, pueden estar asociados a cambios en el ingreso medio o a cambios en su distribución. Gráficamente, el primer efecto (crecimiento) sucede cuando hay desplazamientos de la función de densidad de la distribución del ingreso, en tanto que el segundo efecto (redistribución) se presenta cuando cambia la forma de esta función. En la Figura 5, que muestra la función de densidad de la distribución del logaritmo del ingreso per cápita de la unidad de gasto estimada no paramétricamente por el método de *kernel* por área geográfica para los años 2002 y 2018, se tiene una aproximación preliminar a los cambios en la pobreza monetaria explicados por el efecto crecimiento y el efecto redistribución.[^40] Se observa que, para todas las áreas geográficas, el cambio en la distribución del *ipcug* entre 2002 y 2018 se explicó, principalmente, por un desplazamiento hacia la derecha de la función de densidad, sin que cambiara de manera pronunciada su forma. De manera gráfica, la reducción de la pobreza se puede ver a través del área entre las funciones de densidad de los años en comparación que se encuentra a la izquierda de la línea de pobreza (ilustrada en la Figura 5 mediante las líneas verticales);[^41] en todos los casos, tal como fue visto anteriormente, la pobreza se ha reducido.[^42]
+
+
+En la descomposición de Kolenikov y Shorrocks (2005) -KS- llevada a cabo en esta sección, como ya fue mencionado oportunamente, además del efecto crecimiento y el efecto redistribución, se tiene el efecto línea, el cual reflejaría el comportamiento del nivel de precios de las diferentes áreas geográficas. Lo que se observa en forma preliminar a través de las funciones de densidad se confirma con la descomposición KS de los cambios en los indicadores de pobreza y de pobreza extrema FGT en efectos crecimiento, redistribución y línea (ver Tabla 13). La reducción de la incidencia, la brecha y la severidad de la pobreza y de la pobreza extrema en Colombia ha estado asociada al crecimiento de los ingresos (efecto crecimiento), en tanto que es relativamente baja la contribución del efecto redistributivo en la reducción de estos indicadores. Esto es claro al observar que, por ejemplo, entre 2002 y 2018, para el agregado nacional, el *ipcug* promedio real aumentó 41,4%, en tanto que el coeficiente de Gini sólo se redujo 9,81%.[^43] Adicionalmente, de acuerdo con estos resultados, el efecto línea tendió a incrementar la pobreza.
+
+
+**Figura 5.** Función de densidad de la distribución del logaritmo del ingreso per cápita de la unidad de gasto por área geográfica en Colombia 2002 y 2018.
+
+```{r figura-5, fig.height=4.5}
+imagenes('5', letters[1:4], '49%')
+```
+
+
+::: {.disc .error #d19}
+**D19.** `kdensity` se ejecuta **sin** `[w=fex_c]`, a diferencia de todo el resto del trabajo: las figuras 5 y A9 describen la **muestra**, no la población. Con los ingresos de 2018 guardados en la figura A14 se comprueba que la curva publicada es la no ponderada: su máximo es `r num(pico_u, 3)` sin ponderar (la figura muestra cerca de 0,50) y `r num(pico_p, 3)` ponderando; la proporción bajo la línea media dibujada pasa de `r num(100 * bajo_u, 1)`% a `r num(100 * bajo_p, 1)`%.
+:::
+
+```{r d19-1, fig.height=4}
+par(mar = c(4, 4, 2, 1)); plot(dens_u, type = "l", main = "Total nacional 2018: efecto de ponderar", xlab = "Logaritmo del ipcug", ylab = "Densidad", ylim = c(0, max(dens_u$y) * 1.1)); lines(dens_p, col = "#2874a6", lty = 2, lwd = 2); abline(v = log(257432.5), col = "red"); legend("topleft", c("Sin ponderar (como la figura 5)", "Ponderada"), col = c("black", "#2874a6"), lty = 1:2, bty = "n")
+```
+
+
+En la Tabla 13, se presentan los resultados de la descomposición KS del cambio en los indicadores de pobreza y de pobreza extrema FGT por área geográfica para el período 2002-2018 y para los subperíodos 2002-2005 y 2008-2018, para tener en cuenta los posibles efectos del cambio de encuesta que se dio en 2006 y ver si los cambios que se tienen al comparar 2002 y 2018 son resultado de tendencias que se verifican en ambos subperíodos o si, por el contrario, dentro del período, hay tendencias contrarias. La conclusión principal no es diferente al hacer el análisis en los distintos periodos considerados: la reducción de la pobreza monetaria en Colombia ha estado emparentada, principalmente, con el crecimiento de los ingresos y no tanto con la mejora en su redistribución, con un efecto línea contrarrestando esta reducción. Sin embargo, se observa que pequeñas reducciones de la desigualdad tienen efectos considerables sobre la reducción de la pobreza, en especial en la severidad de la pobreza. En el subperíodo 2008-2018, <mark>el rol de la redistribución de ingresos sobre la reducción de la incidencia de la pobreza y de la pobreza extrema ha aumentado en comparación a 2002-2005</mark>, pero sigue siendo reducido en contraste con lo acontecido en otros países de la región (ver Medina y Galván, 2014).
+
+
+::: {.disc .impr #d20}
+**D20.** Vale para el total nacional y las áreas urbanas, no para la **rural**: pasa de `r num(K[2, 4, 1, 1, 1], 1)` a `r num(K[2, 4, 1, 1, 2], 1)` puntos en pobreza y de `r num(K[2, 4, 1, 2, 1], 1)` a `r num(K[2, 4, 1, 2, 2], 1)` en pobreza extrema, aun cuando el segundo período es más largo.
+:::
+
+
+**Tabla 13.** Descomposición KS del cambio en los indicadores de pobreza y de pobreza extrema FGT por área geográfica en Colombia 2002-2018. Puntos porcentuales.
+
+```{r tabla-13, fig.height=4.5}
+t13()
+```
+
+
+Para poner en perspectiva <mark>las importancia</mark> de estos tres efectos que inciden en la evolución de la pobreza monetaria, se computa la participación relativa de cada uno en la reducción de la pobreza por área geográfica para el período 2002-2018 (ver Tabla 14). En primer lugar, se observa que el impacto del efecto crecimiento supera con creces al del efecto redistribución; por ejemplo, en el caso de la incidencia de la pobreza para el agregado nacional, el efecto crecimiento es 9,29 veces mayor que el efecto redistribución. Al comparar entre los indicadores de pobreza y de pobreza extrema, la participación de todos los efectos aumenta en este último caso, indicando el mayor impacto que tienen el crecimiento de los ingresos y la mejora en su redistribución sobre los niveles mínimos de subsistencia. A medida que pasamos de incidencia a brecha y, luego, a severidad, se nota que los efectos aumentan su contribución a la reducción de la pobreza y de la pobreza extrema, <mark>indicando también el mayor impacto que tienen sobre los más pobres</mark>.
+
+
+::: {.disc .metodo #d21}
+**D21.** Las participaciones son cada efecto dividido por un cambio total **neto**, que es pequeño cuando el efecto línea compensa gran parte del crecimiento. Suben porque se achica el denominador. En puntos porcentuales los efectos **disminuyen** de incidencia a severidad (crecimiento nacional: `r num(K[1, 1, 1, 1, 3], 1)`, `r num(K[1, 1, 2, 1, 3], 1)` y `r num(K[1, 1, 3, 1, 3], 1)`), y además los tres índices tienen escalas distintas. Habría que comparar cambios relativos al nivel inicial de cada índice.
+:::
+
+
+**Tabla 14.** Participación de los efectos crecimiento, redistribución y línea en la reducción de la pobreza por área geográfica en Colombia 2002-2018. Valores porcentuales.
+
+```{r tabla-14, fig.height=4.5}
+t14()
+```
+
+
+Al observar los cambios en los indicadores de pobreza por área geográfica, se tiene una situación bastante contrastante entre ellas (ver Figura 6 para la incidencia de la pobreza y de la pobreza extrema para el período 2002-2018).[^44] Ahora en forma gráfica, es posible observar también que, en todas las áreas geográficas, las variaciones de la incidencia de la pobreza y de la pobreza extrema se explican, principalmente, por el efecto crecimiento, siendo apenas apoyado por el efecto redistribución y bastante contrarrestado por el efecto línea. Si bien el efecto línea no parece variar mucho entre las diferentes áreas geográficas en el caso de la incidencia de la pobreza, es un poco mayor en el área rural y menor en las principales ciudades (ver Figura 6, Panel A); en el caso de la incidencia de la pobreza extrema, es bastante menor en las principales ciudades (ver Figura 6, Panel B). Siguiendo con la incidencia de la pobreza (Figura 6, Panel A), respecto al efecto crecimiento, se tiene que éste tiene un mayor impacto en el resto urbano, lo cual resulta más claro cuando recordamos que su *ipcug* promedio real aumentó 59,5% en este período, por encima del resto de las áreas. También es notable el impacto casi nulo que tiene el efecto redistribución en esta área, en línea con un Gini que se redujo sólo 3,1% en este período. Por otra parte, la mayor contribución de las mejoras en la redistribución en la reducción de la pobreza se da en las principales ciudades, así también, en esta área, se tiene el menor impacto del efecto crecimiento (consistente con el hecho de que fue el área con menor aumento de su *ipcug* promedio real). Cuando pasamos a analizar la incidencia de la pobreza extrema (Figura 6, Panel B), se nota que, ahora, tanto el efecto crecimiento como el efecto redistribución son mayores en el área rural, indicando cómo el crecimiento de los ingresos y la mejora en su redistribución contribuyen a reducir la pobreza extrema del área más vulnerable de Colombia en términos de subsistencia mínima; los demás resultados registran un patrón similar al caso de la incidencia de la pobreza. De igual manera, en los casos de la brecha y de la severidad de la pobreza, el efecto redistribución pasa a ser mayor en el área rural, cuando, en el caso de la incidencia, lo era en las principales ciudades (ver Figuras A10 y A11, Paneles A, en el Apéndice).
+
+
+**Figura 6.** Descomposición KS del cambio en la incidencia de la pobreza y de la pobreza extrema por área geográfica en Colombia 2002-2018. Puntos porcentuales.
+
+```{r figura-6, fig.height=4.5}
+f_ks(1)
+```
+
+
+Por último, se presentan los resultados de la descomposición KS del cambio en la incidencia de la pobreza y de la pobreza extrema por ciudades principales para el período 2002-2018 (ver Tabla 15 y Figura 7).[^45] En el caso de la incidencia de la pobreza, Cartagena, Manizales y Cúcuta presentaron los mayores efectos crecimiento. Por otro lado, Barranquilla, Montería y Bogotá presentaron las principales mejoras en la redistribución. Con relación al efecto línea, las ciudades que se caracterizaron por tener un componente alto, en general, fueron las ciudades con mayores niveles de pobreza a principios de la década (Cúcuta, Montería y Cartagena). Bogotá es la ciudad que tiene el menor efecto crecimiento y también el menor efecto línea, en tanto que Villavicencio tiene un efecto redistribución positivo (aunque casi nulo), indicando que, en este caso, empeoró la redistribución que posibilitó un incremento de la pobreza. En el caso de la incidencia de la pobreza extrema, el efecto línea registra un patrón similar al caso de la incidencia de la pobreza. En cambio, respecto al efecto crecimiento, ahora, son Cartagena, Cúcuta y Pasto las más beneficiadas, y Bogotá se mantiene con el menor impacto de este efecto. Y, en cuanto al efecto redistribución, las ciudades con mayores mejoras resultaron ser Barranquilla, Montería y Medellín, y, ahora, Villavicencio tiene un efecto redistribución negativo pero casi nulo. Al mirar los casos de la brecha y de la severidad de la pobreza y de la pobreza extrema, los resultados registran un patrón similar al caso de la incidencia (ver Tablas B9 y B10 y Figuras A12 y A13 en el Apéndice).
+
+
+A modo de síntesis, el resultado de esta descomposición indica que las ciudades que iniciaron la década con mayores niveles de pobreza, como Cúcuta, Montería, Cartagena y Pasto, presentaron importantes efectos crecimiento que tendieron a reducir la pobreza, pero que fueron contrarrestados, en buena medida, por los efectos línea, que tendieron a incrementarla.
+
+
+**Tabla 15.** Descomposición KS del cambio en la incidencia de la pobreza y de la pobreza extrema por ciudades principales en Colombia 2002-2018. Puntos porcentuales.
+
+```{r tabla-15, fig.height=4.5}
+t15('15', 1)
+```
+
+
+**Figura 7.** Descomposición KS del cambio en la incidencia de la pobreza y de la pobreza extrema por ciudades principales en Colombia 2002-2018. Puntos porcentuales.
+
+```{r figura-7, fig.height=7.5}
+f_ks_ciu(1)
+```
+
+
+## 5.2. Descomposición RIF {-}
+
+
+La metodología de descomposición RIF permite estimar la contribución de las características de los hogares y sus retornos en el cambio en la pobreza monetaria. Para su implementación, se construyó una distribución contrafactual del nivel de pobreza monetaria resultante si los hogares en 2018 hubieran tenido las características de los hogares en 2002. Ese procedimiento requiere estimar un modelo *logit* (cuya variable dependiente es una *dummy* indicativa de la pertenencia del hogar al año 2018) para obtener la probabilidad que tiene un hogar de pertenecer al grupo de hogares de 2018, dado un vector de características. En particular, <mark>las variables explicativas utilizadas fueron las mencionadas en la sección 3.2 (excepto la tasa de informalidad laboral en el hogar)</mark>.[^46] A partir de los resultados del modelo *logit*, se reponderan los hogares en 2018 a fin de que sus características observables sean similares a las de los hogares en 2002.
+
+
+::: {.disc .error #d22}
+**D22.** Las diez variables de `oaxaca_rif` son miembros, proporción de mujeres, niños, educación, tres del jefe (mujer, joven, cuenta propia), desempleo, ingreso no laboral y ayudas. También falta la **participación laboral femenina** (`t_plf`).
+:::
+
+
+::: {.disc .error #d23}
+**D23.** La descomposición usa `ing_nolab_hog` de la base original, en **pesos corrientes** de 2002 y 2018. La versión deflactada (`ing_nolab_hog_real`) solo se crea para las tablas 1 y 2. Por lo tanto, el "efecto composición" y el *logit* de reponderación mezclan el cambio de precios con el cambio real de esta característica.
+:::
+
+
+En la Tabla 16, se presentan los resultados de la descomposición RIF del cambio en los indicadores de pobreza y de pobreza extrema FGT por área geográfica para el período 2002-2018. En todos los casos, tanto el efecto composición como el efecto estructura son negativos y estadísticamente significativos. <mark>Excepto en el área rural, el efecto composición explica, en su mayoría, la reducción de la pobreza y de la pobreza extrema</mark> en Colombia entre 2002 y 2018, considerando cualquier indicador FGT. Lo anterior significa que la disminución del número de miembros en el hogar, las mejoras en el nivel educativo de los hogares, la disminución de la tasa de desempleo en el hogar, el aumento de los ingresos no laborales y los cambios en la composición de los hogares acontecidos en Colombia entre 2002 y 2018 <mark><mark>se relacionaron positivamente con la reducción de la pobreza y de la pobreza extrema, en los tres tipos de indicadores FGT</mark></mark>. Dicho de otra forma, en 2018 respecto a 2002, los hogares tenían niveles de pobreza y de pobreza extrema más bajos porque, por ejemplo, tenían menor cantidad de miembros, más años de educación, una menor tasa de desempleo y percibían más ingresos no laborales.
+
+
+::: {.disc .error #d24}
+**D24.** En el **total nacional**, la brecha y la severidad de la pobreza se explican más por el efecto **estructura**: `r num(primero(rif(1, 1, "tn")$est, "t_unexplained"), 3)` contra `r num(primero(rif(1, 1, "tn")$est, "t_explained"), 3)` en brecha, y `r num(primero(rif(2, 1, "tn")$est, "t_unexplained"), 3)` contra `r num(primero(rif(2, 1, "tn")$est, "t_explained"), 3)` en severidad.
+:::
+
+
+::: {.disc .impr #d25}
+**D25.** La tabla 16 solo muestra efectos agregados. Las contribuciones por variable guardadas en `.res/RIF/` indican que educación, niños y desempleo contribuyen a reducir la pobreza en las 24 combinaciones, pero las variables del **jefe de hogar** tienen con frecuencia contribuciones positivas (la aumentan) y la de **miembros** también es positiva en algunos casos urbanos. La tabla cuenta, entre las 24 combinaciones de área, índice y línea, cuántas veces cada contribución es positiva a tres decimales.
+:::
+
+```{r d25-1}
+tab(data.frame(Variable = rownames(contrib), "Reduce (< 0)" = rowSums(contrib < 0), "Nula (0,000)" = rowSums(contrib == 0), "Aumenta (> 0)" = rowSums(contrib > 0), "Total nacional, incidencia de la pobreza" = num(contrib[, 1], 3), check.names = FALSE))
+```
+
+
+**Tabla 16.** Descomposición RIF del cambio en los indicadores de pobreza y de pobreza extrema FGT por área geográfica en Colombia 2002-2018.
+
+```{r tabla-16, fig.height=4.5}
+t16()
+```
+
+
+::: {.disc .error #d26}
+**D26.** En la severidad de la pobreza extrema de las principales ciudades, la salida de Stata guarda composición **`r num(primero(rif(2, 2, "urb")$est, "t_explained"), 3)`** y estructura **+`r num(primero(rif(2, 2, "urb")$est, "t_unexplained"), 3)`** (positiva y significativa), no −0,008 y −0,000. Eso contradice la frase "tanto el efecto composición como el efecto estructura son negativos".
+:::
+
+
+::: {.disc .metodo #d27}
+**D27.** La columna T difiere del cambio de las tablas 5 y 6: en incidencia de la pobreza es `r num(100 * primero(rif(0, 1, "tn")$est, "tdifference"), 1)` puntos contra `r num(fgt$tn[1, 15] - fgt$tn[1, 1], 1)` nacional, y `r num(100 * primero(rif(0, 1, "rur")$est, "tdifference"), 1)` contra `r num(fgt$rur[1, 15] - fgt$rur[1, 1], 1)` rural. La mayor diferencia está en el nivel de 2018 (`r num(100 * primero(rif(0, 1, "tn")$est, "group_1"), 1)`% contra `r num(fgt$tn[1, 15], 1)`%). Una explicación probable es que la estimación pierde a los hogares sin miembros activos, donde el desempleo no está definido ([D3](#d3)). El texto no lo menciona.
+:::
+
+
+## 5.3. Microsimulaciones {-}
+
+
+Finalmente, en esta sección, se presentan los resultados de las microsimulaciones, las cuales se realizan para el agregado nacional para 2018. En el primer escenario contrafáctico (*secc*), se asigna educación secundaria completa a todos los individuos entre 18 y 40 años de edad que tengan un nivel educativo inferior a éste y <mark>se observa el impacto respectivo en los ingresos laborales individuales</mark> y, por consiguiente, sobre el nivel de pobreza monetaria. La variación en el nivel educativo cambia la elección individual de la ocupación después de que los individuos reevalúan su utilidad de estar en una de las tres alternativas posibles en el mercado laboral (inactivo/desempleado, asalariado, no asalariado) una vez que están más educados y deciden cambiar o no, de acuerdo a sus características y a las del hogar. En el segundo escenario contrafáctico (*desemp*), <mark>se reduce la tasa de desempleo de la economía en 5 puntos porcentuales</mark> (siendo igual a 9,68% para la muestra de 2018) y, luego, el mecanismo opera igual que en el caso anterior. El último escenario contrafáctico (*trnsfr*) se construye a partir de una microsimulación que implementa un esquema de transferencias que consiste en asignarles una transferencia a los individuos mayores a 60 años de edad que perciben un ingreso laboral individual menor a la línea de pobreza, <mark>la cual se financia mediante el ingreso laboral de los individuos de más altos ingresos de la población</mark>,[^47] a razón de un monto equivalente a la línea de pobreza nacional promedio por individuo. Las dos primeras son microsimulaciones paramétricas con comportamiento de los agentes económicos y la tercera es una microsimulación no paramétrica sin comportamiento de los agentes económicos.
+
+
+::: {.disc .error #d28}
+**D28.** `scen-defn-desemp.do` fija participaciones que restan alrededor de 5 puntos a "no trabaja" sobre **toda la población de 15 a 64 años** (inactivos y desocupados) y los reparten entre asalariados y no asalariados. Son **`r num(movidos, 0)`** personas. Con la tasa de 9,68% que cita el texto y los ocupados de la tabla del propio *do-file*, bajar 5 puntos el desempleo requeriría ocupar cerca de **`r num(cinco_pp, 0)`**. Además las participaciones están escritas a mano.
+:::
+
+```{r d28-1}
+tab(data.frame(Sexo = c("Mujer", "Varón"), num(100 * obs_part, 2), num(100 * meta_part, 2)) |> setNames(c("Sexo", "No trabaja (obs.)", "Asalariado (obs.)", "No asal. (obs.)", "No trabaja (meta)", "Asalariado (meta)", "No asal. (meta)")))
+```
+
+
+En la Tabla 17, se comparan los resultados en los indicadores de pobreza y de pobreza extrema FGT obtenidos tras las microsimulaciones con estos mismos indicadores en 2018. Para el caso de la primera microsimulación (*secc*), se puede observar que, en todas las áreas geográficas, todos los indicadores de pobreza y de pobreza extrema disminuyen. Por ejemplo, para el agregado nacional, la incidencia, la brecha y la severidad de la pobreza se reducen en <mark>7,2, 9,3% y 10,5%</mark>, respectivamente. Se tienen reducciones aún mayores para el caso de los indicadores de pobreza extrema. <mark>Estos resultados son consecuentes con el hecho de que los retornos a la educación son positivos, por lo que mayor cantidad de años de educación, en promedio, aumenta el ingreso de los hogares</mark> y, en consecuencia, reduce la pobreza. Por otra parte, al comparar entre áreas geográficas, se nota que, a medida que pasamos de la incidencia a la severidad, las reducciones son mayores, <mark>excepto en el caso de los indicadores de pobreza extrema en el resto urbano</mark>, en donde ocurre lo contrario, las reducciones van en descenso de la incidencia a la severidad. Esto indica que, excepto en el resto urbano, los impactos en la reducción de la pobreza son mayores en los más pobres.
+
+
+::: {.disc .error #d29}
+**D29.** `sim-secc.do` asigna secundaria completa para recalcular la **elección ocupacional**, pero **restaura la educación original antes de `genera-ing-laboral`** y además conserva el ingreso observado de quien no cambia de ocupación (`replace ila_=ila if (ocup_sim==ocup)`). Los retornos a la educación no intervienen: la caída de la pobreza proviene solo de cambios de alternativa ocupacional. Es coherente con los datos de la figura A14: apenas alrededor del **`r num(100 * cambian["secc"], 0)`%** de las observaciones tiene un ingreso distinto del original (`r num(100 * cambian["desemp"], 0)`% en *desemp*).
+:::
+
+
+::: {.disc .impr #d30}
+**D30.** En *secc* las reducciones tampoco crecen siempre de incidencia a severidad en la pobreza extrema **nacional** (brecha `r num(V["tn E1", "secc"], 2)`%, severidad `r num(V["tn E2", "secc"], 2)`%), y en *trnsfr* ocurre algo similar en varias áreas. La síntesis que habla de "todas las microsimulaciones" contradice además la excepción del resto urbano que el mismo texto señala (incidencia `r num(V["resturb E0", "secc"], 1)`%, severidad `r num(V["resturb E2", "secc"], 1)`%).
+:::
+
+
+En la segunda microsimulación (*desemp*), los resultados indican que, <mark>en todas las áreas geográficas, todos los indicadores disminuyen en una mayor cuantía al escenario anterior</mark>. Por ejemplo, para el agregado nacional, ahora, la incidencia, la brecha y la severidad de la pobreza tienen reducciones de 8,8%, 12,5% y 15,5%, respectivamente. En este caso, la caída en los niveles de pobreza se debe a que aumenta la tasa de empleo y, por lo tanto, aumenta el ingreso de los hogares. A su vez, para todas las áreas geográficas, a medida que se pasa de la incidencia a la severidad, las reducciones son mayores, indicando, nuevamente, que los impactos en la reducción de la pobreza son mayores en los más pobres. Nuevamente, las reducciones son mayores para el caso de los indicadores de pobreza extrema. Sin embargo, es destacable el hecho de que, para el área urbana (principales ciudades y resto urbano), la reducción casi que se duplica al pasar de los indicadores de pobreza a los de pobreza extrema, indicando el importante impacto que tiene el aumento de la tasa de empleo en los centros urbanos para los individuos que no alcanzan un nivel mínimo de subsistencia.
+
+
+::: {.disc .error #d31}
+**D31.** En el área **rural** los seis indicadores caen **menos** con *desemp* que con *secc* (incidencia de la pobreza: `r num(V["rur P0", "desemp"], 1)`% contra `r num(V["rur P0", "secc"], 1)`%). El texto lo describe correctamente dos párrafos más adelante.
+:::
+
+
+En la última microsimulación (*trnsfr*), se obtienen patrones similares a los casos anteriores, aunque, en este caso, los impactos en la reducción de la pobreza y de la pobreza extrema son sustancialmente menores. Por ejemplo, para el agregado nacional, ahora, la incidencia, la brecha y la severidad de la pobreza se reducen en 1,2%, 1,6% y 2,0%, respectivamente. En este caso, la caída en los niveles de pobreza se debe a que aumenta el ingreso laboral individual de los adultos mayores que no alcanzan la línea de pobreza, pero, por ser una proporción relativamente pequeña en el total de la población pobre, el impacto en los indicadores de pobreza es relativamente pequeño.[^48]
+
+
+::: {.disc .error #d32}
+**D32.** Con los ingresos guardados en la figura A14, el ingreso total expandido **cae** en cerca de **\$`r num(-neto / 1e9, 1)` miles de millones** mensuales. Los débitos de la nota 47 (461.172 personas × la línea media) suman \$`r num(debitos / 1e9, 1)` miles de millones, así que se entregan solo unos \$`r num((debitos + neto) / 1e9, 1)`: se quita alrededor de un **`r num(100 * (debitos / (debitos + neto) - 1), 0)`% más** de lo que se transfiere. El *do-file* calcula el equilibrio sumando transferencias y observaciones **sin ponderar**.
+:::
+
+```{r d32-1}
+tab(data.frame(Escenario = names(totales), "Ingreso total expandido (miles de millones)" = num(totales / 1e9, 1), "Cambio contra el original" = num((totales - totales[1]) / 1e9, 1), check.names = FALSE))
+```
+
+
+::: {.disc .metodo #d33}
+**D33.** La transferencia se calcula con el **ingreso laboral**, definido solo para ocupados: los mayores de 60 sin trabajo, probablemente los más vulnerables, no reciben nada. El monto completa la línea **nacional media**, pero la pobreza se mide con líneas locales; el umbral de 5 millones para los débitos está fijado a mano.
+:::
+
+
+Cuando comparamos entre áreas geográficas, se nota que, en el caso de la microsimulación *secc*, los impactos son mayores en el área rural. En cambio, en el caso de la microsimulación *desemp*, los impactos son mayores en las principales ciudades, con un impacto relativamente reducido en el área rural. Lo anterior es consecuente con lo presentado en la Sección 3.2 del presente trabajo (ver Tabla 2), en donde se vio, por un lado, que los hogares rurales tienen, en promedio, considerablemente menos años de educación y una menor tasa de desempleo que las demás áreas y, por otro lado, que los hogares de las principales ciudades tienen una tasa de desempleo promedio por encima de la correspondiente al agregado nacional.
+
+
+En síntesis, <mark>en todas las microsimulaciones, se puede observar cómo los impactos en la reducción de la pobreza son mayores en los más pobres</mark>, lo cual se refleja, por un lado, en que las caídas son mayores en los indicadores de pobreza extrema en comparación a los de pobreza y, por otro lado, en que las caídas son mayores en la severidad de la pobreza en comparación a la incidencia.
+
+
+**Tabla 17.** Indicadores de pobreza y de pobreza extrema FGT por área geográfica en escenario original y en escenarios contrafácticos para Colombia 2018.
+
+```{r tabla-17, fig.height=4.5}
+t17()
+```
+
+
+Por último, a fin de ilustrar gráficamente los cambios en la pobreza monetaria entre el escenario original y los respectivos escenarios contrafácticos, una herramienta útil es la curva de incidencia del crecimiento (CIC).[^49] En el eje horizontal de esta curva, se presentan los percentiles del *ipcug*, en tanto que, en el eje vertical, la variación porcentual promedio de esta variable. Por lo tanto, si esta curva se encuentra por encima del eje horizontal, se puede inferir que la pobreza disminuye y, de igual forma, si tiene pendiente negativa, expone que la desigualdad se reduce.
+
+
+Siendo así, a fin de realizar una breve ilustración gráfica, se presentan las curvas de incidencia del crecimiento para el agregado nacional para las microsimulaciones *secc*, *desemp* y *trnsfr* (ver Figura 8). En los dos primeros casos, la CIC está completamente por encima del eje horizontal, indicando que, en ambos casos, la pobreza disminuye respecto del escenario original y, adicionalmente, se puede mencionar que la desigualdad también lo hace, ya que, a medida que se asciende hacia estratos más ricos de la distribución, los aumentos proporcionales del ingreso son, cada vez, menores. En el caso de la microsimulación *trnsfr*, se tiene una situación semejante, en donde, en este caso, <mark>el 90% de los percentiles correspondientes a los individuos de más bajos ingresos se encuentra por encima del eje horizontal</mark>, indicando que la pobreza disminuye respecto del escenario original y, a su vez, que la desigualdad también lo hace, ya que el 10% restante de los percentiles, correspondientes a los individuos de más altos ingresos, se encuentra por debajo del eje.
+
+
+::: {.disc .impr #d34}
+**D34.** En la figura 8 son negativos los percentiles **`r min(neg8)` a `r max(neg8)`** (`r length(neg8)` de los 99 graficados): el 90 también cae. Las curvas omiten el percentil 1 sin decirlo y son **no anónimas** (cada persona permanece en su percentil original). Las lecturas de *secc* y *desemp* (curvas positivas y decrecientes) son correctas.
+:::
+
+
+En línea con los resultados de la Sección 5.2, a partir de los resultados derivados de estas microsimulaciones, se puede concluir que aumentar tanto el nivel educativo como la tasa de empleo de la población tienen un efecto aliviador de la pobreza y de la pobreza extrema, con mayor impacto en los más pobres.
+
+
+**Figura 8.** Curvas de incidencia del crecimiento para el agregado nacional (escenario original versus escenarios contrafácticos).
+
+```{r figura-8, fig.height=3.5}
+f_cic()
+```
+
+
+# 6. Conclusiones {-}
+
+
+En las últimas dos décadas, la pobreza monetaria en Colombia se ha reducido de manera significativa, tomando cualquier indicador estándar de medición de la pobreza. Sin embargo, esa tendencia ha tenido fuertes heterogeneidades entre áreas geográficas, tanto por los niveles de reducción como por los componentes asociados. Las diferencias en los niveles de vida y de bienestar (al tomar como variable *proxy* el ingreso per cápita de la unidad de gasto) entre las áreas urbanas y rurales se han mantenido en las últimas dos décadas. Por ejemplo, se tiene que, para 2018, la incidencia de la pobreza en el área rural fue 2,23 veces la de las 13 ciudades principales y sus áreas metropolitanas, en tanto que el ingreso promedio en aquella área <mark>no superó el equivalente al 33,11% de estas ciudades</mark>.
+
+
+::: {.disc .error #d35}
+**D35.** Con la tabla 2, 387.428 / 1.140.521 = **`r num(100 * car$rur[1, 5] / car$urb[1, 5], 2)`%**, que sí supera el 33,11%.
+:::
+
+
+En este contexto, el objetivo de este trabajo fue estudiar la influencia que han tenido, por un lado, el crecimiento de los ingresos, los cambios distributivos y la variación de los precios locales y, por otro lado, las características económicas y sociodemográficas de los hogares sobre la evolución de la pobreza monetaria en Colombia durante el período 2002-2018, considerando la heterogeneidad a lo largo del país. Para tal fin, se aplicaron las descomposiciones de Kolenikov y Shorrocks (2005) y de Fortin *et al*. (2011) y, a partir de microsimulaciones, se estimó el efecto de aumentar el nivel educativo y la tasa de empleo y de un esquema de transferencias sobre los niveles de pobreza monetaria.
+
+
+Como principales resultados, se encuentra que el efecto crecimiento y el efecto redistribución tendieron a reducir la pobreza, en tanto que el efecto línea tendió a incrementarla, <mark><mark>patrón que se mantiene a lo largo de las diferentes áreas geográficas y de cada una de las principales ciudades</mark></mark>. En todos los casos, el crecimiento de los ingresos fue superior al efecto redistribución y, en las principales ciudades con mayores niveles de pobreza, el efecto crecimiento se contrarrestó, en buena medida, por el efecto línea. Por otro lado, se obtiene que la disminución del número de miembros en el hogar, las mejoras en el nivel educativo de los hogares, la disminución de la tasa de desempleo en el hogar, el aumento de los ingresos no laborales y los cambios en la composición de los hogares acontecidos en Colombia entre 2002 y 2018 <mark><mark>se relacionaron positivamente con la reducción de la pobreza y de la pobreza extrema, en los tres tipos de indicadores FGT</mark></mark>. Además, también se obtiene que aumentar tanto el nivel educativo como la tasa de empleo de la población tienen un efecto aliviador de la pobreza y de la pobreza extrema, con mayor impacto en los más pobres.
+
+
+Los resultados examinados advierten cierta heterogeneidad entre las diferentes áreas geográficas, lo cual, en línea con la literatura relacionada, permite afirmar que no existen recetas únicas en materia de políticas públicas para desencadenar procesos sustentables en materia de reducción de la pobreza monetaria. Sin embargo, las acciones que alienten el crecimiento del ingreso combinadas con políticas activas que cautelen su mejor distribución y atiendan, preferentemente, a los más pobres generarán sinergias positivas en la reducción de la pobreza monetaria en Colombia.
+
+
+# Referencias {-}
+
+
+Atuesta, B., Azevedo, P., Castaneda, A. y Sanfelice, V. (2012). SKDECOMP: Stata Module to Estimate Shapley Value of Growth, Price and Distribution Components on Changes in Poverty Indicators. *Statistical Software Components*, S457564. Boston College Department of Economics. Recuperado de https://ideas.repec.org/c/boc/bocode/s457564.html
+
+
+Azevedo, J., Inchauste, G., Olivieri, S., Saavedra, J. y Winkler, H. (2013). Is Labor Income Responsible for Poverty Reduction? A Decomposition Approach. Banco Mundial, *Policy Research Working Paper*, 6414. Recuperado de http://documents.worldbank.org/curated/en/882051468340821632/pdf/wps6414.pdf
+
+
+Banco Mundial (2011). On the Edge of Uncertainty: Poverty Reduction in Latin America and the Caribbean During the Great Recession and Beyond. *LAC Poverty and Labor Brief*, 66146. Recuperado de https://openknowledge.worldbank.org/bitstream/handle/10986/26686/661460WP0P12460UBLIC00plb0fall02011.pdf?sequence=1&isAllowed=y
+
+
+Banco Mundial (2018). La pobreza y la prosperidad compartida 2018. Armando el rompecabezas de la pobreza. Panorama general. Recuperado de https://openknowledge.worldbank.org/bitstream/handle/10986/30418/211330ovSP.pdf
+
+
+Bracco, J., Gasparini, L. y Tornarolli, L. (2019). Explorando los cambios de la pobreza en Argentina: 2003-2015. *Centro de Estudios Distributivos, Laborales y Sociales -CEDLAS-, Documento de Trabajo*, 245. Recuperado de https://www.cedlas.econo.unlp.edu.ar/wp/wp-content/uploads/doc_cedlas245.pdf
+
+
+Busso, M., Cerimedo, F. y Cicowiez, M. (2005). Pobreza, crecimiento y desigualdad: Descifrando la última década en Argentina. *Centro de Estudios Distributivos, Laborales y Sociales -CEDLAS-, Documento de Trabajo*, 21. Recuperado de https://www.cedlas.econo.unlp.edu.ar/wp/wp-content/uploads/doc_cedlas21.pdf
+
+
+Cruces, G. y Gasparini, L. (2013). Políticas sociales para la reducción de la desigualdad y la pobreza en América Latina y el Caribe. Diagnóstico, propuesta y proyecciones con base en la experiencia reciente. *Centro de Estudios Distributivos, Laborales y Sociales -CEDLAS-, Documento de Trabajo*, 142, 26-36. Recuperado de https://www.cedlas.econo.unlp.edu.ar/wp/wp-content/uploads/doc_cedlas142.pdf
+
+
+Datt, G. y Ravallion, M. (1992). Growth and Redistribution Components of Changes in Poverty Measures: A Decomposition with Applications to Brazil and India in the 1980’s. *Journal of Development Economics, 38*(2), 275-295. https://doi.org/10.1016/0304-3878(92)90001-P
+
+
+Departamento Administrativo Nacional de Estadística -DANE- (2019). Pobreza monetaria y multidimensional en Colombia 2018. Boletín técnico. Recuperado de https://www.dane.gov.co/files/investigaciones/condiciones_vida/pobreza/2018/bt_pobreza_monetaria_18.pdf
+
+
+Departamento Nacional de Planeación -DNP- (2018). Pobreza monetaria y pobreza multidimensional. Análisis 2010-2017. Dirección de Desarrollo Social, Bogotá. Recuperado de https://colaboracion.dnp.gov.co/CDT/Desarrollo%20Social/Pobreza%20Monetaria%20y%20Multidimensional%20en%20Colombia%202010-2017.pdf
+
+
+DiNardo, J., Fortin, N. M. y Lemieux, T. (1996). Labor Market Institutions and the Distribution of Wages, 1973-1992: A Semiparametric Approach. *Econometrica, 64*(5), 1001-1044. Recuperado de https://www.jstor.org/stable/2171954
+
+
+Domínguez Moreno, J. A. (2011). Informalidad laboral y pobreza urbana en Colombia. Centro de Investigaciones y Documentación Socioeconómica -CIDSE-, Facultad de Ciencias Sociales y Económicas, Universidad del Valle. Recuperado de https://drive.google.com/open?id=0B3qvoF5cGd68dDJnYm5STm43anM
+
+
+Firpo, S. P., Fortin, N. M. y Lemieux, T. (2009). Unconditional Quantile Regressions. *Econometrica, 77*(3), 953-973. https://doi.org/10.3982/ECTA6822
+
+
+Firpo, S. P., Fortin, N. M. y Lemieux, T. (2018). Decomposing Wage Distributions Using Recentered Influence Function Regressions. *Econometrics, 6*(28), 1-40. Recuperado de https://www.mdpi.com/2225-1146/6/2/28/pdf
+
+
+Fortin, N. M., Lemieux, T. y Firpo, S. P. (2011). Decomposition Methods in Economics. In O. Ashenfelter and D. Card (ed.), *Handbook of Labor Economics* (pp. 1-102). Elsevier B.V. https://doi.org/10.1016/S0169-7218(11)00407-2
+
+
+Foster, J., Greer, J. y Thorbecke, E. (1984). A Class of Decomposable Poverty Measures. *Econometrica*, *52*(3), 761-766. https://doi.org/10.2307/1913475
+
+
+Gasparini, L., Cicowiez, M. y Sosa Escudero, W. (2013). *Pobreza y desigualdad en América Latina: Conceptos, herramientas y aplicaciones* (1ra. ed.). Buenos Aires: Temas Grupo Editorial SRL. Recuperado de http://www.cedlas.econo.unlp.edu.ar/wp/wp-content/uploads/Pobreza_desigualdad_-_America_Latina.pdf
+
+
+Jain, L. R. y Tendulkar, S. D. (1990). Role of Growth and Distribution in the Observed Change Headcount Ratio Measure of Poverty: A Decomposition Exercise for India. *Indian Economic Review, 25*(2), 165-205. Recuperado de https://www.jstor.org/stable/42657351
+
+
+Kakwani, N. (1990). Poverty and Economic Growth with Application to Côte d'Ivoire. Banco Mundial, <mark>Living Standars</mark> Measurement Study, Working Paper, 63. Recuperado de https://documents1.worldbank.org/curated/en/642341468749743757/pdf/multi0page.pdf
+
+
+Kakwani, N. (1997). On Measuring Growth and Inequality Components of Poverty with Applications to Thailand. *Journal of Quantitative Economics, 16*(1)*,* 67-79. Recuperado de https://www.researchgate.net/publication/252454432_On_Measuring_Growth_and_Inequality_Components_of_Poverty_with_Application_to_Thailand/link/540ea4370cf2df04e756e00a/download
+
+
+Kakwani, N. y Subbarao, N. (1990). Rural Poverty and Its Alleviation in India. *Economic & Political Weekly, 25*(13), A2-A16. Recuperado de https://www.jstor.org/stable/4396096
+
+
+Kolenikov, S. y Shorrocks, A. F. (2005). A Decomposition Analysis of Regional Poverty in Russia. *Review of Development Economics, 9*(1), 25-46. https://doi.org/10.1111/j.1467-9361.2005.00262.x
+
+
+Medina, F. y Galván, M. (2014). Crecimiento económico, pobreza y distribución del ingreso. Fundamentos teóricos y evidencia empírica para América Latina, 1997-2007. Comisión Económica para América Latina y el Caribe -CEPAL-, *Serie Estudios Estadísticos*, 82, 1-89. Recuperado de https://repositorio.cepal.org/bitstream/handle/11362/36652/S2013684_es.pdf?sequence=1&isAllowed=y
+
+
+Misión para el Empalme de las Series de Empleo, Pobreza y Desigualdad -MESEP- (2012). Pobreza monetaria en Colombia: Nueva metodología y cifras 2002-2010. Departamento Nacional de Planeación -DNP-, Departamento Administrativo Nacional de Estadística -DANE-, Bogotá. Recuperado de https://www.dane.gov.co/files/noticias/Pobreza_nuevametodologia.pdf
+
+
+Núñez M., J. y Ramírez J., J. C. (2002). Determinantes de la pobreza en Colombia. Años recientes. Comisión Económica para América Latina y el Caribe -CEPAL-, *Serie Estudios y Perspectivas*, 1, 1-53. Recuperado de https://repositorio.cepal.org/bitstream/handle/11362/4789/1/S029701_es.pdf
+
+
+Obando Rozo, N. y Andrián, L. G. (2016). Measuring Changes in Poverty in Colombia: The 2000s. Banco Interamericano de Desarrollo -BID-, Technical Note, IDB-TN-1074. Recuperado de https://publications.iadb.org/publications/english/document/Measuring-Changes-in-Poverty-in-Colombia-The-2000s.pdf
+
+
+Sánchez Torres, R. M. (2015). Descomposiciones de los cambios en la pobreza en Colombia 2002-2012. *Revista Desarrollo y Sociedad*, 75, 349-398. Recuperado de http://revistas.uniandes.edu.co/doi/pdf/10.13043/dys.75.9
+
+
+Shorrocks, A. F. (1999). Decomposition Procedures for Distributional Analysis: A Unified Framework Based on the Shapley Value. *The Journal of Economic Inequality*, 11, 99-126. https://doi.org/10.1007/s10888-011-9214-z
+
+
+Son, H. H. (2003). <mark>A New Poverty Descomposition</mark>. *The Journal of Economic Inequality*, 1, 181-187. https://doi.org/10.1023/A:1026122624752
+
+
+# Apéndice {-}
+
+
+# A. Figuras adicionales {-}
+
+
+**Figura A1.** Brecha de la pobreza por área geográfica en Colombia 2002-2018.
+
+```{r figura-A1, fig.height=4.5}
+f_serie(2)
+```
+
+
+**Figura A2.** Brecha de la pobreza extrema por área geográfica en Colombia 2002-2018.
+
+```{r figura-A2, fig.height=4.5}
+f_serie(5)
+```
+
+
+**Figura A3.** Severidad de la pobreza por área geográfica en Colombia 2002-2018.
+
+```{r figura-A3, fig.height=4.5}
+f_serie(3)
+```
+
+
+**Figura A4.** Severidad de la pobreza extrema por área geográfica en Colombia 2002-2018.
+
+```{r figura-A4, fig.height=4.5}
+f_serie(6)
+```
+
+
+**Figura A5.** Brecha de la pobreza y de la pobreza extrema por área geográfica en Colombia 2002 y 2018.
+
+```{r figura-A5, fig.height=4.5}
+f_areas(2)
+```
+
+
+**Figura A6.** Severidad de la pobreza y de la pobreza extrema por área geográfica en Colombia 2002 y 2018.
+
+```{r figura-A6, fig.height=4.5}
+f_areas(3)
+```
+
+
+**Figura A7.** Brecha de la pobreza y de la pobreza extrema por ciudades principales en Colombia 2002 y 2018.
+
+```{r figura-A7, fig.height=7}
+f_ciudades(2)
+```
+
+
+**Figura A8.** Severidad de la pobreza y de la pobreza extrema por ciudades principales en Colombia 2002 y 2018.
+
+```{r figura-A8, fig.height=7}
+f_ciudades(3)
+```
+
+
+**Figura A9.** Función de densidad de la distribución del logaritmo del ingreso per cápita de la unidad de gasto por ciudades principales en Colombia 2002 y 2018.
+
+```{r figura-A9, fig.height=4.5}
+imagenes('A9', letters[1:13], '32%')
+```
+
+
+**Figura A10.** Descomposición KS del cambio en la brecha de la pobreza y de la pobreza extrema por área geográfica en Colombia 2002-2018. Puntos porcentuales.
+
+```{r figura-A10, fig.height=4.5}
+f_ks(2)
+```
+
+
+**Figura A11.** Descomposición KS del cambio en la severidad de la pobreza y de la pobreza extrema por área geográfica en Colombia 2002-2018. Puntos porcentuales.
+
+```{r figura-A11, fig.height=4.5}
+f_ks(3)
+```
+
+
+**Figura A12.** Descomposición KS del cambio en la brecha de la pobreza y de la pobreza extrema por ciudades principales en Colombia 2002-2018. Puntos porcentuales.
+
+```{r figura-A12, fig.height=7.5}
+f_ks_ciu(2)
+```
+
+
+**Figura A13.** Descomposición KS del cambio en la severidad de la pobreza y de la pobreza extrema por ciudades principales en Colombia 2002-2018. Puntos porcentuales.
+
+```{r figura-A13, fig.height=7.5}
+f_ks_ciu(3)
+```
+
+
+**Figura A14.** Función de distribución del logaritmo del ingreso per cápita de la unidad de gasto para el agregado nacional del escenario original y de los escenarios contrafácticos.
+
+```{r figura-A14, fig.height=6.5}
+f_cdf()
+```
+
+
+# B. Tablas adicionales {-}
+
+
+**Tabla B1.** Participación de cada área geográfica en la población en Colombia 2002-2018. Valores porcentuales.
+
+```{r tabla-B1, fig.height=4.5}
+tB1()
+```
+
+
+**Tabla B2.** Participación de cada área geográfica en los indicadores de pobreza extrema FGT en Colombia 2002-2018. Valores porcentuales.
+
+```{r tabla-B2, fig.height=4.5}
+t7('B2', 2)
+```
+
+
+**Tabla B3.** Brecha de la pobreza y de la pobreza extrema por ciudades principales en Colombia 2002- 2018.
+
+```{r tabla-B3, fig.height=4.5}
+t8('B3', 2)
+```
+
+
+**Tabla B4.** Severidad de la pobreza y de la pobreza extrema por ciudades principales en Colombia 2002-2018.
+
+```{r tabla-B4, fig.height=4.5}
+t8('B4', 3)
+```
+
+
+**Tabla B5.** Variación de la brecha de la pobreza y de la pobreza extrema por ciudades principales en Colombia 2002-2018. Puntos porcentuales.
+
+```{r tabla-B5, fig.height=4.5}
+t9('B5', 2)
+```
+
+
+**Tabla B6.** Variación de la severidad de la pobreza y de la pobreza extrema por ciudades principales en Colombia 2002-2018. Puntos porcentuales.
+
+```{r tabla-B6, fig.height=4.5}
+t9('B6', 3)
+```
+
+
+**Tabla B7.** Incidencia de la pobreza extrema según características del jefe de hogar por área geográfica en Colombia 2002 y 2018.
+
+```{r tabla-B7, fig.height=4.5}
+t10('B7', 'i', 'cjh')
+```
+
+
+**Tabla B8.** Incidencia de la pobreza extrema según características del hogar por área geográfica en Colombia 2002 y 2018.
+
+```{r tabla-B8, fig.height=4.5}
+t10('B8', 'i', 'ch')
+```
+
+
+**Tabla B9.** Descomposición KS del cambio en la brecha de la pobreza y de la pobreza extrema por ciudades principales en Colombia 2002-2018.
+
+```{r tabla-B9, fig.height=4.5}
+t15('B9', 2)
+```
+
+
+**Tabla B10.** Descomposición KS del cambio en la severidad de la pobreza y de la pobreza extrema por ciudades principales en Colombia 2002-2018.
+
+```{r tabla-B10, fig.height=4.5}
+t15('B10', 3)
+```
+
+
+# Control de las cifras {-}
+
+Celdas de cada tabla comparadas entre el PDF y el valor reconstruido (tolerancia de media unidad del último decimal).
+
+```{r control}
+ct <- do.call(rbind, lapply(names(control), function(n) data.frame(Tabla = n, Celdas = sum(control[[n]][, 1]), Distintas = sum(control[[n]][, 2]))))
+ct <- ct[order(grepl("B", ct$Tabla), as.numeric(sub("B", "", ct$Tabla))), ]
+tab(rbind(ct, data.frame(Tabla = "Total", Celdas = sum(ct$Celdas), Distintas = sum(ct$Distintas))))
+```
+
+**Coherencia interna.** La suma de los efectos crecimiento, redistribución y línea iguala el total en todas las descomposiciones KS (diferencia máxima `r format(max(abs(apply(K, 2:5, function(z) sum(z[1:3]) - z[4]))), digits = 1)`), y ese total coincide con el cambio de las tablas de pobreza:
+
+```{r coherencia}
+dif_area <- sapply(1:3, function(q) { y <- as.numeric(strsplit(periodos[q], "-")[[1]])
+  max(sapply(1:4, function(j) sapply(1:2, function(l) abs(K[4, j, , l, q] - (fgt[[j]][(l - 1) * 3 + 1:3, match(y[2], anios)] - fgt[[j]][(l - 1) * 3 + 1:3, match(y[1], anios)]))))) })
+dif_ciu <- sapply(1:3, function(q) { y <- as.numeric(strsplit(periodos[q], "-")[[1]])
+  max(abs(KC[4, , , , q] - (FC[, , , match(y[2], anios)] - FC[, , , match(y[1], anios)]))) })
+tab(data.frame(Período = periodos, "Áreas: máx. |KS - observado| (p.p.)" = num(dif_area, 4), "Ciudades: máx. |KS - observado| (p.p.)" = num(dif_ciu, 4), check.names = FALSE))
+```
+
+**Con los ingresos individuales de 2018** (figura A14): el Gini nacional es `r num(gini18, 3)` (tabla 12: 0,515) y la proporción de la población por debajo de la línea internacional de 1,9 dólares (`r num(1.9 * 1168.24 * 30)` pesos mensuales) es `r num(100 * lip18, 2)`% (introducción: 2,9%).
+
+```{r sesion}
+sessionInfo()
+```
+
+[^1]: Licenciado en Economía - UNLP.
+[^2]: Correspondiente a la línea internacional de pobreza (LIP), que define la pobreza monetaria extrema a efectos del seguimiento mundial.
+[^3]: Siguiendo a Gasparini *et al*. (2013), más allá de los análisis mecánico y de asociaciones empíricas, un tercer nivel de análisis es el de las relaciones causales entre pobreza, crecimiento y desigualdad. La identificación de esos mecanismos es, naturalmente, de crucial importancia, pero también de una enorme complejidad.
+[^4]: En este caso, el ingreso de todos los hogares crece a una misma tasa, por lo que la desigualdad no varía.
+[^5]: Ver Medina y Galván (2014), para una revisión exhaustiva de las metodologías de descomposición.
+[^6]: Estática en el sentido que predice el cambio en la pobreza frente a cambios en el ingreso y en el coeficiente de Gini en un período determinado y no a partir de la evolución en el tiempo de estas variables.
+[^7]: Ver Datt y Ravallion (1992), para más detalles.
+[^8]: Ambas encuestas (<mark>anteriormente ECG</mark> y actualmente GEIH) cubren población civil no institucional residente en todo el territorio nacional (áreas urbanas y rurales), representando alrededor del 99 por ciento de la población total del país y encontrándose dispersa en un poco más de la mitad de la superficie del país.
+[^9]: A partir del segundo semestre de 2006, surgió un problema de comparabilidad en las series de empleo, pobreza y desigualdad como resultado del cambio metodológico que implicó la transición de la ECH a la GEIH. Para atender estas dificultades, que comprometían la credibilidad de indicadores fundamentales del mercado laboral y las condiciones de vida en Colombia, se inició un trabajo técnico del DANE y el DNP, que culminó en la creación de la MESEP.
+[^10]: El ingreso corriente de la unidad de gasto incluye los ingresos monetarios y en especie que son devengados de manera constante por la unidad de gasto y excluye aquellos ingresos de carácter ocasional (ganancias ocasionales e intereses por cesantías).
+[^11]: Cabe mencionar que las líneas de pobreza e indigencia se actualizan mensualmente, en la medida que avanza el relevamiento de la encuesta a lo largo del año. Adicionalmente, se tienen líneas de pobreza e indigencia por departamento y distinguiendo entre área urbana y rural.
+[^12]: En las bases 2002 a 2005 de la MESEP, no es posible identificar informalidad, ya que, para los asalariados, no hay una variable relacionada a si están cotizando a un fondo de pensiones.
+[^13]: Ver Apéndice A, para una descomposición RIF.
+[^14]: Las “ayudas en el hogar” corresponden a ayudas en dinero: (i) de otros hogares o personas residentes del país o fuera del país; y (ii) de instituciones del país o fuera del país.
+[^15]: En este trabajo, se tomarán en cuenta las siguientes cuatro áreas geográficas: (i) el total nacional; (ii) las trece ciudades principales y sus áreas metropolitanas; (iii) el resto urbano (es decir, el resto de ciudades y cabeceras urbanas); y (iv) los centros poblados y rural disperso.
+[^16]: Adicionalmente, se realizaron ecuaciones de Mincer para los años 2008, 2015 y 2018 (resultados no mostrados), y lo que se observa es que la brecha salarial entre formales e informales aumenta de 2008 a 2018: en 2008, *céteris páribus*, los informales tenían, en promedio, un salario horario un 41,3% menor al de los formales, en tanto que, en 2018, este valor era de 44,8%. Por lo tanto, bajo este análisis, *céteris páribus*, aumenta la desigualdad salarial entre formales e informales.
+[^17]: FGT hace referencia a los autores que propusieron estos indicadores para estudiar la pobreza monetaria: Foster, Greer y Thorbecke (1984).
+[^18]: Notar que existe un índice de pobreza FGT para cada valor posible (cero o positivo) del parámetro 𝛼, cambiando las propiedades del índice dependiendo del 𝛼 considerado.
+[^19]: También conocida como “intensidad” o “profundidad” de la pobreza.
+[^20]: Ver Gasparini *et al*. (2013), p. 196, para una descripción de un conjunto de propiedades deseables para todo indicador de privaciones.
+[^21]: Ver Figuras A1 y A2 en el Apéndice para los casos de brecha y de severidad (respectivamente) de la pobreza por área geográfica para el período 2002-2018.
+[^22]: Ver Figuras A3 y A4 en el Apéndice para los casos de brecha y de severidad (respectivamente) de la pobreza extrema por área geográfica para el período 2002-2018.
+[^23]: Ver Figuras A5 y A6 en el Apéndice para los casos de brecha y de severidad (respectivamente) de la pobreza y de la pobreza extrema por área geográfica para los años 2002 y 2018.
+[^24]: Tal como se mencionó en la Sección 3.1 del presente trabajo, en las estimaciones que comparan los cambios en la pobreza monetaria entre 2002 y 2018 en Colombia (Sección 5 del presente trabajo), también se presentarán los resultados tomando dos subperíodos (2002-2005 y 2008-2018), considerando la misma encuesta (ECH y GEIH) y en función de la disponibilidad de datos (no hay microdatos disponibles para 2006 y 2007).
+[^25]: En esta instancia, es importante notar que, dado que el propósito de este trabajo es analizar los cambios en la pobreza monetaria, es indispensable certificar que los estimadores de cambios sean robustos desde la óptica estadística. Al igual que cualquier otro parámetro generado a partir de una encuesta por muestreo, los indicadores de pobreza tienen asociado un error estadístico que depende del esquema utilizado para la selección de la muestra y de las etapas de estratificación y conglomeración del marco de muestreo que se utiliza para la selección de hogares. Es así que, como fase previa a cualquier análisis, se requiere corroborar si los cambios observados en los parámetros de interés están asociados a la evolución del fenómeno de estudio o corresponden a variaciones aleatorias de los datos que no pueden considerarse estadísticamente significativas. El camino optado en este trabajo para obtener errores estándar e intervalos de confianza es el de *bootstrap* o remuestreo. La disponibilidad de un intervalo de confianza se utiliza para implementar tests de hipótesis simples. En este caso, se quiere testear la hipótesis de que dos estimaciones independientes son significativamente distintas, lo cual se puede concluir si sus intervalos de confianza no se superponen.
+[^26]: Ver Tabla B2 en el Apéndice para el caso de la participación de cada área geográfica en los indicadores de pobreza extrema FGT para el período 2002-2018.
+[^27]: En el caso de los indicadores de pobreza extrema FGT, la participación del área rural es mucho mayor y gira en torno al 50% a lo largo del período 2002-2018 (ver Tabla B2 en el Apéndice).
+[^28]: Ver Tablas B3 y B4 en el Apéndice para los casos de brecha y de severidad (respectivamente) de la pobreza y de la pobreza extrema por ciudades principales para el período 2002-2018.
+[^29]: Ver Tablas B5 y B6 en el Apéndice para los casos de variación de la brecha y de la severidad (respectivamente) de la pobreza y de la pobreza extrema por ciudades principales.
+[^30]: Ver Tabla B7 en el Apéndice para el caso de la incidencia de la pobreza extrema según características del jefe de hogar por área geográfica para los años 2002 y 2018.
+[^31]: Ver Tabla B8 en el Apéndice para el caso de la incidencia de la pobreza extrema según características del hogar por área geográfica para los años 2002 y 2018.
+[^32]: En este trabajo, no se profundiza sobre la desigualdad y sus cambios, por lo que sólo se hace referencia a ésta para apoyar algunos de los argumentos desarrollados en la Sección 5.1 del presente trabajo.
+[^33]: En los tres casos, se computa el promedio de los cambios considerando sólo dos de las seis combinaciones posibles.
+[^34]: Ver Datt y Ravallion (1992), para una descomposición semejante.
+[^35]: En la Figura 4 de Kolenikov y Shorrocks (2005), se ilustra cómo se puede aplicar el procedimiento de *Shapley* a la descomposición del cambio en la pobreza en tres componentes, correspondientes al cambio en el ingreso medio, en la desigualdad y en la línea de pobreza.
+[^36]: Para estas estimaciones, se seleccionan sólo los individuos que tengan entre 15 y 64 años de edad y sean trabajadores asalariados o no asalariados (patrones y cuentapropistas), es decir, se omiten los individuos inactivos/desempleados. A su vez, se distingue entre trabajo asalariado y no asalariado porque se supone que el mercado laboral está segmentado.
+[^37]: Las variables independientes son la edad (y cuadrado), una variable binaria que indica si el individuo es hombre y otra que indica si es jefe de hogar, variables binarias por nivel educativo y el número de miembros en el hogar.
+[^38]: En este caso, el estado 𝑗 = 1 es la categoría o resultado “base”.
+[^39]: Cabe mencionar que una de las limitaciones de estas simulaciones es que se trabaja en equilibrio parcial, es decir, no se modela simultáneamente, por ejemplo, precios y salarios, los cuales son fenómenos macroeconómicos que influyen en la decisión individual de ocupación. Sin embargo, análisis de equilibrio general exceden al objetivo de este trabajo.
+[^40]: La ventaja de la estimación no paramétrica de densidades es que no es necesario hacer ningún supuesto sobre su forma funcional.
+[^41]: Por simplicidad, se ilustra sólo la línea de pobreza y no así la línea de pobreza extrema. De todas formas, se tienen conclusiones análogas a la hora de analizar la reducción de la pobreza extrema.
+[^42]: Ver Figura A9 en el Apéndice para el caso de las funciones de densidad de las distribuciones del logaritmo del ingreso per cápita de la unidad de gasto por ciudades principales en Colombia 2002 y 2018.
+[^43]: Para las principales ciudades, el resto urbano y el área rural, estos porcentajes son 32,3% - 11,3%, 59,5% - 3,1% y 40,6% - 14,9%, respectivamente.
+[^44]: Ver Figuras A10 y A11 en el Apéndice para los casos de la descomposición KS del cambio en la brecha y en la severidad (respectivamente) de la pobreza y de la pobreza extrema por área geográfica para el período 2002-2018.
+[^45]: Ver Tablas (Figuras) B9 y B10 (A12 y A13) en el Apéndice para los casos de la descomposición KS del cambio en la brecha y en la severidad (respectivamente) de la pobreza y de la pobreza extrema por ciudades principales para el período 2002-2018.
+[^46]: No se incluye la tasa de informalidad laboral en el hogar dado que, como ya fue mencionado, en la base 2002 de la MESEP, no es posible identificar informalidad.
+[^47]: Un total de 6.164 observaciones, equivalentes a 461.172 individuos a nivel nacional, con un ingreso laboral individual mayor o igual a 5 millones de pesos colombianos.
+[^48]: Un total de 9.203 observaciones, equivalentes a 578.317 individuos a nivel nacional.
+[^49]: Adicionalmente, en la Figura A14 del Apéndice, se presenta la función de distribución del logaritmo del ingreso per cápita de la unidad de gasto para el agregado nacional del escenario original y de los escenarios contrafácticos.
