@@ -1,0 +1,689 @@
+---
+title: "Trabajo Práctico — Réplica en R"
+subtitle: "Maestría en Economía UNLP - Economía de Género. Respuestas originales: Azul Menduiña y Juan Menduiña (julio 2021)"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+    self_contained: true
+    code_folding: hide
+---
+
+```{css, echo=FALSE}
+mark { background: #ffe27a; padding: 0 2px; }
+.disc { border-left: 6px solid; border-radius: 4px; padding: 10px 14px; margin: 14px 0; font-size: 0.95em; }
+.disc p:last-child { margin-bottom: 0; }
+.error { border-color: #c0392b; background: #fdecea; }
+.impr  { border-color: #d68910; background: #fef5e7; }
+.metodo{ border-color: #2874a6; background: #eaf2f8; }
+.enunciado { font-style: italic; color: #444; }
+table { margin-left: auto; margin-right: auto; width: auto !important; }
+th, td { padding: 3px 14px !important; }
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 8, fig.height = 4.8, dpi = 120)
+library(haven); library(dplyr); library(knitr); library(ggplot2); library(readxl)
+
+num <- function(x, d = 1) formatC(x, format = "f", digits = d, big.mark = ".", decimal.mark = ",")
+ent <- function(x) formatC(round(x), format = "d", big.mark = ".", decimal.mark = ",")
+pct <- function(x, d = 2) paste0(num(100 * x, d), "%")
+pin <- function(p) ifelse(p < 0.001, "p < 0,001", paste0("p = ", num(p, 3)))
+estrellas <- function(p) ifelse(p < .01, "\\*\\*\\*", ifelse(p < .05, "\\*\\*", ifelse(p < .1, "\\*", "")))
+marcar <- function(x, cond) ifelse(cond, paste0("<mark>", x, "</mark>"), x)
+wm <- function(x, w) weighted.mean(x, w)
+
+# Colores de las diapositivas
+col_gen <- c(Hombre = "#339999", Mujer = "#9999ff")
+fuente  <- "Fuente: Elaboración propia en base a EPH (4to. Trim. 2019)"
+
+# MCO ponderado con errores estándar robustos agrupados (CR1)
+mco <- function(formula, datos, peso, grupo = "id") {
+  datos <- datos[datos[[peso]] > 0, ]
+  mf <- model.frame(formula, datos, na.action = na.omit)
+  usadas <- if (is.null(na.action(mf))) seq_len(nrow(datos)) else -na.action(mf)
+  X <- model.matrix(formula, mf); y <- model.response(mf)
+  w <- datos[[peso]][usadas]; g <- datos[[grupo]][usadas]
+  XtXi <- solve(crossprod(X, w * X))
+  b <- drop(XtXi %*% crossprod(X, w * y))
+  u <- rowsum(X * (w * drop(y - X %*% b)), g)
+  G <- nrow(u); N <- nrow(X); K <- ncol(X)
+  V <- XtXi %*% crossprod(u) %*% XtXi * (G / (G - 1)) * ((N - 1) / (N - K))
+  ee <- sqrt(diag(V))
+  structure(data.frame(coef = b, ee = ee, p = 2 * pnorm(-abs(b / ee))), N = N)
+}
+cel <- function(m, v, escala = 1, d = 2) {
+  if (!v %in% rownames(m)) return("")
+  paste0(num(escala * m[v, "coef"], d), estrellas(m[v, "p"]), " (", num(escala * m[v, "ee"], d), ")")
+}
+```
+
+# Cómo leer este documento {-}
+
+El texto de cada ejercicio es el de las diapositivas *Trabajo Práctico (S)*, y el enunciado es el de *Trabajo Práctico (P)*. El código replica en R los archivos `Datos/prepara_base_2.do`, `Datos/comando_cuantiles.do` y `Datos/Trabajo Práctico.do`. Las tablas, las figuras y los números de los recuadros se calculan a partir de `Datos/Base.dta`. Lo <mark>resaltado</mark> es una frase, un número o un rótulo con alguna discrepancia, explicada en el recuadro correspondiente.
+
+::: {.disc .error}
+**Error**: la afirmación contradice los datos, la respuesta omite lo que se pide, o el cálculo no corresponde.
+:::
+
+::: {.disc .impr}
+**Imprecisión**: redacción, rótulo, redondeo u omisión que puede inducir a error.
+:::
+
+::: {.disc .metodo}
+**Observación metodológica**: la conclusión depende de una decisión discutible o no documentada.
+:::
+
+**Resultado de la réplica.** Las cifras de las diapositivas se reproducen en R con el mismo procedimiento del *do-file*, salvo diferencias de hasta 0,035 pp en algunos deciles (ver el [control de cifras](#control)). Los problemas principales son tres. En el ejercicio 4, la muestra de parejas está **mal construida** y le asigna un *share* de 100% a mujeres cuya pareja queda fuera del rango de edad ([D6](#d6)). En el mismo ejercicio, la relación "creciente" con el decil y con la educación **no es monótona** ([D7](#d7), [D8](#d8)). En el ejercicio 3, la ausencia de brecha en el ingreso horario se afirma sin ninguna prueba y **no se sostiene** al controlar por educación, edad y región ([D3](#d3)).
+
+| N° | Ejercicio | Tipo | Discrepancia |
+|----|-----------|------|--------------|
+| [D1](#d1) | 2 | Imprecisión | La brecha de GBA está mal redondeada |
+| [D2](#d2) | 1-2 | Metodológica | Entrevistas no realizadas contadas como inactivas |
+| [D3](#d3) | 3 | Error | "No se observan diferencias significativas" |
+| [D4](#d4) | 3 | Metodológica | Construcción de las horas mensuales |
+| [D5](#d5) | 4 | Error | No se analizan correlaciones |
+| [D6](#d6) | 4 | Error | La muestra de parejas se construye después de filtrar por edad |
+| [D7](#d7) | 4 | Error | El *share* no aumenta sistemáticamente con el decil |
+| [D8](#d8) | 4 | Error | El *share* no aumenta sistemáticamente con la educación |
+| [D9](#d9) | 4 | Metodológica | Deciles calculados solo sobre personas de 25 a 55 años |
+| [D10](#d10) | 4 | Imprecisión | Rótulo de "Superior incompleto" |
+| [D11](#d11) | 4 | Metodológica | Definición del ingreso de la pareja |
+| [D12](#d12) | 5 | Imprecisión | El tiempo de cuidado no se mide |
+| [D13](#d13) | 5 | Metodológica | Definición de "hogar con niños" |
+| [D14](#d14) | 5 | Imprecisión | Respaldo de la hipótesis sin cuantificar ni controlar |
+| [D15](#d15) | General | Imprecisión | El *do-file* no corre tal como se entrega |
+
+# Datos
+
+La Encuesta Permanente de Hogares (EPH) tiene representatividad a nivel nacional y por aglomerados para la zona urbana de Argentina. Para realizar los ejercicios, se restringe la muestra a personas entre 25 y 55 años y se usan los ponderadores que corresponden según la variable analizada.
+
+## Unión de las bases (`prepara_base_1.do`)
+
+`Base.dta` es la unión de las bases individual y de hogares. El siguiente bloque comprueba, contra las bases originales en formato `.dta`, que coinciden la cantidad de personas y las variables que se usan.
+
+```{r base}
+base <- zap_labels(read_dta("Datos/Base.dta"))
+dim(base)
+```
+
+```{r verificacion-union}
+minusculas <- function(a) { d <- zap_labels(read_dta(a)); names(d) <- tolower(names(d)); d }
+ind <- minusculas("Datos/usu_individual_t419.dta")
+hog <- minusculas("Datos/usu_hogar_t419.dta")
+clave <- c("codusu", "nro_hogar", "componente")
+cruce <- inner_join(base, ind, by = clave, suffix = c("", ".orig"))
+vars <- c("ch03", "ch04", "ch06", "nivel_ed", "estado", "pondera", "pondiio", "p21", "pp3e_tot")
+iguales <- sapply(vars, function(v)
+  isTRUE(all.equal(as.numeric(cruce[[v]]), as.numeric(cruce[[paste0(v, ".orig")]]))))
+c(base = nrow(base), individual = nrow(ind), cruzadas = nrow(cruce),
+  hogares_en_hogar = nrow(hog), variables_iguales = sum(iguales), variables = length(vars))
+```
+
+## Variables (`prepara_base_2.do`)
+
+```{r preparacion}
+base <- base %>%
+  mutate(
+    region2 = case_when(aglomerado == 32 ~ 32, aglomerado == 33 ~ 33, TRUE ~ as.numeric(region)),
+    region2 = factor(region2, levels = c(32, 33, 40, 41, 42, 43, 44),
+                     labels = c("CABA", "GBA", "NOA", "NEA", "Cuyo", "Pampeana", "Patagónica")),
+    genero  = factor(ch04, levels = 1:2, labels = c("Hombre", "Mujer")),
+    edad    = ifelse(ch06 == -1, 0, ch06),
+    nivel_educ = factor(ifelse(nivel_ed == 7, 1, nivel_ed), levels = 1:6,
+                        labels = c("Primario Incomp.", "Primario Comp.", "Secundario Incomp.",
+                                   "Secundario Comp.", "Superior Incomp.", "Superior Comp.")),
+    activo  = as.numeric(estado %in% c(1, 2)),
+    jefe    = as.numeric(ch03 == 1),
+    conyuge = as.numeric(ch03 == 2),
+    ing_ocupp   = p21,
+    horas_ocupp = pp3e_tot * 4,
+    ing_horario = ifelse(p21 > 0 & !is.na(horas_ocupp) & horas_ocupp > 0, p21 / horas_ocupp, NA)
+  ) %>%
+  group_by(codusu, nro_hogar) %>%
+  mutate(
+    id = cur_group_id(),
+    ninos          = as.numeric(any(edad < 18 & ch03 %in% c(3, 5))),
+    genero_jefe    = max(0, ch04[ch03 == 1]),
+    genero_conyuge = max(0, ch04[ch03 == 2])
+  ) %>%
+  ungroup() %>%
+  mutate(
+    # Jefe/a o cónyuge de una pareja formada por un hombre y una mujer
+    pareja_het = ((genero_jefe == 1 & genero_conyuge == 2) |
+                  (genero_jefe == 2 & genero_conyuge == 1)) & ch03 %in% 1:2,
+    ninos = factor(ninos, levels = 0:1, labels = c("Hogar sin niños", "Hogar con niños"))
+  )
+
+# Muestra del enunciado: 25 a 55 años (el filtro se aplica acá, como en el do-file)
+m <- base %>% filter(edad >= 25, edad <= 55)
+
+# Parejas del do-file: se excluyen las que tienen "no respuesta" (p21 == -9)
+m <- m %>%
+  group_by(id) %>%
+  mutate(sin_resp = any(pareja_het & ing_ocupp == -9),
+         ph       = pareja_het & !sin_resp,
+         ing_ph   = ifelse(ph, sum(ing_ocupp[ph]), NA),
+         share    = ifelse(ph & genero == "Mujer" & ing_ph > 0, ing_ocupp / ing_ph, NA),
+         integrantes_ph = sum(ph)) %>%
+  ungroup()
+
+# comando_cuantiles.do: queda sin cuantil quien, en el orden, aún no acumula población
+# (hogares sin respuesta de ingresos, con pondih = 0, ubicados al comienzo)
+cuantiles <- function(x, w, n) {
+  o <- order(x); acum <- cumsum(w[o]) / sum(w)
+  q <- rep(NA_integer_, length(x))
+  for (i in 1:n) q[o][acum > (i - 1) / n & acum <= i / n] <- i
+  q
+}
+# Dentro de ingresos empatados, primero los hogares con pondih = 0
+m <- m %>% arrange(pondih > 0, id, componente)
+m$dipcf <- cuantiles(m$ipcf, m$pondih, 10)
+
+c(muestra = nrow(m), hombres = sum(m$genero == "Hombre"), mujeres = sum(m$genero == "Mujer"),
+  hogares = n_distinct(m$id))
+```
+
+::: {.disc .impr #d15}
+**D15.** `Trabajo Práctico.do` no corre tal como se entrega en otra computadora: cambia de directorio a una ruta personal (`G:/Mi unidad/...`) y `prepara_base_1.do` usa otra distinta (`C:/JM/Economía/...`). La llamada a `prepara_base_1.do` está comentada. Además, `comando_cuantiles.do` recibe la opción `orden_aux()` pero no la usa: los empates de ingreso per cápita familiar se resuelven por el orden previo de la base, que depende de ordenamientos no estables. Ese orden decide qué hogares caen a cada lado de un corte y quiénes quedan sin decil (los de `pondih = 0`), y puede cambiar los resultados por decil (ver el [control de cifras](#control)).
+:::
+
+# Ejercicios 1 y 2
+
+::: {.enunciado}
+**1.** La variable "estado" identifica si una persona está activa (ocupada o desocupada) o inactiva. Utilizando esta clasificación, analice las diferencias en la participación laboral entre hombres y mujeres (puede utilizar gráficos, tablas o regresiones).
+
+**2.** Repita el ejercicio anterior, pero ahora analice si existen diferencias por regiones (variable "región").
+:::
+
+- Se analizan las diferencias en la participación laboral entre hombres y mujeres a partir de la comparación entre las medias correspondientes a cada grupo para la variable "estado".
+- En primer lugar, se analizan las diferencias a nivel agregado. Se ve que la participación de los hombres es de casi 21 pp. mayor que la participación de las mujeres.
+- Luego se analizan las diferencias desagregando por regiones. Las mayores diferencias se dan en NEA (25,1 pp.) y <mark>GBA (24,7 pp.)</mark>, mientras que la menor diferencia se da en CABA (11,3 pp.).
+
+```{r ej1-calculo}
+tasa <- function(d) d %>% group_by(genero) %>% summarise(part = wm(activo, pondera), .groups = "drop")
+ej1 <- tasa(m)
+total1 <- wm(m$activo, m$pondera)
+
+ej2 <- m %>% group_by(region2, genero) %>% summarise(part = wm(activo, pondera), .groups = "drop")
+tot2 <- m %>% group_by(region2) %>% summarise(part = wm(activo, pondera), .groups = "drop")
+```
+
+```{r ej1-tabla}
+kable(data.frame(`Género` = c("Hombre", "Mujer", "Total"),
+                 `Participación laboral` = pct(c(ej1$part, total1)), check.names = FALSE),
+      align = "lr", caption = "Participación laboral por género")
+```
+
+```{r figura1, fig.width=6}
+ggplot(ej1, aes(genero, part, fill = genero)) +
+  geom_col(width = 0.5) +
+  geom_text(aes(label = pct(part, 1)), vjust = -0.5) +
+  scale_fill_manual(values = col_gen, name = NULL) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), breaks = seq(0, 1, .1), limits = c(0, 1.05)) +
+  labs(title = "Participación laboral por género", x = NULL, y = NULL, caption = fuente) +
+  theme_minimal() + theme(legend.position = "bottom")
+```
+
+```{r ej2-tabla}
+brecha <- lapply(levels(m$region2), function(r) mco(activo ~ genero, m[m$region2 == r, ], "pondera"))
+names(brecha) <- levels(m$region2)
+brecha_tot <- mco(activo ~ genero, m, "pondera")
+dif <- sapply(brecha, function(x) -100 * x["generoMujer", "coef"])
+
+t2 <- data.frame(
+  `Región` = c(levels(m$region2), "Total"),
+  Hombre = pct(c(ej2$part[ej2$genero == "Hombre"], ej1$part[1])),
+  Mujer  = pct(c(ej2$part[ej2$genero == "Mujer"], ej1$part[2])),
+  Total  = pct(c(tot2$part, total1)),
+  `Brecha H−M (pp)` = num(c(dif, -100 * brecha_tot["generoMujer", "coef"]), 2),
+  `E.E.` = num(100 * c(sapply(brecha, function(x) x["generoMujer", "ee"]), brecha_tot["generoMujer", "ee"]), 2),
+  check.names = FALSE)
+kable(t2, align = "lrrrrr", row.names = FALSE,
+      caption = "Participación laboral por género y región. Errores estándar agrupados por hogar.")
+```
+
+```{r figura2, fig.height=5.5}
+ggplot(ej2, aes(part, factor(region2, levels = rev(levels(region2))), fill = genero)) +
+  geom_col(position = position_dodge2(reverse = TRUE, padding = 0.1)) +
+  geom_text(aes(label = pct(part, 1)), position = position_dodge2(width = 0.9, reverse = TRUE),
+            hjust = -0.1, size = 3.2) +
+  scale_fill_manual(values = col_gen, name = NULL) +
+  scale_x_continuous(labels = scales::percent_format(accuracy = 1), breaks = seq(0, 1, .1), limits = c(0, 1.08)) +
+  labs(title = "Participación laboral por género y región", x = NULL, y = NULL, caption = fuente) +
+  theme_minimal() + theme(legend.position = "bottom")
+```
+
+::: {.disc .impr #d1}
+**D1.** La brecha de GBA es `r num(dif["GBA"], 2)` pp, que redondea a **`r num(dif["GBA"], 1)`** y no a 24,7. El resto del texto es correcto: la brecha agregada es `r num(-100 * brecha_tot["generoMujer", "coef"], 1)` pp, la de NEA `r num(dif["NEA"], 1)` y la de CABA `r num(dif["CABA"], 1)`. Las brechas son estadísticamente significativas en todas las regiones (todas con `r pin(max(sapply(brecha, function(x) x["generoMujer", "p"])))`), algo que las diapositivas no verifican.
+:::
+
+```{r estado-cero}
+cero <- c(personas = sum(m$estado == 0), mujeres = sum(m$estado == 0 & m$genero == "Mujer"))
+cero
+sin0 <- tasa(m[m$estado != 0, ])
+sin0
+```
+
+::: {.disc .metodo #d2}
+**D2.** El código define como inactiva a toda persona que no está ocupada ni desocupada. Eso incluye `r ent(cero["personas"])` personas de la muestra con `estado = 0` (entrevista individual no realizada), cuya condición de actividad se desconoce. Corresponde tratarlas como dato faltante. El efecto es pequeño: sin ellas, la participación pasa a `r pct(sin0$part[1])` en los hombres y `r pct(sin0$part[2])` en las mujeres.
+:::
+
+# Ejercicio 3
+
+::: {.enunciado}
+La variable "p21" identifica el monto de ingreso en la ocupación principal y "pp3e_tot" las horas trabajadas en la ocupación principal. Con base en estas variables construya el ingreso horario percibido en la ocupación principal. Analice si existen diferencias por género (hombres y mujeres). Mostrar los resultados en gráficos, o tablas o regresiones. Interpretar.
+:::
+
+- Ahora se analizan si existen diferencias entre hombres y mujeres en el ingreso promedio horario proveniente de la ocupación principal. <mark>No se observan diferencias significativas entre ambos grupos.</mark>
+
+```{r ej3-calculo}
+o <- m %>% filter(!is.na(ing_horario), pondiio > 0)
+mediana <- function(x, w) { i <- order(x); x[i][which(cumsum(w[i]) >= sum(w) / 2)[1]] }
+ej3 <- o %>% group_by(genero) %>%
+  summarise(n = n(), media = wm(ing_horario, pondiio), mediana = mediana(ing_horario, pondiio),
+            horas = wm(pp3e_tot, pondiio), mensual = wm(p21, pondiio), .groups = "drop")
+total3 <- wm(o$ing_horario, o$pondiio)
+```
+
+```{r ej3-tabla}
+kable(data.frame(`Género` = c("Hombre", "Mujer", "Total"),
+                 `Ingreso horario promedio` = paste0("$", num(c(ej3$media, total3), 2)),
+                 check.names = FALSE), align = "lr",
+      caption = "Ingreso horario promedio de la ocupación principal")
+```
+
+```{r figura3, fig.width=6}
+ggplot(ej3, aes(genero, media, fill = genero)) +
+  geom_col(width = 0.5) +
+  geom_text(aes(label = paste0("$", num(media, 1))), vjust = -0.5) +
+  scale_fill_manual(values = col_gen, name = NULL) +
+  scale_y_continuous(labels = function(x) paste0("$", x), limits = c(0, 250)) +
+  labs(title = "Ingreso horario promedio por género", x = NULL, y = NULL, caption = fuente) +
+  theme_minimal() + theme(legend.position = "bottom")
+```
+
+## Contraste de la afirmación
+
+Las columnas agregan, sucesivamente, la prueba de diferencia de medias, la comparación en logaritmos y los controles por nivel educativo, edad y región.
+
+```{r ej3-regresiones}
+r1 <- mco(ing_horario ~ genero, o, "pondiio")
+r2 <- mco(log(ing_horario) ~ genero, o, "pondiio")
+r3 <- mco(log(ing_horario) ~ genero + nivel_educ, o, "pondiio")
+r4 <- mco(log(ing_horario) ~ genero + nivel_educ + edad + I(edad^2) + region2, o, "pondiio")
+regs <- list(r1, r2, r3, r4)
+kable(data.frame(
+  ` ` = c("Mujer", "Controles: educación", "Controles: edad y región", "Observaciones"),
+  `(1) Pesos` = c(cel(r1, "generoMujer"), "No", "No", ent(attr(r1, "N"))),
+  `(2) Log` = c(cel(r2, "generoMujer", d = 3), "No", "No", ent(attr(r2, "N"))),
+  `(3) Log` = c(cel(r3, "generoMujer", d = 3), "Sí", "No", ent(attr(r3, "N"))),
+  `(4) Log` = c(cel(r4, "generoMujer", d = 3), "Sí", "Sí", ent(attr(r4, "N"))),
+  check.names = FALSE), align = "lrrrr",
+  caption = "Brecha de género en el ingreso horario. E.E. agrupados por hogar. * p<0,1; ** p<0,05; *** p<0,01.")
+```
+
+```{r ej3-complementos}
+kable(data.frame(`Género` = ej3$genero, Observaciones = ent(ej3$n),
+                 `Mediana por hora` = paste0("$", num(ej3$mediana, 2)),
+                 `Horas semanales` = num(ej3$horas, 1),
+                 `Ingreso mensual medio` = paste0("$", ent(ej3$mensual)), check.names = FALSE),
+      align = "lrrrr")
+educ <- m %>% group_by(genero) %>% summarise(sup = wm(nivel_ed == 6, pondera))
+educ_o <- o %>% group_by(genero) %>% summarise(sup = wm(nivel_educ == "Superior Comp.", pondiio))
+stopifnot(r1["generoMujer", "p"] > 0.1, r2["generoMujer", "p"] > 0.05, r2["generoMujer", "p"] < 0.1, r4["generoMujer", "p"] < 0.01)
+```
+
+::: {.disc .error #d3}
+**D3.** Las diapositivas no hacen ninguna prueba y la conclusión es mucho más fuerte de lo que permiten los datos.
+
+- **Medias en pesos** (lo único que se mira): la diferencia es `r num(r1["generoMujer", "coef"], 2)` pesos y no es significativa (`r pin(r1["generoMujer", "p"])`). Hasta aquí la frase es correcta.
+- **Logaritmos**, menos sensibles a los valores extremos: las mujeres ganan `r num(-100 * (exp(r2["generoMujer", "coef"]) - 1), 1)`% menos por hora, una diferencia significativa solo al 10% (`r pin(r2["generoMujer", "p"])`). Las medianas son casi iguales.
+- **Condicionando en educación, edad y región**: la brecha es de `r num(-100 * (exp(r4["generoMujer", "coef"]) - 1), 1)`% (`r pin(r4["generoMujer", "p"])`). Las ocupadas tienen más estudios: `r pct(educ_o$sup[2], 1)` completó el nivel superior, contra `r pct(educ_o$sup[1], 1)` de los ocupados. Esa diferencia oculta la brecha en la comparación simple.
+- Tampoco se **interpreta** que las mujeres ocupadas trabajan `r num(ej3$horas[1] - ej3$horas[2], 1)` horas semanales menos y perciben un ingreso mensual `r num(100 * (1 - ej3$mensual[2] / ej3$mensual[1]), 1)`% menor en la ocupación principal.
+
+La comparación se hace además solo entre quienes tienen ingreso positivo. Con una participación tan distinta ([ejercicio 1](#ejercicios-1-y-2)), puede haber selección: nada de lo anterior identifica discriminación salarial.
+:::
+
+```{r ej3-horas}
+ing_pos <- m %>% filter(p21 > 0)
+h <- c(con_ingreso = nrow(ing_pos), horas_999 = sum(ing_pos$pp3e_tot == 999, na.rm = TRUE),
+       horas_0 = sum(ing_pos$pp3e_tot == 0, na.rm = TRUE))
+h
+o999 <- o %>% filter(pp3e_tot != 999) %>% group_by(genero) %>% summarise(media = wm(ing_horario, pondiio))
+o999
+```
+
+::: {.disc .metodo #d4}
+**D4.** Sobre la variable de ingreso horario:
+
+- Las horas semanales se pasan a mensuales multiplicando por 4; el promedio es $52/12 \approx 4{,}33$ semanas. El nivel del ingreso horario queda sobreestimado en `r num(100 * (52 / 12 / 4 - 1), 1)`%. La brecha relativa no cambia.
+- El código 999 de `pp3e_tot` (no respuesta) se usa como si fueran horas trabajadas (`r ent(h["horas_999"])` casos). Excluirlo casi no altera las medias.
+- Se pierden, sin mencionarlo, `r ent(h["horas_0"])` personas con ingreso positivo y 0 horas en la semana de referencia.
+:::
+
+# Ejercicio 4
+
+::: {.enunciado}
+Para la muestra de personas que viven en parejas heterosexuales, genere una variable que represente el ingreso relativo de la mujer en el ingreso de la pareja (% del total de ingreso de la pareja que es generado por la mujer). Mostrar los resultados en gráficos, o tablas o regresiones. Interpretar.
+
+**a.** Analice las correlaciones de esa variable con al menos 2 variables sociodemográficas (puede ser la edad de la mujer, si tienen hijos, la edad de los hijos, la educación de la mujer, la diferencia de edad o educación entre la pareja, la región, el percentil de ingreso de la familia, etc.). Mostrar los resultados en gráficos, o tablas o regresiones. Interpretar.
+:::
+
+- A continuación se analiza, para la muestra de personas que viven en parejas heterosexuales, el ingreso relativo de la mujer en el ingreso de la pareja desagregando por 1) deciles, 2) <mark>nivel de educación</mark> y 3) región.
+- En el primer caso, lo que se ve es que la participación del ingreso de la mujer en el total del ingreso de la pareja <mark>aumenta a medida que aumenta el decil de ingreso</mark>. El menor share se da en el decil 4, con un valor de 24,8%, mientras que el mayor se da en el decil 10, con un valor de <mark>47,4%</mark>.
+- Al desagregar por educación, <mark>la tendencia es similar: el share aumenta a medida que aumenta la educación</mark>, con un mínimo de 26,8% para "primaria incompleta" y con un máximo de 48,1% para "superior completa".
+- Al desagregar por región lo que se ve es que el mayor share se da en CABA, con un valor de 45,3%, y el menor share se da en la región patagónica, con un valor de 33,2%.
+
+```{r ej4-calculo}
+s <- m %>% filter(!is.na(share), pondiio > 0)
+total4 <- wm(s$share, s$pondiio)
+por <- function(d, v) d %>% filter(!is.na(.data[[v]])) %>% group_by(grupo = .data[[v]]) %>%
+  summarise(n = n(), share = wm(share, pondiio), .groups = "drop")
+e_dec <- por(s, "dipcf"); e_edu <- por(s, "nivel_educ"); e_reg <- por(s, "region2")
+c(mujeres_en_pareja = nrow(s), share_promedio = total4)
+
+barras <- function(d, titulo) ggplot(d, aes(factor(grupo), share)) +
+  geom_col(fill = "#99ff99", width = 0.6) +
+  geom_text(aes(label = pct(share, 1)), vjust = -0.5, size = 3.2) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), limits = c(0, 0.56)) +
+  labs(title = titulo, x = NULL, y = NULL, caption = fuente) + theme_minimal()
+```
+
+```{r figura4a}
+barras(e_dec, "Share promedio por decil de ingreso")
+```
+
+```{r figura4b, fig.width=9}
+barras(e_edu, "Share promedio por nivel educativo (de la mujer)")
+```
+
+```{r figura4c}
+barras(e_reg, "Share promedio por región")
+```
+
+::: {.disc .error #d5}
+**D5.** El inciso *a* pide analizar **correlaciones**. Solo se presentan promedios por grupo, de a una variable por vez, sin coeficientes de correlación, regresiones ni medidas de incertidumbre. Tampoco hay una interpretación económica de los patrones. El nivel de educación es el **de la mujer**, algo que el texto no aclara. La regresión de la sección [Correlaciones](#correlaciones) completa este punto.
+:::
+
+## Construcción de la muestra de parejas
+
+```{r ej4-integrantes}
+tab <- s %>% group_by(integrantes_ph) %>%
+  summarise(mujeres = n(), share = wm(share, pondiio), con_share_100 = mean(share == 1),
+            peso = sum(pondiio), .groups = "drop")
+tab
+
+# Edad de la pareja que quedó fuera del filtro
+solas <- s %>% filter(integrantes_ph == 1) %>% select(id, ch03)
+otra <- base %>% filter(id %in% solas$id, ch03 %in% 1:2) %>%
+  inner_join(solas, by = "id", suffix = c("", ".mujer")) %>% filter(ch03 != ch03.mujer)
+summary(otra$edad)
+stopifnot(all(s$share[s$integrantes_ph == 1] == 1), all(otra$edad < 25 | otra$edad > 55))
+```
+
+```{r ej4-corregido}
+# La pareja y su ingreso se definen con los dos integrantes ANTES de filtrar por edad.
+# Se exige que ambos tengan entre 25 y 55 años (restricción del enunciado).
+armar_parejas <- function(datos, ingreso) {
+  datos %>% filter(pareja_het) %>%
+    mutate(y = .data[[ingreso]]) %>%
+    group_by(id) %>%
+    mutate(ambos = sum(edad >= 25 & edad <= 55) == 2,
+           responde = all(y >= 0),
+           total = sum(y),
+           edad_h = edad[genero == "Hombre"][1],
+           nivel_h = as.integer(nivel_educ[genero == "Hombre"][1])) %>%
+    ungroup() %>%
+    filter(genero == "Mujer", edad >= 25, edad <= 55, responde, total > 0, pondiio > 0) %>%
+    mutate(share = y / total)
+}
+todas <- armar_parejas(base, "p21") %>%
+  left_join(select(m, id, componente, dipcf), by = c("id", "componente"))
+corr <- todas %>% filter(ambos)
+
+c_dec <- por(corr, "dipcf"); c_edu <- por(corr, "nivel_educ"); c_reg <- por(corr, "region2")
+total4c <- wm(corr$share, corr$pondiio)
+alt_mujer <- wm(todas$share, todas$pondiio)   # mujer de 25 a 55, pareja de cualquier edad
+
+comparar <- function(a, b, nombre) {
+  d <- data.frame(x = as.character(a$grupo), a = pct(a$share), n1 = ent(a$n),
+                  b = pct(b$share), n2 = ent(b$n), dif = num(100 * (b$share - a$share), 1))
+  kable(d, align = "lrrrrr",
+        col.names = c(nombre, "Diapositivas", "N", "Corregido", "N", "Diferencia (pp)"))
+}
+comparar(e_dec, c_dec, "Decil (do-file)")
+comparar(e_edu, c_edu, "Nivel educativo")
+comparar(e_reg, c_reg, "Región")
+```
+
+```{r figura-corregida, fig.width=9}
+bind_rows(mutate(e_edu, muestra = "Diapositivas"), mutate(c_edu, muestra = "Corregido")) %>%
+  mutate(muestra = factor(muestra, levels = c("Diapositivas", "Corregido"))) %>%
+  ggplot(aes(grupo, share, fill = muestra)) +
+  geom_col(position = "dodge", width = 0.7) +
+  geom_text(aes(label = pct(share, 1)), position = position_dodge(0.7), vjust = -0.5, size = 3) +
+  scale_fill_manual(values = c("#99ff99", "#2e7d32"), name = NULL) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), limits = c(0, 0.56)) +
+  labs(title = "Share por nivel educativo: efecto de corregir la muestra", x = NULL, y = NULL, caption = fuente) +
+  theme_minimal() + theme(legend.position = "bottom")
+```
+
+::: {.disc .error #d6}
+**D6.** El *do-file* aplica `keep if (edad>=25 & edad<=55)` **antes** de sumar el ingreso de la pareja, pero identifica a las parejas con el hogar completo. Cuando uno de los dos queda fuera del rango, la persona restante sigue marcada como pareja y el "ingreso de la pareja" es solo el suyo.
+
+- `r ent(tab$mujeres[tab$integrantes_ph == 1])` de las `r ent(nrow(s))` mujeres usadas están en ese caso. Todas tienen **share = 100%** por construcción (peso: `r pct(tab$peso[tab$integrantes_ph == 1] / sum(tab$peso), 1)` de la muestra ponderada).
+- Con ambos integrantes de 25 a 55 años, el *share* promedio baja de **`r pct(total4, 1)` a `r pct(total4c, 1)`**.
+- Si en cambio solo se exige la edad a la mujer y se suma el ingreso de la pareja a cualquier edad, el promedio es `r pct(alt_mujer, 1)`.
+
+Los niveles de las tres desagregaciones del texto son incorrectos. En la muestra corregida, el máximo por decil es el `r c_dec$grupo[which.max(c_dec$share)]` (`r pct(max(c_dec$share), 1)`) y el mínimo el `r c_dec$grupo[which.min(c_dec$share)]` (`r pct(min(c_dec$share), 1)`). Por educación va de `r pct(min(c_edu$share), 1)` a `r pct(max(c_edu$share), 1)`. Por región, el máximo es `r c_reg$grupo[which.max(c_reg$share)]` (`r pct(max(c_reg$share), 1)`) y el mínimo `r c_reg$grupo[which.min(c_reg$share)]` (`r pct(min(c_reg$share), 2)`), prácticamente igual al de Patagónica (`r pct(c_reg$share[c_reg$grupo == "Patagónica"], 2)`).
+:::
+
+::: {.disc .error #d7}
+**D7.** El patrón no es creciente en la parte baja de la distribución. En las cifras de las propias diapositivas, el *share* **cae** del decil 1 (`r pct(e_dec$share[1], 1)`) al 2 (`r pct(e_dec$share[2], 1)`) y del 3 (`r pct(e_dec$share[3], 1)`) al 4 (`r pct(e_dec$share[4], 1)`). El texto señala que el mínimo está en el decil 4, lo que contradice un aumento sostenido. La descripción correcta es: relativamente bajo en los deciles 1 a 4 y mayor desde el 5. Los deciles citados como mínimo y máximo sí coinciden con el cálculo original. La réplica obtiene `r pct(e_dec$share[10], 1)` en el decil 10, no 47,4%, por el desempate de ingresos iguales ([control de cifras](#control)).
+
+Además, el decil se define con el ingreso per cápita **familiar**, que incluye el ingreso de la mujer: la asociación es en parte mecánica (un hogar con dos perceptores tiende a ubicarse más arriba) y no debe leerse como efecto del ingreso sobre el *share*.
+:::
+
+::: {.disc .error #d8}
+**D8.** También es falso en la educación: de "Primario completo" (`r pct(e_edu$share[2], 1)`) a "Secundario incompleto" (`r pct(e_edu$share[3], 1)`) el *share* cae `r num(100 * (e_edu$share[2] - e_edu$share[3]), 1)` pp. La caída persiste en la muestra corregida (`r pct(c_edu$share[2], 1)` frente a `r pct(c_edu$share[3], 1)`). Lo que se observa es un salto claro en "Superior completo". El mínimo y el máximo citados coinciden con el cálculo original.
+:::
+
+```{r ej4-deciles-poblacion}
+base <- base %>% arrange(pondih > 0, id, componente)
+base$dec_pob <- cuantiles(base$ipcf, base$pondih, 10)
+m <- m %>% left_join(select(base, id, componente, dec_pob), by = c("id", "componente"))
+cambian <- mean(m$dec_pob != m$dipcf, na.rm = TRUE)
+kable(table(m$dec_pob) %>% as.data.frame() %>%
+        mutate(`do-file` = as.vector(table(m$dipcf))),
+      col.names = c("Decil", "Personas 25-55 (deciles de toda la población)",
+                    "Personas 25-55 (deciles del do-file)"), align = "rrr")
+corr <- corr %>% left_join(select(base, id, componente, dec_pob), by = c("id", "componente"))
+p_dec <- por(corr, "dec_pob")
+comparar(c_dec, p_dec, "Decil (muestra corregida)")
+```
+
+::: {.disc .metodo #d9}
+**D9.** Los deciles de ingreso per cápita familiar se calculan **después** del filtro de edad, es decir, ordenando solo a las personas de 25 a 55 años. Un "decil 1" así definido no es el 10% más pobre de la población: los niños, que se concentran en los hogares de menores ingresos, quedan fuera. Con deciles calculados sobre toda la población, el `r pct(cambian, 1)` de la muestra cambia de decil. En la última tabla la columna "Diapositivas" corresponde a la muestra corregida con deciles del *do-file*, y "Corregido" a la misma muestra con deciles de la población.
+:::
+
+::: {.disc .impr #d10}
+**D10.** El gráfico de las diapositivas rotula "Superior Incomp." con **<mark>35,6%</mark>**. El valor es `r pct(e_edu$share[5], 3)`, que redondea a `r pct(e_edu$share[5], 1)`, como figura en el PDF *Trabajo Práctico (R)*.
+:::
+
+```{r ej4-ingreso-total}
+tot_ind <- armar_parejas(base, "p47t") %>% filter(ambos)
+share_p47 <- wm(tot_ind$share, tot_ind$pondii)
+cuenta <- base %>% filter(pareja_het) %>% group_by(id) %>%
+  summarise(ambos = sum(edad >= 25 & edad <= 55) == 2, responde = all(p21 >= 0), total = sum(p21)) %>%
+  filter(ambos, responde)
+c(share_ocupacion_principal = total4c, share_ingreso_total = share_p47,
+  parejas_sin_ingreso_laboral = sum(cuenta$total == 0), parejas = nrow(cuenta),
+  share_cero = wm(corr$share == 0, corr$pondiio))
+```
+
+::: {.disc .metodo #d11}
+**D11.** El "ingreso de la pareja" es solo el de la **ocupación principal** (`p21`). El enunciado habla del ingreso de la pareja, y la decisión no se informa. Quedan fuera segundas ocupaciones, jubilaciones, transferencias y otros ingresos. Con el ingreso total individual (`p47t`, ponderado con `pondii`), el *share* de la muestra corregida es `r pct(share_p47, 1)` en lugar de `r pct(total4c, 1)`. Tampoco se aclara que el promedio excluye las parejas donde ninguno tiene ingreso laboral (`r ent(sum(cuenta$total == 0))` de `r ent(nrow(cuenta))`), ni que en el `r pct(wm(corr$share == 0, corr$pondiio), 1)` de las parejas incluidas la mujer no aporta nada.
+:::
+
+## Correlaciones
+
+Regresión ponderada del *share* (en puntos porcentuales) sobre características sociodemográficas, en la muestra corregida. Son asociaciones condicionales, no efectos causales. Se omite el decil de ingreso por la relación mecánica señalada en [D7](#d7).
+
+```{r correlaciones}
+corr <- corr %>% mutate(
+  hijos = as.numeric(ninos == "Hogar con niños"),
+  dif_edad = edad_h - edad,
+  dif_educ = as.integer(nivel_educ) - nivel_h)
+g1 <- mco(I(100 * share) ~ nivel_educ + hijos, corr, "pondiio")
+g2 <- mco(I(100 * share) ~ nivel_educ + hijos + edad + dif_edad + region2, corr, "pondiio")
+g3 <- mco(I(100 * share) ~ dif_educ + hijos + edad + dif_edad + region2, corr, "pondiio")
+filas <- rownames(g2)[-1]
+filas <- c(filas[!grepl("region2", filas)], "dif_educ", filas[grepl("region2", filas)])
+rotulo <- function(v) {
+  v <- sub("nivel_educ", "Educación: ", v); v <- sub("region2", "Región: ", v)
+  recode(v, hijos = "Hogar con niños", edad = "Edad de la mujer",
+         dif_edad = "Diferencia de edad (él − ella)", dif_educ = "Diferencia de nivel educativo (ella − él)")
+}
+tg <- data.frame(v = rotulo(filas), a = sapply(filas, cel, m = g1), b = sapply(filas, cel, m = g2),
+                 c = sapply(filas, cel, m = g3))
+tg <- rbind(tg, data.frame(v = "Observaciones", a = ent(attr(g1, "N")), b = ent(attr(g2, "N")), c = ent(attr(g3, "N"))))
+kable(tg, row.names = FALSE, col.names = c("", "(1)", "(2)", "(3)"), align = "lrrr",
+      caption = "Categorías base: Primario incompleto y CABA. E.E. agrupados por hogar. * p<0,1; ** p<0,05; *** p<0,01.")
+kable(data.frame(
+  Variable = c("Edad de la mujer", "Diferencia de edad", "Diferencia de nivel educativo", "Hogar con niños"),
+  `Correlación con el share` = num(sapply(c("edad", "dif_edad", "dif_educ", "hijos"), function(v)
+    cov.wt(corr[, c("share", v)], wt = corr$pondiio / sum(corr$pondiio), cor = TRUE)$cor[1, 2]), 3),
+  check.names = FALSE), row.names = FALSE, align = "lr")
+```
+
+Controlando por edad, hijos y región (columna 2), las mujeres con superior completo tienen un *share* `r num(g2["nivel_educSuperior Comp.", "coef"], 1)` pp mayor que las de primario incompleto (`r pin(g2["nivel_educSuperior Comp.", "p"])`). Vivir en un hogar con niños se asocia con `r num(g2["hijos", "coef"], 1)` pp (`r pin(g2["hijos", "p"])`). Cada nivel educativo de ventaja de la mujer sobre su pareja se asocia con `r num(g3["dif_educ", "coef"], 1)` pp (columna 3, `r pin(g3["dif_educ", "p"])`).
+
+# Ejercicio 5
+
+::: {.enunciado}
+Ahora le toca pensar y hacer algún análisis original con estos datos. Puede correlacionar las variables que analizó en los puntos anteriores con otras variables, o puede buscar nuevas variables en la base (o en EPH anteriores y hacer algún análisis de tendencias). La idea es que piense en alguna hipótesis y trate de analizar si hay evidencia a favor (no importa si ahora solo puede analizar correlaciones, mostrar los "facts" es útil para empezar a motivar un estudio). En la ppt debería escribir la hipótesis y describir el análisis que hizo para llegar a alguna conclusión (mostrando también los resultados del análisis).
+:::
+
+- <mark>El mayor tiempo que las mujeres dedican a las tareas de cuidado en el hogar inciden negativamente en el tiempo que dedican al trabajo remunerado.</mark>
+- Hipótesis: La presencia de niños/as en el hogar reduce la participación de las *mujeres* en el mercado de trabajo.
+- Para este análisis se comparan los promedios en la participación laboral, diferenciando por género y por <mark>hogares con y sin niños/as</mark>. A priori, lo que se espera es que en aquellos hogares con niños/as la brecha en la participación laboral entre hombres y mujeres sea aún mayor.
+- <mark>Los resultados parecen respaldar la hipótesis planteada.</mark>
+
+```{r ej5-calculo}
+ej5 <- m %>% group_by(ninos, genero) %>% summarise(part = wm(activo, pondera), n = n(), .groups = "drop")
+razon <- ej5 %>% group_by(ninos) %>%
+  summarise(razon = part[genero == "Mujer"] / part[genero == "Hombre"],
+            brecha = 100 * (part[genero == "Hombre"] - part[genero == "Mujer"]))
+kable(data.frame(`Niños en el hogar` = ej5$ninos, `Género` = ej5$genero,
+                 `Participación laboral` = pct(ej5$part), N = ent(ej5$n), check.names = FALSE), align = "llrr")
+kable(data.frame(`Niños en el hogar` = razon$ninos, `Share mujer/hombre` = num(razon$razon, 4),
+                 `Brecha H−M (pp)` = num(razon$brecha, 1), check.names = FALSE), align = "lrr")
+```
+
+```{r figura5}
+ggplot(ej5, aes(ninos, part, fill = genero)) +
+  geom_col(position = position_dodge(0.75), width = 0.65) +
+  geom_text(aes(label = pct(part, 1)), position = position_dodge(0.75), vjust = -0.5) +
+  scale_fill_manual(values = col_gen, name = NULL) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), breaks = seq(0, 1, .1), limits = c(0, 1.05)) +
+  labs(title = "Participación laboral por género y niños en el hogar", x = NULL, y = NULL, caption = fuente) +
+  theme_minimal() + theme(legend.position = "bottom")
+```
+
+::: {.disc .impr #d12}
+**D12.** La primera viñeta presenta como un hecho un mecanismo que el trabajo **no mide ni documenta**: no usa variables de tiempo de cuidado ni cita una fuente. Además, el resultado analizado es la participación (si está activa), no el "tiempo que dedican al trabajo remunerado". Debería formularse como motivación o hipótesis. También hay una falta de concordancia: "El mayor tiempo [...] *incide*".
+:::
+
+## Robustez
+
+```{r ej5-robustez}
+m <- m %>% mutate(hijos = as.numeric(ninos == "Hogar con niños"))
+nucleo <- m %>% filter(ch03 %in% 1:2)   # solo jefes/as y cónyuges
+
+modelos <- list(
+  mco(activo ~ genero * hijos, m, "pondera"),
+  mco(activo ~ genero * hijos + genero * (edad + I(edad^2)) + genero * nivel_educ + region2, m, "pondera"),
+  mco(activo ~ genero * hijos, nucleo, "pondera"),
+  mco(activo ~ genero * hijos + genero * (edad + I(edad^2)) + genero * nivel_educ + region2, nucleo, "pondera"))
+inter <- "generoMujer:hijos"
+mujeres <- list(
+  mco(activo ~ hijos, filter(m, genero == "Mujer"), "pondera"),
+  mco(activo ~ hijos + edad + I(edad^2) + nivel_educ + region2, filter(m, genero == "Mujer"), "pondera"),
+  mco(activo ~ hijos, filter(nucleo, genero == "Mujer"), "pondera"),
+  mco(activo ~ hijos + edad + I(edad^2) + nivel_educ + region2, filter(nucleo, genero == "Mujer"), "pondera"))
+tr <- data.frame(
+  ` ` = c("Niños en el hogar, solo mujeres (pp)", "Mujer × niños (pp)", "Controles", "Muestra", "N (todos)"),
+  check.names = FALSE)
+for (i in 1:4) tr[[paste0("(", i, ")")]] <- c(
+  cel(mujeres[[i]], "hijos", 100), cel(modelos[[i]], inter, 100),
+  if (i %in% c(2, 4)) "Sí" else "No", if (i <= 2) "25-55" else "Jefes y cónyuges",
+  ent(attr(modelos[[i]], "N")))
+kable(tr, align = "lrrrr",
+      caption = "Participación laboral. Controles: edad, edad², educación (interactuados con género) y región. E.E. agrupados por hogar. * p<0,1; ** p<0,05; *** p<0,01.")
+
+rol <- m %>% filter(genero == "Mujer") %>% group_by(hijos) %>%
+  summarise(jefa_o_conyuge = wm(ch03 %in% 1:2, pondera), edad = wm(edad, pondera))
+rol
+horas <- m %>% filter(estado == 1, pp3e_tot > 0, pp3e_tot < 999) %>%
+  group_by(ninos, genero) %>% summarise(horas = wm(pp3e_tot, pondera), .groups = "drop")
+horas
+stopifnot(all(sapply(modelos, function(x) x[inter, "coef"] < 0 & x[inter, "p"] < 0.01)))
+```
+
+::: {.disc .metodo #d13}
+**D13.** `niños` vale 1 si hay algún **hijo/a o nieto/a de la jefatura del hogar** menor de 18 años, y se asigna a todas las personas del hogar. Así, un hijo o hija adulta que convive con hermanos menores figura "con niños" aunque no esté a cargo de ellos, y no se cuentan otros menores (por ejemplo, hermanos o sobrinos de la jefatura). Restringir a jefes/as y cónyuges (columnas 3 y 4) acerca la medida a la presencia de hijos propios o a cargo: la asociación en las mujeres pasa de `r num(100 * mujeres[[1]]["hijos", "coef"], 1)` a `r num(100 * mujeres[[3]]["hijos", "coef"], 1)` pp sin controles.
+:::
+
+::: {.disc .impr #d14}
+**D14.** La conclusión no informa magnitudes, ni pruebas, ni advierte que se trata de una correlación. La brecha pasa de `r num(razon$brecha[1], 1)` pp en hogares sin niños a `r num(razon$brecha[2], 1)` pp en hogares con niños. La participación femenina es `r num(100 * (ej5$part[2] - ej5$part[4]), 1)` pp menor con niños y la masculina `r num(100 * (ej5$part[3] - ej5$part[1]), 1)` pp mayor. La evidencia a favor **resiste** los controles: la interacción es negativa y significativa en las cuatro especificaciones (columna 2: `r num(100 * modelos[[2]][inter, "coef"], 1)` pp). Aun así, "la presencia de niños **reduce** la participación" es una afirmación causal que estos datos no identifican, ya que la fecundidad y la participación se deciden conjuntamente.
+:::
+
+# Control de cifras {#control}
+
+Comparación entre los valores calculados en R y los guardados en `Datos/Trabajo Práctico.xlsx`, que son los que usan las diapositivas y el PDF *Trabajo Práctico (R)*.
+
+```{r control}
+hoja <- function(n) suppressMessages(as.data.frame(
+  read_excel("Datos/Trabajo Práctico.xlsx", sheet = n, col_names = FALSE, col_types = "text")))
+fila <- function(d, i, cols) as.numeric(unlist(d[i, cols]))
+x1 <- hoja(1); x2 <- hoja(2); x3 <- hoja(3); x4 <- hoja(4); x5 <- hoja(5)
+
+control <- list(
+  "Ej. 1: participación" = list(c(ej1$part, total1), as.numeric(x1[2:4, 2])),
+  "Ej. 2: hombres" = list(ej2$part[ej2$genero == "Hombre"], fila(x2, 3, 2:8)),
+  "Ej. 2: mujeres" = list(ej2$part[ej2$genero == "Mujer"], fila(x2, 4, 2:8)),
+  "Ej. 2: total" = list(tot2$part, fila(x2, 5, 2:8)),
+  "Ej. 3: ingreso horario" = list(c(ej3$media, total3), as.numeric(x3[2:4, 2])),
+  "Ej. 4: deciles" = list(e_dec$share, fila(x4, 3, 2:11)),
+  "Ej. 4: educación" = list(e_edu$share, fila(x4, 7, 2:7)),
+  "Ej. 4: región" = list(e_reg$share, fila(x4, 11, 2:8)),
+  "Ej. 5: participación" = list(ej5$part[c(1, 2, 3, 4)], as.numeric(x5[2:5, 2])),
+  "Ej. 5: mujer/hombre" = list(razon$razon,
+    sapply(2:3, function(i) as.numeric(tail(na.omit(unlist(x5[i, ])), 1)))))
+
+kable(data.frame(
+  Bloque = names(control),
+  Cifras = sapply(control, function(z) length(z[[1]])),
+  `Máx. diferencia absoluta` = formatC(sapply(control, function(z) max(abs(z[[1]] - z[[2]]))),
+                                       format = "e", digits = 1),
+  `Coinciden (tol. 0,00005; ingresos 0,005)` = mapply(function(z, n)
+    ifelse(all(abs(z[[1]] - z[[2]]) < ifelse(grepl("ingreso", n), 5e-3, 5e-5)), "Sí", "<mark>No</mark>"),
+    control, names(control)),
+  check.names = FALSE), row.names = FALSE, align = "lrrc")
+```
+
+```{r control-deciles}
+kable(data.frame(Decil = 1:10, R = pct(e_dec$share, 3), Excel = pct(fila(x4, 3, 2:11), 3),
+                 `Diferencia (pp)` = num(100 * (e_dec$share - fila(x4, 3, 2:11)), 3), check.names = FALSE), align = "rrrr")
+dif_dec <- max(abs(e_dec$share - fila(x4, 3, 2:11)))
+stopifnot(dif_dec < 0.0005)
+```
+
+La única diferencia está en los deciles: como máximo `r num(100 * dif_dec, 3)` pp, por el orden de los hogares con igual ingreso per cápita familiar ([D15](#d15)), que no se puede recuperar a partir de `Base.dta`. En los deciles 8 y 10 alcanza para cambiar el primer decimal respecto de las diapositivas (45,0% y 47,4%); las tablas y figuras de este documento muestran los valores calculados en R. Todas las demás cifras coinciden.
+
+```{r sesion}
+sessionInfo()$R.version$version.string
+```

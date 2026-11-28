@@ -1,0 +1,1037 @@
+---
+title: "Efectos económicos heterogéneos por género de la crisis de COVID-19 — Réplica en R"
+subtitle: "Maestría en Economía UNLP - Economía de Género. Informe original: Juan Menduiña"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+    self_contained: true
+    code_folding: hide
+---
+
+```{css, echo=FALSE}
+mark { background: #ffe27a; padding: 0 2px; }
+.disc { border-left: 6px solid; border-radius: 4px; padding: 10px 14px; margin: 14px 0; font-size: 0.95em; }
+.disc p:last-child { margin-bottom: 0; }
+.error { border-color: #c0392b; background: #fdecea; }
+.impr  { border-color: #d68910; background: #fef5e7; }
+.metodo{ border-color: #2874a6; background: #eaf2f8; }
+.nota { font-size: 0.85em; color: #555; border-top: 1px solid #ddd; padding-top: 4px; margin: 6px 0 12px 20px; }
+table { margin-left: auto; margin-right: auto; width: auto !important; }
+th, td { padding: 3px 12px !important; }
+.ancha { overflow-x: auto; }
+.ancha table { font-size: 11px; }
+.ancha th, .ancha td { padding: 2px 5px !important; }
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 8.5, fig.height = 4.8, dpi = 120)
+library(haven); library(dplyr); library(readxl); library(knitr); library(ggplot2)
+
+num <- function(x, d = 1) { x <- ifelse(abs(x) < 10^-d / 2, 0, x); formatC(x, format = "f", digits = d, big.mark = ".", decimal.mark = ",") }
+ent <- function(x) formatC(round(x), format = "d", big.mark = ".", decimal.mark = ",")
+mill <- function(x) num(x / 1e6, 2)
+pct <- function(x, d = 1) paste0(num(100 * x, d), "%")
+estrellas <- function(p) ifelse(p < .01, "\\*\\*\\*", ifelse(p < .05, "\\*\\*", ifelse(p < .1, "\\*", "")))
+marcar <- function(x, cond) ifelse(cond %in% TRUE, paste0("<mark>", x, "</mark>"), x)
+fuente <- "Fuente: Elaboración propia en base a Ministerio de Trabajo, Empleo y Seguridad Social y EPH-INDEC."
+tabla_ancha <- function(d, ...) {
+  cat('<div class="ancha">\n')
+  print(kable(d, format = "html", escape = FALSE, row.names = FALSE, ...))
+  cat('</div>\n')
+}
+col2 <- c(Hombre = "#000000", Mujer = "#bdbdbd")
+sectores <- c("Actividades primarias", "Industria manufacturera", "Construcción", "Comercio",
+  "Hoteles y restaurantes", "Transporte, almacenaje y comunicaciones",
+  "Servicios financieros, inmobiliarios, alquileres y empresariales", "Enseñanza",
+  "Servicios sociales y de salud", "Trabajo doméstico",
+  "Otros servicios comunitarios, sociales y personales")
+cortos <- c("Act. prim.", "Ind. manuf.", "Construcción", "Comercio", "Hot. y rest.", "Transporte",
+  "Serv. financ.", "Enseñanza", "Serv. soc. y de salud", "Trab. dom.", "Otros serv.")
+```
+
+# Cómo leer este documento {-}
+
+El texto es el del informe *Efectos económicos heterogéneos por género de la crisis de COVID-19* (17 páginas). El código replica en R los *do-files* de `Datos/.do/`, y las tablas, las figuras y los números de los recuadros se calculan a partir de las bases de `Datos/`. Lo <mark>resaltado</mark> es una frase, un número o un rótulo con alguna discrepancia, explicada en el recuadro correspondiente. En las tablas, una cifra resaltada indica que el valor calculado en R no coincide con el del informe. El PDF marcado con *(P)* es la presentación de la propuesta: no contiene resultados y no se reproduce aquí.
+
+::: {.disc .error}
+**Error**: la afirmación contradice los datos o las fuentes, el cálculo no hace lo que el texto describe, o un resultado no se puede reproducir.
+:::
+
+::: {.disc .impr}
+**Imprecisión**: redacción, rótulo, formato u omisión que puede inducir a error.
+:::
+
+::: {.disc .metodo}
+**Observación metodológica**: la conclusión depende de una decisión discutible o no documentada.
+:::
+
+**Resultado de la réplica.** El empleo simulado, los ingresos **sin** respuesta de política y el total de bonos a jubilados se reproducen exactamente. Las columnas **con** respuesta de política **no salen de los *do-files* entregados** ([D15](#d15)): se obtienen, con diferencias mínimas, usando otras reglas de elegibilidad que se explicitan abajo. Los problemas que más afectan las conclusiones son:
+
+- el ingreso no laboral **no se deflacta**, pese a que el texto dice lo contrario; al hacerlo, la caída del ingreso es bastante mayor y cambia de signo la recuperación entre el 1er. y el 3er. trimestre *ahead* ([D10](#d10));
+- las cifras de personas beneficiarias **no cuentan beneficiarios** ([D24](#d24));
+- la elegibilidad del IFE **excluye a los desempleados** y los beneficiarios simulados quedan muy lejos de los observados ([D12](#d12), [D25](#d25));
+- buena parte del patrón regresivo depende de usar el propio ingreso para decidir quién pierde el empleo ([D9](#d9), [D2](#d2));
+- el sector "Servicios sociales y de salud" incluye a la **administración pública** ([D16](#d16)).
+
+| N° | Sección | Tipo | Discrepancia |
+|----|---------|------|--------------|
+| [D1](#d1) | Resumen | Imprecisión | Frase agramatical en el *abstract* |
+| [D2](#d2) | Resumen | Metodológica | La explicación del patrón regresivo |
+| [D3](#d3) | 1 | Error | Montos de la nota 3 incompatibles entre sí |
+| [D4](#d4) | 2 | Imprecisión | Falta la unidad en la nota 7 |
+| [D5](#d5) | 2 | Error | Las variaciones de empleo no provienen de registros administrativos |
+| [D6](#d6) | 2 | Metodológica | Informalidad de cuentapropistas definida por decil |
+| [D7](#d7) | 2 | Error | Las subas de empleo se reemplazan por cero |
+| [D8](#d8) | 2 | Error | La selección usa el peso de trabajadores excluidos |
+| [D9](#d9) | 2 | Metodológica | El *logit* usa el ingreso que el empleo genera |
+| [D10](#d10) | 2 | Error | El ingreso no laboral no se deflacta |
+| [D11](#d11) | 2 | Error | Descuento del aguinaldo |
+| [D12](#d12) | 2 | Error | Elegibilidad y asignación del IFE |
+| [D13](#d13) | 2 | Error | Tope del bono a jubilados |
+| [D14](#d14) | 2 | Error | Bono a jubilados triplicado en el 3er. trimestre *ahead* |
+| [D15](#d15) | 2 | Error | Los *do-files* no reproducen las columnas con política |
+| [D16](#d16) | 3.1 | Error | "Servicios sociales y de salud" incluye administración pública |
+| [D17](#d17) | 3.1 | Imprecisión | Los *do-files* no generan la figura 1 |
+| [D18](#d18) | 3.1 | Imprecisión | Colores invertidos entre los paneles de la figura 2 |
+| [D19](#d19) | 3.1 | Imprecisión | Rótulos de las tablas 1 y 2 |
+| [D20](#d20) | 3.2 | Metodológica | La simulación no se contrasta con lo observado |
+| [D21](#d21) | 3.2 | Error | La brecha no se acentúa en general al considerar niños |
+| [D22](#d22) | 3.2 | Metodológica | Definición de "niños en el hogar" |
+| [D23](#d23) | 3.2, B3 | Error | Encabezados de la tabla B3 |
+| [D24](#d24) | 3.3 | Error | Número y composición de las personas beneficiarias |
+| [D25](#d25) | 3.3 | Metodológica | Beneficiarios simulados frente a los de ANSES |
+| [D26](#d26) | 3.3 | Imprecisión | Comparación con y sin política |
+| [D27](#d27) | 4 | Imprecisión | Las responsabilidades de cuidado no se modelan |
+| [D28](#d28) | Apéndice A | Imprecisión | Fuente sin citar y fechas de los bonos |
+| [D29](#d29) | Tabla B2 | Imprecisión | Qué miden los coeficientes del *logit* |
+| [D30](#d30) | Tabla B2 | Error | Observaciones del *logit* informal |
+
+# Réplica del código
+
+Los bloques siguientes están plegados (botón *Show*). Las secciones posteriores usan sus resultados.
+
+## `prepara_base_1.do`: unión de las bases
+
+```{r union}
+leer <- function(a) { d <- zap_labels(read_dta(a)); names(d) <- tolower(names(d)); d }
+ind   <- leer("Datos/.dta/usu_individual_t120.dta")
+hog   <- leer("Datos/.dta/usu_hogar_t120.dta")
+stata <- zap_labels(read_dta("Datos/.dta/Base.dta"))   # base final guardada por Stata
+
+clave_hogar <- c("codusu", "nro_hogar", "aglomerado")
+unida <- ind %>% left_join(hog %>% select(all_of(clave_hogar), setdiff(names(hog), names(ind))), by = clave_hogar)
+unida$pondera <- round(unida$pondera)
+c(personas = nrow(unida), personas_stata = nrow(stata))
+```
+
+## `prepara_base_2.do`: variables
+
+```{r preparacion}
+en  <- function(x) { x[is.na(x)] <- FALSE; x }                       # condición con NA = falso
+sr  <- function(...) rowSums(cbind(...), na.rm = TRUE)               # rsum de Stata
+smax <- function(x) if (all(is.na(x))) NA_real_ else max(x, na.rm = TRUE)
+cuantiles <- function(x, w, n) {                                     # comando_cuantiles.do
+  o <- order(x); w[is.na(w)] <- 0; ac <- cumsum(w[o]) / sum(w)
+  q <- rep(NA_real_, length(x)); for (i in 1:n) q[o][ac > (i - 1) / n & ac <= i / n] <- i; q
+}
+v_lab <- c("pp06c", "pp06d", "pp08d1", "pp08f1", "pp08f2", "pp08j1", "pp08j2", "pp08j3", "tot_p12")
+v_nl  <- c("v2_m", "v3_m", "v4_m", "v5_m", "v8_m", "v9_m", "v10_m", "v11_m", "v12_m", "v18_m", "v19_am", "v21_m")
+
+preparar <- function(base, quitar_menos9 = FALSE) {
+  if (quitar_menos9) for (v in c(v_lab, v_nl)) base[[v]][en(base[[v]] < 0)] <- NA
+  u <- base %>% arrange(codusu, nro_hogar, componente)
+  llave <- paste(u$codusu, sprintf("%03d", u$nro_hogar))
+  u$id <- match(llave, unique(llave))
+  secundario <- en(u$nro_hogar >= 51 & u$nro_hogar <= 71) | u$componente == 51
+  u$relacion <- case_when(secundario | u$ch03 == 10 ~ 6, u$ch03 == 1 ~ 1, u$ch03 == 2 ~ 2, u$ch03 == 3 ~ 3,
+                          u$ch03 %in% 6:7 ~ 4, u$ch03 %in% c(4, 5, 8, 9) ~ 5)
+  u$relacion_est <- ifelse(secundario, 11, u$ch03)
+  u$hogar_sec <- as.numeric(u$relacion_est == 11)
+  u <- u %>% mutate(
+      edad = ifelse(ch06 == -1, 0, ifelse(ch06 == 99, NA, ch06)),
+      g_edad_3 = cut(edad, c(-Inf, 17, 24, 40, 64, Inf), labels = c("[0,17]", "[18,24]", "[25,40]", "[41,64]", "[65+]")),
+      hombre = as.numeric(ch04 == 1), genero = ch04,
+      jefe = ifelse(hogar_sec == 1, NA, as.numeric(relacion == 1))) %>%
+    group_by(id) %>%
+    mutate(miembros = sum(hogar_sec == 0),
+           genero_jefe = smax(genero[en(jefe == 1)]),
+           ninos = as.numeric(any(en(edad < 18 & ch03 %in% c(3, 5))))) %>%
+    ungroup()
+  u$miembros[u$hogar_sec == 1] <- NA
+  u <- u %>% mutate(
+    casado = ifelse(ch07 %in% 3:5, 0, ifelse(ch07 %in% 1:2, 1, NA)),
+    nivel_educ = ifelse(nivel_ed == 7, 1, nivel_ed),
+    ocupado = ifelse(estado %in% 2:4, 0, ifelse(estado == 1, 1, NA)),
+    desocupado = ifelse(estado %in% c(1, 3, 4), 0, ifelse(estado == 2, 1, NA)),
+    inactivo = ifelse(estado %in% c(1, 2, 4), 0, ifelse(estado == 3, 1, NA)),
+    rel_lab = case_when(en(desocupado == 1) ~ 5, cat_ocup == 1 ~ 1, cat_ocup == 3 ~ 2, cat_ocup == 2 ~ 3, cat_ocup == 4 ~ 4),
+    trab_dom = ifelse(pp04b1 == 2, 0, ifelse(pp04b1 == 1, 1, NA)),
+    desc_jubi = ifelse(pp07h == 2, 0, ifelse(pp07h == 1, 1, NA)),
+    cober_med = as.numeric(!en(ch08 == 4)))
+  # Ingresos
+  ing_labor <- sr(as.matrix(u[v_lab])); t_vi <- ifelse(en(u$t_vi < 0), 0, u$t_vi)
+  aux <- sr(as.matrix(u[v_nl])); v22 <- pmax(sr(t_vi) - aux, 0)
+  tot <- sr(ing_labor, t_vi)
+  resto <- ifelse(en(u$p47t > tot), u$p47t - tot, NA)
+  u$ing_laboral <- sr(ing_labor, resto); u$ing_nolaboral <- sr(aux, v22)
+  u$ing_total <- sr(u$ing_laboral, u$ing_nolaboral)
+  u$aguinaldo <- sr(u$pp08j1, u$v21_m)
+  u$aguinaldo_lab <- sr(u$pp08j1); u$aguinaldo_jub <- sr(u$v21_m)
+  u$ing_jubi <- sr(u$v2_m, u$v21_m / 6); u$ing_jubi[u$ing_jubi == 0] <- NA
+  u$itf <- ave(u$ing_total, u$id, FUN = sum); u$ipcf <- u$itf / u$miembros
+  u$lipcf <- log(ifelse(en(u$ipcf > 0), u$ipcf, NA))
+  # Deciles: dentro de ingresos empatados, primero los hogares con pondih = 0
+  u <- u[order(u$pondih > 0, u$id, u$componente), ]
+  u$dipcf <- cuantiles(ifelse(en(u$ipcf >= 0), u$ipcf, NA), u$pondih, 10); u$dipcf[is.na(u$ipcf)] <- NA
+  u <- u %>% arrange(id, componente) %>% mutate(
+    privado = ifelse(pp04a %in% c(1, 3, 9), 0, ifelse(pp04a == 2, 1, NA)),
+    informal = ifelse(en(ocupado == 1), as.numeric(en((rel_lab == 2 & desc_jubi == 0) | (rel_lab == 3 & dipcf <= 6))), NA))
+  # Rama (CIIU a dos dígitos) y sectores
+  rama <- as.character(u$pp04b_cod); len <- nchar(rama)
+  ciiu <- suppressWarnings(as.numeric(ifelse(len %in% c(1, 3), substr(rama, 1, 1), ifelse(len %in% c(2, 4), substr(rama, 1, 2), NA))))
+  r <- suppressWarnings(as.numeric(rama)); e <- function(a, b) en(ciiu >= a & ciiu <= b)
+  s <- rep(NA_real_, nrow(u))
+  s[e(1, 3) | e(5, 9)] <- 1; s[e(10, 33) | en(r == 9502)] <- 2; s[en(ciiu == 40)] <- 3
+  s[e(45, 48) | en(r == 9503)] <- 4; s[e(55, 56)] <- 5; s[e(49, 53) | e(58, 63)] <- 6
+  s[en(ciiu %in% c(35, 36, 68)) | e(64, 66) | e(69, 75) | e(77, 82)] <- 7; s[en(ciiu == 85)] <- 8
+  s[e(37, 39) | e(83, 84) | e(86, 88) | e(90, 93)] <- 9; s[en(ciiu == 97)] <- 10
+  s[(e(94, 96) | en(ciiu %in% c(98, 99))) & !en(r %in% c(9502, 9503))] <- 11
+  s[is.na(s) & !is.na(ciiu)] <- 12
+  u$ciiu_2d <- ciiu; u$sector_indec <- s
+  u
+}
+base <- preparar(unida)
+```
+
+```{r verificacion-variables}
+st <- stata[match(paste(base$codusu, base$nro_hogar, base$componente),
+                  paste(stata$codusu, stata$nro_hogar, stata$componente)), ]
+st$ninos <- st[["niños"]]
+distintas <- function(v) {
+  a <- as.numeric(base[[v]]); z <- as.numeric(st[[v]])
+  d <- xor(is.na(a), is.na(z)) | en(abs(a - z) > 1e-6 * pmax(1, abs(z)))
+  c(todas = sum(d), `con pondih > 0` = sum(d & base$pondih > 0))
+}
+vars_chk <- c("id", "miembros", "edad", "genero_jefe", "ninos", "casado", "nivel_educ", "ocupado", "desocupado",
+  "rel_lab", "trab_dom", "desc_jubi", "cober_med", "ing_laboral", "ing_nolaboral", "itf", "ipcf", "aguinaldo",
+  "ing_jubi", "privado", "informal", "sector_indec", "dipcf")
+chk <- t(sapply(vars_chk, distintas))
+kable(chk[rowSums(chk) > 0, , drop = FALSE], caption = "Variables con alguna diferencia respecto de Base.dta (las demás son idénticas)")
+dif_dec <- chk["dipcf", "con pondih > 0"]
+stopifnot(all(chk[!rownames(chk) %in% c("dipcf", "informal"), ] == 0), chk["informal", 2] == 0)
+
+# El desempate de ingresos iguales no es reproducible: se usa el decil guardado por Stata
+base$dipcf <- st$dipcf
+base$informal <- ifelse(en(base$ocupado == 1),
+  as.numeric(en((base$rel_lab == 2 & base$desc_jubi == 0) | (base$rel_lab == 3 & base$dipcf <= 6))), NA)
+
+# Muestra de análisis: con respuesta de ingresos y sin hogares secundarios
+d0 <- base %>% filter(pondih > 0, hogar_sec == 0) %>% arrange(id, componente)
+c(muestra = nrow(d0), hogares = n_distinct(d0$id))
+```
+
+## Modelo *logit*
+
+```{r logit}
+estimar_logit <- function(d, ingreso = TRUE) {
+  f <- ocupado ~ hombre * (edad + factor(nivel_educ) + jefe + ninos) + I(edad^2) + casado + miembros
+  if (ingreso) f <- update(f, . ~ . + lipcf)
+  m <- lapply(0:1, function(k) glm(f, binomial, d[en((d$ocupado == 1 & d$informal == k) | d$desocupado == 1), ],
+                                   control = list(epsilon = 1e-12, maxit = 100)))
+  p <- sapply(m, function(z) predict(z, newdata = d, type = "response"))
+  list(m = m, pscore = ifelse(en(d$informal == 0), p[, 1], ifelse(en(d$informal == 1), p[, 2], NA)))
+}
+lg <- estimar_logit(d0)
+```
+
+## Simulación
+
+`reglas = "dofile"` ejecuta el código tal como se entrega. `reglas = "informe"` es la reconstrucción que reproduce las cifras publicadas: (i) quienes pierden el empleo pasan a estar desocupados, sin categoría ocupacional ni descuento jubilatorio, al asignar la política; (ii) la condición "cuentapropista sin cobertura médica" se evalúa correctamente; (iii) la elegibilidad de la AUH usa la edad original `ch06`. Los demás argumentos activan, de a una, las correcciones que se discuten en los recuadros.
+
+```{r simulacion}
+tasas <- list(   # proporción de empleo que se pierde: filas = sector, columnas = trimestre ahead
+  formal = cbind(c(.234, .038, .259, .224, .295, .161, .108, 0, 0, .025, .181),
+                 c(.106, 0, 0, .092, 0, .075, .073, 0, 0, .079, .158),
+                 c(.203, 0, 0, .092, .261, .077, 0, 0, 0, .101, .069)),
+  informal = cbind(c(.233, .417, .475, .382, .679, .381, .465, .452, .381, .501, .390),
+                   c(.320, .282, .231, .327, .530, .161, .402, .447, .156, .354, .276),
+                   c(.150, 0, 0, .229, .494, .231, .168, .269, 0, .254, .302)))
+salario <- rbind(formal = c(-.0034, .0529, .1566), publico = c(.0195, .0719, .1522), informal = c(.0169, .1254, .2505))
+deflactor <- c(.951133, .897552, .790004)
+
+# beneficiarios_auh.do
+elegibles_auh <- function(d, sit, edad, cobertura) {
+  hogar_max <- function(x) ave(as.numeric(x), d$id, FUN = max)
+  menor <- as.numeric(en(edad >= 0 & edad < 18 & d$relacion_est %in% c(3, 5)))
+  adulto <- function(x) { x <- as.numeric(x); x[en(edad < 18)] <- 0; x }
+  seis <- en(d$dipcf <= 6); cp <- en(sit$rel_lab == 3)
+  # El do-file compara cober_med (0/1) con 4: "sin cobertura" nunca se cumple
+  sin_cob <- if (cobertura) d$cober_med == 0 else rep(FALSE, nrow(d))
+  e2 <- adulto(en(sit$desocupado == 1) |
+               en(sit$rel_lab == 2 & sit$desc_jubi == 0 & !(d$trab_dom %in% 1)) |
+               (cp & sin_cob) | (cp & !sin_cob & seis & en(d$nivel_ed != 6)) |
+               en(sit$rel_lab == 4) |
+               (en(sit$inactivo == 1) & (is.na(d$ing_jubi) | d$ing_jubi == 0)))
+  e3 <- adulto(en(d$trab_dom == 1 & sit$desc_jubi == 0))
+  formal <- function(rel) en(sit$ocupado == 1 & sit$rel_lab == 2 & sit$desc_jubi == 1 & d$relacion_est == rel & !(d$trab_dom %in% 1)) |
+    (en(sit$ocupado == 1 & sit$rel_lab == 3 & d$relacion_est == rel) & !sin_cob & !seis)
+  excl <- hogar_max(formal(1) | formal(2))
+  ben <- as.numeric(hogar_max(menor) == 1 & (hogar_max(e2) == 1 | hogar_max(e3) == 1) & excl == 0)
+  ben[menor != 1] <- NA
+  nietos <- ave(as.numeric(d$relacion_est == 5 & ben %in% 1), d$id, FUN = sum)
+  hijo_formal <- as.numeric(en(sit$rel_lab == 2 & sit$desc_jubi == 1 & d$relacion_est == 3) & nietos > 0)
+  ben[ben %in% 1 & hogar_max(hijo_formal) == 1] <- 0
+  ben
+}
+
+simular <- function(d, ps, reglas = "informe", deflactar_nl = FALSE, jubi_t3 = FALSE, solo_elegibles = FALSE,
+                    aguinaldo_ok = FALSE, ife_desocupados = FALSE, tope_jubi = FALSE) {
+  informe <- reglas == "informe"
+  hogar_max <- function(x) ave(as.numeric(x), d$id, FUN = max)
+  elegible <- en(d$ocupado == 1 & d$privado == 1 & d$rel_lab %in% 2:3 & d$sector_indec <= 11 & !is.na(d$informal))
+  orden <- order(d$sector_indec, d$informal, ps, na.last = TRUE)
+  grupo <- paste(d$sector_indec, d$informal)
+  desc_dofile <- d$desc_jubi
+  for (t in 1:3) {
+    # Pérdida de empleo
+    tasa <- rep(NA_real_, nrow(d)); f <- cbind(d$sector_indec, t)[elegible, ]
+    tasa[elegible] <- ifelse(d$informal[elegible] == 0, tasas$formal[f], tasas$informal[f])
+    w <- if (solo_elegibles) d$pondih * elegible else d$pondih
+    acum <- numeric(nrow(d)); acum[orden] <- ave(w[orden], grupo[orden], FUN = cumsum)
+    pierde <- elegible & en(acum <= tasa * ave(w, grupo, FUN = sum))
+    # Ingresos sin política
+    sal <- ifelse(en(d$privado == 0), salario["publico", t],
+           ifelse(en(d$privado == 1 & d$informal == 0), salario["formal", t],
+           ifelse(en(d$privado == 1 & d$informal == 1), salario["informal", t], NA)))
+    lab <- d$ing_laboral; nl <- d$ing_nolaboral
+    if (aguinaldo_ok && t != 2) { lab <- pmax(lab - d$aguinaldo_lab, 0); nl <- pmax(nl - d$aguinaldo_jub, 0) }
+    lab[pierde] <- 0; aj <- !pierde & !is.na(sal); lab[aj] <- lab[aj] * (1 + sal[aj])
+    lab <- lab * deflactor[t]
+    if (!aguinaldo_ok && t != 2) lab <- pmax(lab - d$aguinaldo, 0)
+    if (deflactar_nl) nl <- nl * deflactor[t]
+    d[[paste0("ipcf_sim_", t, "a")]] <- ave(lab + nl, d$id, FUN = sum) / d$miembros
+    # Respuesta de política
+    sit <- d[c("ocupado", "desocupado", "inactivo", "rel_lab")]; sit$desc_jubi <- desc_dofile
+    if (informe) { sit$ocupado[pierde] <- 0; sit$desocupado[pierde] <- 1; sit$rel_lab[pierde] <- 5; sit$desc_jubi[pierde] <- NA }
+    edad_auh <- if (informe) d$ch06 else d$edad
+    ben <- elegibles_auh(d, sit, edad_auh, cobertura = informe)
+    formal_perdido <- hogar_max(pierde & en(d$informal == 0))
+    dj <- sit$desc_jubi; dj[is.na(dj)] <- 0; dj[en(d$sector_indec == 10)] <- 0; dj[pierde] <- 0
+    jubilado <- !is.na(d$ing_jubi) & d$ing_jubi > 0
+    califica <- en(d$informal == 1) | en(d$sector_indec == 10) | ben %in% 1
+    if (ife_desocupados) califica <- califica | (en(sit$desocupado == 1 | pierde) & en(d$edad >= 18 & d$edad <= 65))
+    hogar_elegible <- hogar_max(califica) == 1 & hogar_max(dj) != 1 & hogar_max(jubilado) != 1
+    ife  <- ifelse(hogar_elegible & d$relacion %in% 1, c(20000, 10000, 0)[t] / 3, 0)
+    auh  <- ifelse(ben %in% 1 & formal_perdido == 0, c(3103 * .8, 3103 * .8, 6000)[t] / 3, 0)
+    monto <- c(1000, 1000, if (jubi_t3) 1000 else 3000)[t]; hab <- d$ing_jubi
+    jub <- if (!tope_jubi) ifelse(en(hab > 0 & hab < 15892), monto, 0)
+           else ifelse(en(hab > 0 & hab < 18892), monto * pmin(1, (18892 - hab) / 3000), 0)
+    d[[paste0("pierde", t)]] <- pierde
+    d[[paste0("ife", t)]] <- ife; d[[paste0("auh", t)]] <- auh; d[[paste0("jub", t)]] <- jub
+    d[[paste0("hogar_ife", t)]] <- hogar_max(ife > 0); d[[paste0("hogar_auh", t)]] <- hogar_max(auh > 0)
+    d[[paste0("ipcf_sim_", t, "b")]] <- ave(lab + nl + (ife + auh + jub) * deflactor[t], d$id, FUN = sum) / d$miembros
+    if (t == 1) desc_dofile[is.na(desc_dofile)] <- 0   # el do-file lo reemplaza en el 1er. trimestre ahead
+  }
+  d
+}
+r      <- simular(d0, lg$pscore, "informe")
+r_do   <- simular(d0, lg$pscore, "dofile")
+```
+
+## Resultados y sensibilidades
+
+```{r sensibilidades}
+wm <- function(x, w) { i <- !is.na(x) & !is.na(w); sum(x[i] * w[i]) / sum(w[i]) }
+# Orden de las columnas [1], [2], [4], [6], [8], [10], [12] de las tablas 1 y 2
+vars <- c("ipcf", "ipcf_sim_1a", "ipcf_sim_2a", "ipcf_sim_3a", "ipcf_sim_1b", "ipcf_sim_2b", "ipcf_sim_3b")
+medias <- function(x, filtro) sapply(vars, function(v) wm(x[[v]][filtro], x$pondih[filtro]))
+
+metricas <- function(x) {
+  m <- function(f) medias(x, f)
+  tod <- m(TRUE); h <- m(x$genero_jefe %in% 1); mu <- m(x$genero_jefe %in% 2)
+  d1 <- m(x$dipcf %in% 1); d10 <- m(x$dipcf %in% 10)
+  cb <- function(y, a, b) unname(100 * (y[a] / y[b] - 1))
+  empleo <- function(g, f = TRUE) { i <- en(x$genero == g & f) & !is.na(x$ocupado)
+    100 * (wm(x$ocupado[i] * !x$pierde1[i], x$pondih[i]) / wm(x$ocupado[i], x$pondih[i]) - 1) }
+  j <- x$g_edad_3 %in% "[18,24]"
+  c(empH = empleo(1), empM = empleo(2), jovH = empleo(1, j), jovM = empleo(2, j),
+    c5 = cb(tod, "ipcf_sim_2a", "ipcf"), c5H = cb(h, "ipcf_sim_2a", "ipcf"), c5M = cb(mu, "ipcf_sim_2a", "ipcf"),
+    c11 = cb(tod, "ipcf_sim_2b", "ipcf"), c11H = cb(h, "ipcf_sim_2b", "ipcf"), c11M = cb(mu, "ipcf_sim_2b", "ipcf"),
+    d1_5 = cb(d1, "ipcf_sim_2a", "ipcf"), d10_5 = cb(d10, "ipcf_sim_2a", "ipcf"),
+    c7 = cb(tod, "ipcf_sim_3a", "ipcf_sim_1a"), d1_7 = cb(d1, "ipcf_sim_3a", "ipcf_sim_1a"), d10_7 = cb(d10, "ipcf_sim_3a", "ipcf_sim_1a"),
+    c9 = cb(tod, "ipcf_sim_1b", "ipcf_sim_1a"), c13 = cb(tod, "ipcf_sim_3b", "ipcf_sim_3a"),
+    ife = sum(x$pondih[x$ife1 > 0]), auh = sum(x$pondih[x$auh1 > 0]), jub = sum(x$pondih[x$jub1 > 0]))
+}
+b9 <- preparar(unida, quitar_menos9 = TRUE); b9$dipcf <- st$dipcf; b9$informal <- base$informal
+d9 <- b9 %>% filter(pondih > 0, hogar_sec == 0) %>% arrange(id, componente)
+stopifnot(identical(d9$id, d0$id))
+l9 <- estimar_logit(d9)
+l_sin <- estimar_logit(d0, ingreso = FALSE)
+todas <- list(deflactar_nl = TRUE, jubi_t3 = TRUE, solo_elegibles = TRUE, aguinaldo_ok = TRUE,
+              ife_desocupados = TRUE, tope_jubi = TRUE)
+S <- list(
+  "Informe (reconstrucción)"       = metricas(r),
+  "Do-file entregado"              = metricas(r_do),
+  "Deflactar ingreso no laboral"   = metricas(simular(d0, lg$pscore, deflactar_nl = TRUE)),
+  "Bono jubilados 3er. trim."      = metricas(simular(d0, lg$pscore, jubi_t3 = TRUE)),
+  "Selección solo entre elegibles" = metricas(simular(d0, lg$pscore, solo_elegibles = TRUE)),
+  "Aguinaldo"                      = metricas(simular(d0, lg$pscore, aguinaldo_ok = TRUE)),
+  "IFE incluye desocupados"        = metricas(simular(d0, lg$pscore, ife_desocupados = TRUE)),
+  "Tope jubilados 18.892"          = metricas(simular(d0, lg$pscore, tope_jubi = TRUE)),
+  "Códigos -9 como faltantes"      = metricas(simular(d9, l9$pscore)),
+  "Todas las correcciones"         = metricas(do.call(simular, c(list(d = d9, ps = l9$pscore), todas))),
+  "Logit sin ingreso (aparte)"     = metricas(simular(d0, l_sin$pscore)))
+S <- do.call(rbind, S)
+s0 <- S["Informe (reconstrucción)", ]; sc <- S["Todas las correcciones", ]
+amort <- function(f, g = "") unname(100 * (f[paste0("c5", g)] - f[paste0("c11", g)]) / f[paste0("c5", g)])
+```
+
+```{r libro}
+xl <- function(i) as.matrix(suppressMessages(read_excel("Datos/.res/Resultados.xlsx", sheet = i, col_names = FALSE, .name_repair = "minimal")))
+vn <- function(m, i, j) matrix(suppressWarnings(as.numeric(m[i, j])), length(i))
+X1 <- xl(1); X2 <- xl(2); X3 <- xl(3); X4 <- xl(4); X5 <- xl(5); X6 <- xl(6)
+cols_ipcf <- c(3, 4, 6, 8, 10, 12, 14)
+
+niveles <- function(x, var, grupos) do.call(rbind, lapply(grupos, function(g)
+  rbind(medias(x, x[[var]] %in% g & x$genero_jefe %in% 1), medias(x, x[[var]] %in% g & x$genero_jefe %in% 2), medias(x, x[[var]] %in% g))))
+N1 <- rbind(niveles(r, "dipcf", as.list(1:10)),
+            rbind(medias(r, r$genero_jefe %in% 1), medias(r, r$genero_jefe %in% 2), medias(r, TRUE)))
+N2 <- niveles(r, "sector_indec", c(as.list(1:11), list(1:12)))
+E1 <- vn(X1, 7:39, cols_ipcf); E2 <- vn(X2, 7:42, cols_ipcf)
+
+tabla_ipcf <- function(N, E, filas, grupos) {
+  cambios <- function(M) cbind(M[, 1], M[, 2], M[, 3], 100 * (M[, 3] / M[, 1] - 1), M[, 4], 100 * (M[, 4] / M[, 2] - 1),
+    M[, 5], 100 * (M[, 5] / M[, 2] - 1), M[, 6], 100 * (M[, 6] / M[, 1] - 1), M[, 7], 100 * (M[, 7] / M[, 4] - 1))
+  A <- cambios(N); B <- cambios(E)
+  # Se resalta solo una diferencia real, no un redondeo distinto en el límite
+  distinta <- round(A, 1) != round(B, 1) & abs(A - B) > pmax(0.01, 2e-6 * abs(B))
+  celdas <- matrix(marcar(num(A, 1), distinta), nrow(A))
+  d <- data.frame(filas, grupos, celdas)
+  tabla_ancha(d, col.names = c("", "Grupo", "[1]", "[2]", "[4]", "[5] %", "[6]", "[7] %", "[8]", "[9] %", "[10]", "[11] %", "[12]", "[13] %"),
+              align = c("l", "l", rep("r", 12)))
+}
+```
+
+# Resumen
+
+Este informe de investigación simula el impacto de la crisis de COVID-19 en el empleo y los ingresos de los hogares en Argentina, haciendo el énfasis en los efectos heterogéneos por género. Para ello, se simulan impactos en el bienestar utilizando datos de encuestas de hogares, <mark>datos administrativos sobre empleo</mark> y salarios por sectores económicos. Las simulaciones también tienen en cuenta la asistencia pública (es decir, la respuesta de política) implementada por el gobierno argentino para mitigar la crisis. Los resultados indican que, durante la crisis de COVID-19, los hogares experimentaron una reducción en sus ingresos. Esta pérdida de bienestar no fue lineal a lo largo de la distribución del ingreso, siendo los perceptores de ingresos más bajos quienes sufrieron más en términos relativos <mark>debido a la informalidad relativamente más alta en la parte inferior de la distribución del ingreso</mark>. Además, el impacto no fue homogéneo por género: la tasa de empleo cayó más entre las mujeres que entre los hombres (<mark>acentuándose la diferencia entre ambos cuando se considera la dimensión "niños en el hogar"</mark>) y el ingreso per cápita familiar promedio cayó más en los hogares con jefatura femenina que en los hogares con jefatura masculina. Finalmente, la respuesta de política mitigó el impacto de la crisis, amortiguando <mark>alrededor de un tercio</mark> de lo que hubiera sido la caída promedio en los ingresos de los hogares, con mayor compensación en los hogares con jefatura femenina.
+
+**Palabras clave:** COVID-19, Argentina, microsimulaciones, género.
+
+**Abstract.** This research report simulates the impact of the COVID-19 crisis on household employment and income in Argentina, emphasizing the heterogeneous effects by gender. To do this, welfare impacts are simulated using data from household surveys, administrative data on employment and wages by economic sector. The simulations also take into account the public assistance (that is, the policy response) implemented by the Argentine government to mitigate the crisis. The results indicate that, during the COVID-19 crisis, households experienced a reduction in their income. This welfare loss was not linear across the income distribution, with the lowest income earners suffering the most in relative terms due to relatively higher informality at the bottom of the income distribution. Furthermore, the impact was not homogeneous by gender: the employment rate fell more among women than among men (the difference between the two being accentuated when the dimension "children in the home" is considered) and average family per capita income fell more in households headed by women than in households headed by men. <mark>Finally, that the policy response mitigated</mark> the impact of the crisis, cushioning around a third of what would have been the average fall in household income, with greater compensation in households headed by women.
+
+::: {.disc .impr #d1}
+**D1.** En el *abstract* sobra *that*: "Finally, the policy response mitigated...". Las demás frases resaltadas se tratan en [D5](#d5), [D2](#d2), [D21](#d21) y [D10](#d10).
+:::
+
+::: {.disc .metodo #d2}
+**D2.** La informalidad no es la única explicación del patrón regresivo, y en parte está incorporada por construcción.
+
+- Quién pierde el empleo se decide con una probabilidad que depende del **logaritmo del ingreso per cápita familiar** ([D9](#d9)). Si el *logit* se estima sin esa variable, la caída del decil 1 (columna [5]) pasa de `r num(s0["d1_5"])`% a `r num(S["Logit sin ingreso (aparte)", "d1_5"])`%, y la del decil 10 de `r num(s0["d10_5"])`% a `r num(S["Logit sin ingreso (aparte)", "d10_5"])`%.
+- La informalidad de los cuentapropistas se **define** según el decil ([D6](#d6)).
+
+Entre los asalariados, donde la definición no depende del ingreso, la informalidad sí cae mucho con el decil: el mecanismo existe, pero su magnitud no se puede separar de esas dos decisiones.
+:::
+
+# 1. Introducción
+
+Como en la mayoría de los países, la pandemia de COVID-19 ha desencadenado una grave crisis en Argentina. El Aislamiento Social Preventivo y Obligatorio (ASPO), establecido el 20 de marzo de 2020 por el Gobierno Nacional, tenía como objetivo primordial inmovilizar a la población para evitar la circulación del virus y ganar tiempo para preparar el sistema de salud para las consecuencias sanitarias. El ASPO se extendió por más de 200 días, siendo uno de los aislamientos más largos del mundo. En consecuencia, la actividad económica se ha visto muy afectada. Según el Instituto Nacional de Estadística y Censos (INDEC) de Argentina, la actividad económica cayó un 25 por ciento en abril y un 20 por ciento en mayo (en comparación con los mismos meses de 2019). Si bien muchas actividades productivas consideradas esenciales continuaron normalmente (por ejemplo, producción de alimentos y servicios de salud), otras menos esenciales se redujeron significativamente (por ejemplo, construcción, servicios domésticos y transporte). Aquellos que requieren presencia física en el lugar de trabajo (por ejemplo, construcción y manufactura) también fueron restringidos y otros directamente suspendidos (por ejemplo, recreación y turismo). Finalmente, algunas actividades se adaptaron y se llevaron a cabo de forma remota (por ejemplo, educación y muchos servicios profesionales). Esta reducción de la actividad económica ha puesto en riesgo la estabilidad laboral de muchas personas, afectando sus niveles de empleo y de ingreso.
+
+```{r emae}
+emae <- suppressMessages(read_excel("Datos/Material/INDEC - EMAE.xls", sheet = 1, col_names = FALSE, .name_repair = "minimal"))
+i2020 <- which(as.character(emae[[1]]) == "2020")
+kable(data.frame(Mes = unlist(emae[i2020 + 4:6, 1]), `Var. interanual (%)` = num(as.numeric(unlist(emae[i2020 + 4:6, 3]))), check.names = FALSE),
+      row.names = FALSE, caption = "Estimador Mensual de Actividad Económica, 2020. Confirma las caídas citadas.")
+```
+
+En este contexto, el gobierno argentino ha implementado una serie de respuestas de política económica para enfrentar la crisis. Para garantizar el acceso a la alimentación y el sustento de ingresos de los sectores menos favorecidos, se estableció un Ingreso Familiar de Emergencia (IFE). Éste fue un pago excepcional de \$10.000 (alrededor de USD 120 y del 60 por ciento del salario mínimo) durante los meses de abril, junio y agosto de 2020, destinado a trabajadores/as autónomos de bajos ingresos, trabajadores/as domésticos, trabajadores/as informales y desempleados/as. También se reforzó el sistema de protección social. Los beneficiarios de los programas de transferencia de efectivo (por ejemplo, los titulares de la Asignación Universal por Hijo -AUH- y la Asignación Universal por Embarazo -AUE-) recibieron un pago de bonificación.^2^ Además, los/as jubilados/as y pensionados/as recibieron un pago adicional. Este paquete de medidas se estimó en, aproximadamente, 4 puntos del PBI y estuvo en vigor desde el inicio de la crisis hasta finales de 2020 para aquellas actividades que se vieron afectadas por la crisis.^3^
+
+::: {.nota}
+^2^ Adicionalmente, con el objetivo de contener la caída de la actividad productiva, se creó el Programa de Asistencia de Emergencia al Trabajo y la Producción (ATP). A través de este programa, el Gobierno Nacional asistió a las empresas (que aplicaron al programa) pagando el 50 por ciento de los salarios a los empleados.
+:::
+
+::: {.nota}
+^3^ Según el Ministerio de Economía de Argentina, durante 2020, las transferencias corrientes registraron un incremento interanual de <mark>\$153 mil millones</mark> de pesos, de los cuales \$114 mil millones fueron recibidos por el sector privado. Los pagos por el Ingreso Familiar de Emergencia (IFE) y el Programa de Asistencia de Emergencia al Trabajo y la Producción (ATP) ascendieron a <mark>\$11 mil millones (2 puntos del PBI)</mark>. Por su parte, las asignaciones familiares aumentaron en <mark>\$22 mil millones</mark> en virtud de los incrementos otorgados a través de los Decretos N° 163/20, N° 495/20 y N° 692/20 y la movilidad aplicada durante 2019.
+:::
+
+::: {.disc .error #d3}
+**D3.** Los montos de la nota 3 no son coherentes. Según el boletín de ANSES incluido en `Material/`, el IFE tuvo cerca de 8,9 millones de perceptores: **una sola** liquidación de \$10.000 cuesta alrededor de \$`r num(8.857063e6 * 1e4 / 1e9, 0)` mil millones, y hubo tres. Un total de \$11 mil millones para IFE y ATP es incompatible con eso y con que equivalga a 2 puntos del PBI. Probablemente las cifras estén en otra unidad o mal transcriptas; conviene verificarlas en la fuente, que no figura en las referencias.
+:::
+
+Dada la magnitud de la crisis y las respuestas de política económica, resulta muy relevante indagar sobre los daños de la crisis y sobre la efectividad de estas políticas para mitigarla. Hasta cierto punto, este informe de investigación hace un esfuerzo por simular los efectos de la crisis de COVID-19 y se puede considerar como una herramienta de simulación que busca brindar una visión general de cómo esta crisis está afectando el empleo y los ingresos de manera heterogénea por género.
+
+La hipótesis subyacente es que la crisis de COVID-19 deterioró fuertemente la economía argentina y el bienestar de los hogares, con mayor impacto en las mujeres, pero las políticas públicas implementadas colaboraron para contrarrestar (al menos parcialmente) estos efectos negativos. Para indagar sobre esta hipótesis, este informe de investigación analiza el impacto de la crisis de COVID-19 en el empleo y los ingresos de los hogares en Argentina, haciendo el énfasis en los efectos heterogéneos por género. Para ello, se simulan impactos en el bienestar a nivel de hogares, utilizando datos de encuestas de hogares, <mark>datos administrativos sobre empleo</mark> y salarios por sectores económicos y datos de transferencias de efectivo del gobierno. En concreto, se consideran diferentes escenarios. En primer lugar, se comienza caracterizando la situación anterior al COVID-19 en términos de los indicadores socioeconómicos de interés (empleo e ingreso), utilizando microdatos de la encuesta de hogares de Argentina correspondiente al primer trimestre de 2020 ("Escenario Inicial"). En segundo lugar, se simulan los efectos sobre el empleo y los ingresos de los hogares durante los tres trimestres posteriores al comienzo del *lockdown*. Para ello, se utilizan las cifras disponibles sobre la evolución del empleo y los salarios por sectores económicos. Todos los escenarios también incluyen asistencia pública (es decir, respuesta de política), en línea con lo que el gobierno argentino hizo para mitigar la crisis, para tener una idea general de cuán efectivas fueron estas políticas para contrarrestar los efectos negativos de la crisis.
+
+Esta investigación realiza dos aportes. En primer lugar, contribuye a la literatura que estudia los efectos del COVID-19 sobre variables socioeconómicas como el empleo y el ingreso, con énfasis en los efectos heterogéneos por género. En segundo lugar, proporciona estimaciones de la eficacia de la respuesta del gobierno a la pandemia con respecto a su impacto en el bienestar de los hogares.
+
+El resto de este trabajo está estructurado de la siguiente manera. En la sección 2, se describen la fuente de datos y el enfoque metodológico. En la sección 3, se analizan los resultados obtenidos. Finalmente, en la sección 4, se concluye.
+
+# 2. Datos y metodología
+
+La principal fuente de información para este informe es la Encuesta Permanente de Hogares (EPH), realizada por el INDEC. La encuesta cubre áreas urbanas que representan alrededor del 62 por ciento de la población total. Contiene información sobre si el miembro del hogar es trabajador activo y en qué sector económico trabaja. También reporta información sobre los ingresos del trabajador, tanto laborales como no laborales. Estos últimos incluyen transferencias de efectivo, incluidas las del gobierno.
+
+Como lo remarcaron Araar et al. (2020), la crisis de COVID-19 puede generar un conjunto de múltiples shocks sobre el bienestar. Estos incluyen la reducción de la oferta laboral y de los ingresos laborales, el aumento de los precios y la disminución de las remesas. Este informe se centrará en los efectos sobre el empleo y los ingresos laborales y también considerará la respuesta de política gubernamental.^7^ Para medir el bienestar de los hogares, se utiliza, principalmente, el ingreso per cápita familiar (ipcf) mensual.
+
+::: {.nota}
+^7^ No se considera el efecto de los cambios de precios, ya que, en Argentina, la producción doméstica es insignificante, por lo que los modelos de productor / consumidor neto no son relevantes para este país. Además, tampoco se consideran las remesas, ya que no son un componente relevante de los ingresos de los hogares (en 2019, las remesas sólo representaron el <mark>0,11 del PBI</mark>).
+:::
+
+::: {.disc .impr #d4}
+**D4.** "0,11 del PBI" debe ser 0,11**%** del PBI (o indicar la unidad que corresponda).
+:::
+
+La metodología para simular el impacto de COVID-19 en diferentes escenarios involucra varios pasos. En primer lugar, se caracteriza la situación anterior al COVID-19, utilizando la EPH correspondiente al primer trimestre de 2020. Se denota esta situación como "Escenario Inicial", proporcionando una representación precisa de cómo la situación argentina (en términos de empleo e ingresos) se encontraba antes del *lockdown*. En este escenario, al igual que en los escenarios posteriores, se explora la heterogeneidad en los resultados en cuanto a género, grupos de edad y sectores económicos.
+
+En segundo lugar, se simula la situación posterior al COVID-19 durante los tres trimestres posteriores al comienzo de la pandemia, considerando los efectos sobre el empleo y los ingresos laborales. Se supone que la variación de los ingresos laborales afecta sólo a los hogares con miembros activos e ingresos laborales distintos de cero. Dado que el shock de COVID-19 puede tener efectos diferenciales por sector económico en función de las características de cada uno, para la simulación de empleo, se utilizan datos de variaciones de empleo desagregados por once sectores económicos proporcionados por el Ministerio de Trabajo, Empleo y Seguridad Social de Argentina, a través del Boletín de Estadísticas Laborales (BEL). También se distingue entre empleo público y privado y, en este último, entre <mark>trabajadores formales e informales</mark>.
+
+```{r bel}
+bel <- function(h) as.matrix(suppressMessages(read_excel("Datos/Material/BEL - Variaciones de empleo.xlsx", sheet = h, col_names = FALSE, .name_repair = "minimal")))
+bres <- bel("Resumen"); B1 <- vn(bres, 3:13, 2:7)    # columnas: formal e informal de cada trimestre
+codigo <- cbind(tasas$formal[, 1], tasas$informal[, 1], tasas$formal[, 2], tasas$informal[, 2], tasas$formal[, 3], tasas$informal[, 3])
+c(fuente_poblacion = unname(bel("Empleo Población")[87, 1]))
+c(max_dif_pp_cuando_cae = max(abs(-B1 - codigo)[B1 < 0]) * 100, subas_en_la_fuente = sum(B1 > 0), de_ellas_con_cero = sum(B1 > 0 & codigo == 0))
+```
+
+::: {.disc .error #d5}
+**D5.** Las variaciones de empleo del BEL **no son datos administrativos**. Las hojas del archivo usado indican como fuente "MTEySS … en base a **EPH (INDEC)**": son estimaciones de la misma encuesta, para el 2.º a 4.º trimestre de 2020. Además, la categoría "informal" de esa fuente comprende solo **asalariados** no registrados de 18 años o más, y "formal" es el resto (incluye cuentapropistas y patrones). La simulación aplica esas tasas con otra definición de informalidad ([D6](#d6)).
+:::
+
+Las simulaciones sobre variaciones de empleo involucran tres pasos: (i) determinar cuánto empleo cae en cada sector y también entre trabajadores formales e informales; (ii) determinar quiénes son los individuos que pierden su empleo; y (iii) determinar la variación salarial para quienes permanecen empleados.^10^ Para determinar <mark>cuánto cae el empleo</mark>, se utiliza la información proporcionada por el Ministerio de Trabajo, Empleo y Seguridad Social de Argentina para los trimestres de 2020. Para determinar quiénes son los individuos que pierden su empleo, se utiliza un modelo de selección simple basado en probabilidades individuales. Específicamente, se estiman regresiones logísticas para trabajadores formales e informales, respectivamente, junto con individuos desempleados. La variable binaria dependiente toma el valor uno si el individuo se encuentra empleado y cero en caso contrario. El vector de variables independientes incluye un conjunto de <mark>características observables de individuos y hogares</mark>.^11^ Luego, se usa la probabilidad estimada: aquellos individuos con menor probabilidad de estar empleados son los elegidos para perder sus empleos.^12^ Finalmente, para determinar la variación de los salarios de quienes permanecen empleados, se simula la variación de los ingresos laborales de quienes continúan trabajando (como en el escenario inicial) utilizando datos sobre salarios del INDEC. En este caso, se considera la variación del ingreso de los empleados públicos y de los trabajadores privados formales e informales (<mark>asalariados no registrados y autónomos</mark>).
+
+::: {.nota}
+^10^ Para simular las pérdidas de empleo, <mark>se excluyen empleados públicos, patrones y trabajadores familiares sin remuneración</mark>.
+:::
+
+::: {.nota}
+^11^ El primer grupo incluye el género, la edad, la edad al cuadrado, las variables indicadoras de los niveles educativos, la variable indicadora de jefatura de hogar y el estado civil. El segundo grupo incluye una variable indicadora de si hay niños en el hogar, el número de miembros en el hogar y el logaritmo del ingreso per cápita familiar. Además, se incluyen interacciones entre el género y algunas de estas variables. Ver Tabla B2 en el Apéndice.
+:::
+
+::: {.nota}
+^12^ Un supuesto implícito que se está haciendo es que no hay transiciones formales-informales, es decir, todos los seleccionados para perder su empleo pasan al desempleo / inactividad.
+:::
+
+```{r informalidad-definicion}
+ocu <- d0 %>% filter(ocupado == 1)
+por_decil <- ocu %>% filter(!is.na(dipcf)) %>% group_by(dipcf) %>%
+  summarise(total = wm(informal, pondih), asalariados = wm(informal[rel_lab %in% 2], pondih[rel_lab %in% 2]),
+            cuenta_propia = wm(rel_lab %in% 3, pondih), .groups = "drop")
+kable(data.frame(Decil = por_decil$dipcf, `Informalidad (todos)` = pct(por_decil$total),
+                 `Informalidad (solo asalariados)` = pct(por_decil$asalariados),
+                 `Cuentapropistas en el empleo` = pct(por_decil$cuenta_propia), check.names = FALSE), align = "rrrr")
+```
+
+::: {.disc .metodo #d6}
+**D6.** El código clasifica como informal a **todo cuentapropista de los deciles 1 a 6** y como formal a todo cuentapropista de los deciles 7 a 10, regla que el informe no menciona. Eso explica el salto de la tasa de informalidad entre el decil 6 (`r pct(por_decil$total[6])`) y el 7 (`r pct(por_decil$total[7])`). Entre los asalariados la caída es gradual: de `r pct(por_decil$asalariados[1])` en el decil 1 a `r pct(por_decil$asalariados[10])` en el 10.
+:::
+
+```{r subas}
+subas <- which(B1 > 0, arr.ind = TRUE)
+etiq <- c("Formal, 1er.", "Informal, 1er.", "Formal, 2do.", "Informal, 2do.", "Formal, 3er.", "Informal, 3er.")
+kable(data.frame(Sector = cortos[subas[, 1]], `Grupo y trimestre ahead` = etiq[subas[, 2]],
+                 `Variación en la fuente (%)` = num(100 * B1[subas], 2), `Usada (%)` = num(-100 * codigo[subas], 2), check.names = FALSE), row.names = FALSE)
+```
+
+::: {.disc .error #d7}
+**D7.** Cuando la fuente informa que el empleo de un sector **sube** respecto del 1er. trimestre, la simulación usa **cero**. Ocurre en `r sum(B1 > 0)` de las 66 celdas (el *do-file* lo deja anotado en comentarios). La tabla B1 publica las subas y su nota solo menciona variación cero para el empleo público, patrones y familiares sin remuneración. La omisión sesga a la baja el empleo, sobre todo en el 3er. trimestre *ahead* ([D20](#d20)).
+:::
+
+```{r seleccion}
+priv <- d0$ocupado %in% 1 & d0$privado %in% 1 & d0$rel_lab %in% 2:3 & d0$sector_indec %in% 1:11
+sel <- r[priv, ] %>% group_by(sector_indec, informal) %>%
+  summarise(real = wm(as.numeric(pierde1), pondih), .groups = "drop") %>%
+  mutate(objetivo = ifelse(informal == 0, tasas$formal[sector_indec, 1], tasas$informal[sector_indec, 1]))
+kable(data.frame(Sector = cortos, `Formal: objetivo` = pct(sel$objetivo[sel$informal == 0]), `Formal: simulado` = pct(sel$real[sel$informal == 0]),
+                 `Informal: objetivo` = pct(sel$objetivo[sel$informal == 1]), `Informal: simulado` = pct(sel$real[sel$informal == 1]), check.names = FALSE),
+      align = "lrrrr", caption = "Pérdida de empleo entre los elegibles, 1er. trimestre ahead")
+peor <- sel[which.max(abs(sel$real - sel$objetivo)), ]
+```
+
+::: {.disc .error #d8}
+**D8.** La nota 10 dice que se excluyen empleados públicos, patrones y familiares sin remuneración, pero el código solo les impide **perder** el empleo: sus ponderadores igual entran en el total y en la suma acumulada con la que se fija el corte. Por eso la pérdida simulada no coincide con la tasa objetivo. La mayor diferencia es en `r cortos[peor$sector_indec]` (`r ifelse(peor$informal == 1, "informales", "formales")`): `r pct(peor$real)` en lugar de `r pct(peor$objetivo)`. El efecto sobre los agregados es pequeño ([sensibilidad](#sensibilidad)).
+:::
+
+::: {.disc .metodo #d9}
+**D9.** El *logit* incluye `lipcf`, que contiene **el ingreso laboral de la propia persona**: un desocupado tiene menor ingreso familiar *porque* está desocupado. La variable es consecuencia del resultado que se predice (el pseudo-$R^2$ del modelo formal, `r num(1 - lg$m[[1]]$deviance / lg$m[[1]]$null.deviance, 2)`, refleja en parte esa relación) y hace que los despidos simulados recaigan por construcción en los hogares pobres. Además, el *logit* se estima sin ponderadores, y quienes tienen ingreso familiar nulo quedan sin probabilidad estimada (`lipcf` indefinido) y se ordenan al final, como los menos propensos a perder el empleo.
+:::
+
+Formalmente, se define $Y_{i,h,0}$ como el ingreso total anterior al COVID-19 (primer trimestre de 2020) y $L_{i,h}$ como la caída del ingreso laboral, para el individuo $i$ en el hogar $h$. Luego, en la ecuación (1), $Y_{i,h,1}$ constituye el ingreso total simulado en las situaciones posteriores al COVID-19:
+
+$$Y_{i,h,1} = Y_{i,h,0} - L_{i,h} \qquad (1)$$
+
+Dado que, en Argentina, la inflación es muy alta, <mark>se deflactan los ingresos totales</mark> por la variación del nivel de precios de la canasta básica total entre el primer trimestre y los tres trimestres posteriores que cubren la situación posterior al COVID-19. Con estos ingresos totales reales, se vuelve a estimar el ingreso total del hogar y el ipcf. Se denotan estas situaciones como Escenarios 1er., 2do. y 3er. trimestre *ahead* sin respuesta de política.
+
+```{r deflactores}
+cbt <- c(13065.70, 13200.54, 13590.57, 13784.46, 13941.87, 14178.22, 14408.17, 14717.69, 15280.25, 16152.62, 16755.86, 17542.89)
+q <- colMeans(matrix(cbt, 3))   # INDEC, canasta básica total por adulto equivalente, GBA, enero-diciembre 2020
+rbind(calculado = round(q[1] / q[2:4], 6), codigo = deflactor)
+ws <- suppressMessages(read_excel("Datos/Material/INDEC - Índice de salarios (Diciembre 2020).xls", sheet = 1, col_names = FALSE, .name_repair = "minimal"))
+w3 <- vn(as.matrix(ws), 72:74, c(4, 6, 10))
+c(max_dif_salarios_pp = max(abs(t(w3) - salario)) * 100)
+no_lab <- sum(d0$pondih * d0$ing_nolaboral) / sum(d0$pondih * d0$ing_total)
+c(peso_ingreso_no_laboral = no_lab)
+```
+
+::: {.disc .error #d10}
+**D10.** El código **solo deflacta el ingreso laboral y las transferencias simuladas**. El ingreso no laboral (jubilaciones, pensiones, rentas y otras transferencias, `r pct(no_lab)` del ingreso total) queda en pesos nominales y se suma a ingresos reales. Equivale a suponer que se indexa por completo, algo que el texto no dice. Los coeficientes de deflación y las variaciones salariales sí coinciden con las fuentes del INDEC. Al deflactar todo:
+
+| | Informe | Con deflactación completa |
+|---|---:|---:|
+| Caída del ipcf sin política, [5] | `r num(s0["c5"])`% | `r num(S[3, "c5"])`% |
+| Jefatura masculina / femenina | `r num(s0["c5H"])`% / `r num(s0["c5M"])`% | `r num(S[3, "c5H"])`% / `r num(S[3, "c5M"])`% |
+| Caída con política, [11] | `r num(s0["c11"])`% | `r num(S[3, "c11"])`% |
+| Parte amortiguada por la política | `r num(amort(s0), 0)`% | `r num(amort(S[3, ]), 0)`% |
+| Cambio entre 1er. y 3er. trimestre *ahead*, [7] | `r num(s0["c7"])`% | `r num(S[3, "c7"])`% |
+:::
+
+En tercer lugar, en línea con lo que el gobierno argentino hizo para mitigar la crisis, se simulan respuestas de política. Específicamente, se consideran las más relevantes en términos de bienestar del hogar (ver Sección A en el Apéndice). Primero, se tiene al Ingreso Familiar de Emergencia (IFE), el cual consistió en tres pagos excepcionales durante los meses de abril, junio y agosto de 2020 de \$10.000 (cada uno) a las familias menos acomodadas. Segundo, el pago adicional a los titulares de AUH y AUE de <mark>(80% de) \$3.103</mark> para el 1er. y 2do. trimestre *ahead* y de \$6.000 para el 3er. trimestre *ahead* (correspondiente al 20% de la transferencia de efectivo que se retuvo cada mes del 2019). Tercero, el pago adicional a los/as jubilados/as y pensionados/as de <mark>\$3.000 para los tres trimestres *ahead*</mark>. En cuanto a la simulación, <mark>se identifican, en la EPH, a todos los beneficiarios potenciales de estos programas de acuerdo con los criterios de elegibilidad</mark> y, luego, se simula la transferencia de efectivo $T_{i,h}$. Por lo tanto, después de la respuesta de política, los ingresos totales simulados son:
+
+$$Y^{P}_{i,h,1} = Y_{i,h,0} - L_{i,h} + T_{i,h} \qquad (2)$$
+
+Nuevamente, se deflactan los ingresos totales y se vuelve a estimar el ingreso total del hogar y el ipcf. Se denotan estas situaciones como Escenarios 1er., 2do. y 3er. trimestre *ahead* con respuesta de política.
+
+Se debe tener en cuenta un punto crítico sobre la evolución de los ingresos laborales para comparar los trimestres posteriores al COVID-19 con el escenario inicial. En Argentina, los trabajadores se benefician de un bono salarial que se paga dos veces al año. Este bono se conoce como <mark>aguinaldo</mark> y se paga semestralmente durante los meses de junio y diciembre. En consecuencia, se registran e incluyen en el 1er. y 3er. trimestre de estas simulaciones (y de la EPH), pero no en el 2do. y 4to. Por lo tanto, para proporcionar una comparación precisa, el escenario inicial se debe comparar con el escenario del 2do. trimestre *ahead*, ya que ambos incluyen aguinaldo. Esto es válido para la situación sin y con respuesta de política. Finalmente, dejando de lado el escenario inicial, cada trimestre se puede comparar entre la situación sin y con respuesta de política, respectivamente, lo cual proporcionará una buena aproximación de los efectos de la respuesta de política después del *lockdown*.
+
+```{r aguinaldo}
+c(jubilados_con_ingreso_laboral_y_aguinaldo_previsional = sum(d0$aguinaldo_jub > 0 & d0$ing_laboral > 0),
+  personas_con_codigos_negativos = sum(rowSums(as.matrix(d0[v_lab]) < 0, na.rm = TRUE) > 0 | rowSums(as.matrix(d0[v_nl]) < 0, na.rm = TRUE) > 0))
+```
+
+::: {.disc .error #d11}
+**D11.** Para quitar el aguinaldo en el 1er. y 3er. trimestre *ahead*, el código:
+
+- resta del ingreso **laboral** también el aguinaldo **previsional** (`v21_m`), que forma parte del ingreso no laboral: a quien solo cobra jubilación no se le descuenta nada, y a quien además trabaja se le descuenta del salario;
+- resta el monto nominal del 1er. trimestre **después** de ajustar salarios y deflactar.
+
+Corrigiendo ambas cosas, la columna [7] pasa de `r num(s0["c7"])`% a `r num(S["Aguinaldo", "c7"])`% y la [9] de `r num(s0["c9"])`% a `r num(S["Aguinaldo", "c9"])`%. Como cuestión menor, los códigos −9 (no respuesta) de algunas variables de ingreso se suman como montos; su efecto es despreciable.
+
+La numeración de trimestres del párrafo también confunde: "1er. y 3er. trimestre" son trimestres **calendario** (inicial y 2do. *ahead*), no los trimestres *ahead*.
+:::
+
+::: {.disc .error #d12}
+**D12.** La asignación del IFE no respeta los criterios que describen el texto y el boletín de ANSES.
+
+- Un hogar califica solo si tiene un trabajador informal, uno doméstico o un menor beneficiario de AUH. **Estar desocupado no da por sí mismo derecho al IFE**, aunque el texto los incluye entre los destinatarios; tampoco quien pierde el empleo formal en la simulación.
+- No se exige edad entre 18 y 65 años, y los cuentapropistas se seleccionan por decil de ingreso.
+- El beneficio se asigna siempre a la jefatura del hogar. El boletín indica que, con más de una solicitud por hogar, se priorizaba a la mujer.
+- En el *do-file* entregado, la condición `cober_med==4` nunca se cumple (la variable vale 0 o 1), con lo que los cuentapropistas sin cobertura de los deciles 7 a 10 se tratan como **formales**.
+
+Incluir a los desocupados sube los hogares con IFE de `r mill(s0["ife"])` a `r mill(S["IFE incluye desocupados", "ife"])` millones.
+:::
+
+```{r tope}
+entre <- d0 %>% filter(ing_jubi >= 15892, ing_jubi < 18892)
+c(jubilados_entre_15892_y_18892 = sum(entre$pondih))
+```
+
+::: {.disc .error #d13}
+**D13.** El bono se otorga solo a quienes cobran menos de **\$15.892**. El apéndice del propio informe, como el boletín de ANSES, indica que alcanzaba a haberes de hasta **\$18.892** (con un monto decreciente en ese tramo). Quedan afuera unas `r ent(sum(entre$pondih))` personas ponderadas.
+:::
+
+::: {.disc .error #d14}
+**D14.** Los montos son mensuales: en el 1er. y 2do. trimestre *ahead* el bono a jubilados es $3.000/3$, pero en el 3er. es **\$3.000 completos** (`v_bono_jubi_3=3000`), el triple. La columna [13] baja de `r num(s0["c13"])`% a `r num(S["Bono jubilados 3er. trim.", "c13"])`% al corregirlo.
+:::
+
+```{r reproducibilidad}
+cmp <- rbind(
+  `Informe (Resultados.xlsx)` = c(sum(vn(X6, 15, 2)), sum(vn(X6, 15, 5)), sum(vn(X6, 15, 8)), vn(X1, 39, cols_ipcf[5:7])),
+  `Do-file entregado` = c(S["Do-file entregado", c("ife", "auh", "jub")], medias(r_do, TRUE)[5:7]),
+  `Reconstrucción` = c(s0[c("ife", "auh", "jub")], medias(r, TRUE)[5:7]))
+kable(data.frame(Versión = rownames(cmp), matrix(c(ent(cmp[, 1:3]), num(cmp[, 4:6])), nrow(cmp))), row.names = FALSE, align = "lrrrrrr",
+      col.names = c("", "IFE", "Bono AUH", "Bono jubilados", "[8]", "[10]", "[12]"),
+      caption = "Transferencias del 1er. trimestre ahead y niveles de ipcf con política (todos los hogares)")
+stopifnot(abs(cmp[3, 1] / cmp[1, 1] - 1) < 1e-5, abs(cmp[3, 2] / cmp[1, 2] - 1) < 0.003, abs(cmp[2, 1] / cmp[1, 1] - 1) > 0.03)
+```
+
+::: {.disc .error #d15}
+**D15.** Ejecutando los *do-files* tal como se entregan **no se obtienen las cifras publicadas con respuesta de política**: el IFE da `r ent(cmp[2, 1])` hogares en lugar de `r ent(cmp[1, 1])`, y la AUH `r ent(cmp[2, 2])` menores en lugar de `r ent(cmp[1, 2])`. Las cifras publicadas se recuperan con las tres reglas de la [reconstrucción](#simulación): IFE y bono a jubilados coinciden, y en la AUH quedan `r ent(cmp[1, 2] - cmp[3, 2])` menores menos (`r pct(1 - cmp[3, 2] / cmp[1, 2], 2)`), todos en los deciles 1 y 2. La reconstrucción es una inferencia: el código que generó los resultados parece ser otra versión. En ella, quienes tienen menos de un año (`ch06 = -1`) quedan fuera de la AUH. Las tablas siguientes usan la reconstrucción.
+
+Los *do-files* además apuntan a una ruta personal (`G:/Mi unidad/...`), y el libro de resultados se completa a mano a partir de la salida.
+:::
+
+# 3. Resultados
+
+## 3.1. Escenario inicial
+
+```{r figura1-datos}
+ocu <- ocu %>% mutate(g_fig = cut(edad, c(-Inf, 24, 34, 49, 59, Inf), labels = c("hasta 24 años", "25 a 34 años", "35 a 49 años", "50 a 59 años", "60 y más")))
+part <- function(v) { z <- ocu %>% filter(!is.na(.data[[v]])) %>% group_by(k = .data[[v]]) %>% summarise(n = sum(pondih)); setNames(z$n / sum(z$n), z$k) }
+f_gen <- part("genero"); f_edad <- part("g_fig"); f_sec <- part("sector_indec")[as.character(1:11)]
+f_sec <- f_sec / sum(f_sec)
+s9 <- ocu %>% filter(sector_indec == 9) %>% mutate(grupo = case_when(ciiu_2d == 84 ~ "Administración pública y defensa (84)",
+  ciiu_2d %in% 86:88 ~ "Salud y servicios sociales (86-88)", ciiu_2d %in% 90:93 ~ "Arte, cultura y recreación (90-93)",
+  TRUE ~ "Otros (37-39, 83)")) %>% group_by(grupo) %>% summarise(n = sum(pondih)) %>% mutate(sh = n / sum(ocu$pondih[ocu$sector_indec %in% 1:12]))
+adm <- s9$sh[s9$grupo == "Administración pública y defensa (84)"]; salud <- s9$sh[s9$grupo == "Salud y servicios sociales (86-88)"]
+```
+
+Se comienza caracterizando la situación anterior al COVID-19. Según la EPH, aproximadamente, 12 millones de individuos estaban empleados durante el primer trimestre de 2020. La distribución de los trabajadores por género, grupos de edad y sectores económicos se muestra en la Figura 1. Los trabajadores masculinos representan el 56 por ciento del total de empleados, en tanto que alrededor del 79 por ciento del total de trabajadores tenían entre 25 y 59 años. Los sectores económicos más relevantes en términos de empleo fueron el comercio (18 por ciento), <mark>los servicios sociales y de salud (18 por ciento)</mark> y la industria manufacturera (11 por ciento). La tasa de informalidad fue, en promedio, del 40 por ciento, pero ésta disminuye a lo largo de la distribución del ingreso. El Panel A en la Figura 2 indica que, para el decil de ingresos más bajo (más alto), la tasa de informalidad fue alrededor del 86 (11) por ciento. La proporción de mujeres entre los trabajadores informales parece aumentar ligeramente con los niveles de ingreso. La informalidad también varía entre los sectores económicos, siendo trabajo doméstico el sector con la tasa de informalidad más alta (76 por ciento) y con la participación relativa más alta de mujeres entre los trabajadores informales (ver Figura 2, Panel B). La construcción es otro sector con alta informalidad, pero mayoritariamente compuesto por trabajadores hombres. La educación y <mark>la salud</mark> se pueden mencionar entre los sectores con una tasa de informalidad relativamente baja.
+
+```{r composicion-sector9}
+kable(data.frame(Actividad = s9$grupo, `% del empleo total` = pct(s9$sh), check.names = FALSE), caption = "Composición del sector 9 del do-file")
+```
+
+::: {.disc .error #d16}
+**D16.** El sector rotulado "Servicios sociales y de salud" incluye la **administración pública y defensa** (CIIU 84), además de arte y recreación. De su `r pct(sum(s9$sh))` del empleo, la administración pública explica `r pct(adm)` y salud y servicios sociales solo `r pct(salud)`. No es, entonces, el segundo sector por empleo, y su ingreso, informalidad y pérdidas de empleo no describen a la salud. El propio INDEC publica la administración pública por separado.
+:::
+
+```{r figura1, fig.height=6, fig.cap="Figura 1. Situación anterior al COVID-19 (primer trimestre 2020). Distribución de los trabajadores por género, grupo de edad y sector económico."}
+f1 <- bind_rows(
+  data.frame(panel = "Género", k = c("Hombre", "Mujer"), v = as.numeric(f_gen)),
+  data.frame(panel = "Edad", k = names(f_edad), v = as.numeric(f_edad)),
+  data.frame(panel = "Sector económico", k = cortos, v = as.numeric(f_sec)))
+f1$panel <- factor(f1$panel, c("Sector económico", "Edad", "Género"))
+ggplot(f1, aes(v, reorder(k, v))) + geom_col(width = 0.5, fill = "black") +
+  geom_text(aes(label = pct(v)), hjust = -0.15, size = 3) +
+  facet_grid(panel ~ ., scales = "free_y", space = "free_y") +
+  scale_x_continuous(labels = scales::percent, limits = c(0, 0.65)) +
+  labs(x = NULL, y = NULL, caption = fuente) + theme_bw()
+```
+
+::: {.disc .impr #d17}
+**D17.** Los grupos de edad de la figura 1 (hasta 24, 25-34, 35-49, 50-59, 60 y más) no aparecen en ningún *do-file*, que usa 18-24, 25-40 y 41-64. En R se reconstruyen y coinciden con el libro. En el resto del trabajo se usan los otros cortes.
+:::
+
+```{r figura2a, fig.height=4.3, fig.cap="Figura 2, panel A. Tasa de informalidad por decil de ingreso y composición por género de los informales."}
+inf_g <- ocu %>% filter(informal == 1, !is.na(dipcf)) %>% group_by(dipcf, genero) %>% summarise(n = sum(pondih), .groups = "drop_last") %>%
+  mutate(sh = n / sum(n), Género = factor(genero, 1:2, c("Hombre", "Mujer")))
+ggplot() + geom_col(data = inf_g, aes(factor(dipcf), sh, fill = Género), width = 0.5) +
+  geom_line(data = por_decil, aes(factor(dipcf), total, group = 1, linetype = "Tasa informalidad"), colour = "#44546a", linewidth = 1.2) +
+  scale_fill_manual(values = c(Mujer = "black", Hombre = "#e4e4e4"), name = NULL) + labs(linetype = NULL, x = "Decil de ingreso", y = NULL, caption = fuente) +
+  scale_y_continuous(labels = scales::percent) + theme_bw() + theme(legend.position = "top")
+```
+
+```{r figura2b, fig.height=4.3, fig.cap="Figura 2, panel B. Tasa de informalidad por sector económico, según género."}
+n_sec <- ocu %>% filter(sector_indec %in% 1:11) %>% group_by(sector_indec) %>% mutate(tot = sum(pondih)) %>%
+  filter(informal == 1) %>% group_by(sector_indec, genero) %>% summarise(v = sum(pondih) / first(tot), .groups = "drop") %>%
+  mutate(Género = factor(genero, 1:2, c("Hombre", "Mujer")), sector = cortos[sector_indec])
+ggplot(n_sec, aes(v, reorder(sector, -v, sum), fill = Género)) + geom_col(width = 0.5, position = position_stack(reverse = TRUE)) +
+  scale_fill_manual(values = c(Hombre = "black", Mujer = "#e4e4e4"), name = NULL) +
+  scale_x_continuous(labels = scales::percent) + labs(x = NULL, y = NULL, caption = fuente) + theme_bw() + theme(legend.position = "bottom")
+```
+
+::: {.disc .impr #d18}
+**D18.** Los colores se invierten entre paneles: en el A, negro es **mujer**; en el B, negro es **hombre**. Aquí se mantienen como en el informe.
+:::
+
+El ingreso per cápita familiar promedio para la situación anterior al COVID-19 se presenta en la Tabla 1, Columna [1]. Para el primer trimestre de 2020, este ingreso fue de \$19.914, un poco más bajo para los hogares con jefatura femenina. El decil más rico muestra un ingreso, aproximadamente, 23 veces superior al decil más pobre. En la Tabla 2, Columna [1], se proporciona la misma información pero distinguiendo entre sectores económicos en lugar de deciles de ingreso. Se puede apreciar una amplia heterogeneidad entre sectores. Los ingresos per cápita más altos se encuentran en actividades primarias, <mark>servicios sociales y de salud</mark> y servicios financieros, en tanto que trabajo doméstico, construcción y hoteles y restaurantes se encuentran entre los sectores con menores ingresos.
+
+**Tabla 1.** Ingreso per cápita familiar promedio por decil de ingreso y género de la jefatura del hogar (en pesos y porcentaje). Columnas: [1] inicial; sin política: [2], [4] y [6] (1er. a 3er. trimestre *ahead*); con política: [8], [10] y [12].
+
+```{r tabla1, results='asis'}
+tabla_ipcf(N1, E1, rep(c(1:10, "Todos"), each = 3), rep(c("Jefe hombre", "Jefa mujer", "Total"), 11))
+```
+
+**Tabla 2.** Ingreso per cápita familiar promedio por sector económico de la persona ocupada y género de la jefatura del hogar.
+
+```{r tabla2, results='asis'}
+tabla_ipcf(N2, E2, rep(c(cortos, "Todos"), each = 3), rep(c("Jefe hombre", "Jefa mujer", "<mark>Total</mark>"), 12))
+```
+
+Nota: los trabajadores en Argentina se benefician de un bono salarial (aguinaldo) que se paga en junio y diciembre; por lo tanto, el escenario inicial se debe comparar con el del 2do. trimestre *ahead*.
+
+::: {.disc .impr #d19}
+**D19.** En la tabla 2 del informe, la fila del total de cada sector se rotula "**Decil**" (resto de copiar la tabla 1). Ambas tablas tienen además una columna [3] vacía. La tabla 2 promedia el ingreso **familiar** per cápita de las personas ocupadas en cada sector, no un ingreso sectorial de los hogares; "Todos" incluye solo a quienes tienen sector, y por eso difiere del total de la tabla 1.
+:::
+
+## 3.2. Escenarios posteriores al COVID-19 sin respuesta de política
+
+```{r empleo}
+ocupados <- function(x, t, f) sum(x$pondih[en(f) & (if (t == 0) TRUE else !x[[paste0("pierde", t)]])])
+B3 <- t(sapply(c(as.list(1:11), list(1:11)), function(s) unlist(lapply(0:1, function(t)
+  c(ocupados(r, t, r$sector_indec %in% s & r$genero == 1), ocupados(r, t, r$sector_indec %in% s & r$genero == 2), ocupados(r, t, r$sector_indec %in% s))))))
+perd <- data.frame(sector = cortos, n = B3[1:11, 3] - B3[1:11, 6], mujer = (B3[1:11, 2] - B3[1:11, 5]) / (B3[1:11, 3] - B3[1:11, 6]))
+tasa_empleo <- function(f, t) { i <- en(f) & !is.na(r$ocupado); wm(r$ocupado[i] * (if (t == 0) 1 else !r[[paste0("pierde", t)]][i]), r$pondih[i]) }
+var_emp <- function(f, t = 1) 100 * (tasa_empleo(f, t) / tasa_empleo(f, 0) - 1)
+grupos <- list(`[18, 24]` = r$g_edad_3 %in% "[18,24]", `[25, 40]` = r$g_edad_3 %in% "[25,40]", `[41, 64]` = r$g_edad_3 %in% "[41,64]", Total = rep(TRUE, nrow(r)))
+H <- r$genero == 1; M <- r$genero == 2; K <- r$ninos == 1
+T3 <- t(sapply(grupos, function(g) c(var_emp(g & H), var_emp(g & M), var_emp(g & H & !K), var_emp(g & H & K), var_emp(g & M & !K), var_emp(g & M & K))))
+colnames(T3) <- c("H", "M", "H0", "H1", "M0", "M1")
+```
+
+El impacto de COVID-19 fue la mayor contracción económica que experimentó Argentina después de la Gran Recesión de 2008/2009. Durante el segundo trimestre de 2020, Argentina experimentó una reducción de la producción de alrededor del 19 por ciento. Naturalmente, este shock tuvo efectos considerables sobre el empleo. Las caídas del empleo informal fueron mayores que las del empleo formal para todos los sectores económicos (ver Tabla B1 en el Apéndice). En esta simulación, alrededor de 2.5 millones de personas perdieron sus trabajos entre el segundo y el primer trimestre de 2020. De acuerdo con la Figura 3, se pueden encontrar caídas absolutas más altas en el empleo en comercio, construcción y trabajo doméstico. La proporción de mujeres que perdieron su empleo varía entre sectores, siendo trabajo doméstico el sector en el que las mujeres se vieron más afectadas (alrededor del 91 por ciento de los nuevos trabajadores desempleados fueron mujeres).
+
+Al observar la tasa de empleo (Tabla 3), la contracción fue relativamente mayor entre las mujeres que entre los hombres (-21,4 por ciento vs. -20,7 por ciento, respectivamente). En edades laborales tempranas (18 a 24 años), las diferencias son muy significativas: <mark>la caída en la tasa de empleo fue alrededor del 63 por ciento para los hombres y del 75 por ciento para las mujeres</mark> (ver Figura 4, Panel A). <mark>Estas diferencias se vuelven más pronunciadas cuando se considera la presencia de niños en el hogar</mark> (ver Figura 4, Panel B). Por ejemplo, para el grupo de edad de 18 a 24 años, la contracción del empleo para los hombres con <mark>niños</mark> fue alrededor del 56 por ciento, mientras que para las mujeres con niños del 77 por ciento. En el grupo de edad de 25 a 40 años, las caídas fueron alrededor del 17 y 28 por ciento, respectivamente. Incluso condicionando por sector económico, en siete de los once analizados, el empleo de las mujeres se vio más afectado que el de los hombres (ver Tabla B3 en el Apéndice).
+
+```{r figura3, fig.cap="Figura 3. Empleo perdido simulado (barras, eje izquierdo) y participación de la mujer (puntos, eje derecho) por sector, 1er. trimestre ahead."}
+ggplot(perd, aes(reorder(sector, -n))) + geom_col(aes(y = n, fill = "Trabajadores (izq.)"), width = 0.5) +
+  geom_point(aes(y = mujer * 7e5, colour = "Share mujer (der.)"), shape = 15, size = 3) +
+  scale_y_continuous(labels = ent, limits = c(0, 7e5), sec.axis = sec_axis(~ . / 7e5, labels = scales::percent)) +
+  scale_fill_manual(values = "#dddddd", name = NULL) + scale_colour_manual(values = "black", name = NULL) +
+  labs(x = NULL, y = NULL, caption = fuente) + theme_bw() + theme(axis.text.x = element_text(angle = 40, hjust = 1), legend.position = "top")
+```
+
+**Tabla 3.** Variación de la tasa de empleo por género, grupo de edad y niños en el hogar, 2do. vs. 1er. trimestre de 2020 (en porcentaje).
+
+```{r tabla3}
+kable(data.frame(Grupo = rownames(T3), matrix(num(T3, 2), nrow(T3))), row.names = FALSE, align = "lrrrrrr",
+      col.names = c("Grupo de edad", "Hombre", "Mujer", "Hom. s/ niños", "Hom. c/ niños", "Muj. s/ niños", "Muj. c/ niños"))
+```
+
+```{r figura4, fig.height=3.6, fig.cap="Figura 4. Variación de la tasa de empleo. Panel A (izquierda): por género. Panel B (derecha): por género y niños en el hogar."}
+f4 <- as.data.frame(as.table(T3[1:3, ])) %>% setNames(c("edad", "g", "v")) %>%
+  mutate(panel = ifelse(g %in% c("H", "M"), "A. Sin dimensión niños", "B. Con dimensión niños"),
+         g = factor(g, c("H", "M", "H0", "H1", "M0", "M1"), c("Hombre", "Mujer", "Hombre s/ niños", "Hombre c/ niños", "Mujer s/ niños", "Mujer c/ niños")))
+ggplot(f4, aes(edad, v / 100, fill = g)) + geom_col(position = "dodge", width = 0.7) + facet_wrap(~panel) +
+  scale_fill_manual(values = c("black", "#dddddd", "#222222", "#bbbbbb", "#44546a", "#5b9bd5"), name = NULL) +
+  scale_y_continuous(labels = scales::percent) + labs(x = NULL, y = NULL, caption = fuente) + theme_bw() + theme(legend.position = "bottom")
+```
+
+```{r validacion-calculo}
+P <- bel("Empleo Población")
+obs <- function(i) vn(P, i, 68:71)                      # 1er. a 4to. trimestre de 2020
+sim_n <- function(f) sapply(0:3, function(t) ocupados(r, t, r$ocupado %in% 1 & f))
+filas <- list(Total = list(obs(5), TRUE), Varones = list(obs(7), r$genero == 1), Mujeres = list(obs(8), r$genero == 2),
+              `Hasta 24 años` = list(obs(10), r$edad <= 24), `25 a 34 años` = list(obs(11), r$edad >= 25 & r$edad <= 34),
+              `35 a 49 años` = list(obs(12), r$edad >= 35 & r$edad <= 49), `50 a 59 años` = list(obs(13), r$edad >= 50 & r$edad <= 59),
+              `60 años y más` = list(obs(14), r$edad >= 60))
+V <- t(sapply(filas, function(z) { o <- z[[1]]; s <- sim_n(z[[2]]); 100 * c(o[2:4] / o[1] - 1, s[2:4] / s[1] - 1)[c(1, 4, 2, 5, 3, 6)] }))
+```
+
+::: {.disc .metodo #d20}
+**D20.** El archivo `BEL` incluido en el trabajo permite comparar la simulación con el empleo **observado** en 2020, y el informe no lo hace. Variación respecto del 1er. trimestre (%):
+
+```{r validacion-tabla, echo=FALSE}
+kable(data.frame(rownames(V), matrix(num(V), nrow(V))), row.names = FALSE, align = "lrrrrrr",
+      col.names = c("Grupo", "2do. obs.", "2do. sim.", "3er. obs.", "3er. sim.", "4to. obs.", "4to. sim."))
+```
+
+El agregado del 2.º trimestre es cercano (era de esperar: las tasas sectoriales vienen de esa fuente). En cambio, **la distribución por edades es muy distinta de la observada**: hasta los 24 años la caída se sobreestima (`r num(V["Hasta 24 años", 2])`% simulado contra `r num(V["Hasta 24 años", 1])`% observado) y desde los 60 se subestima (`r num(V["60 años y más", 2])`% contra `r num(V["60 años y más", 1])`%). Además, en el 4.º trimestre la simulación pierde bastante más empleo que el observado, en parte por [D7](#d7). La brecha observada entre mujeres y hombres en el 2.º trimestre (`r num(V["Mujeres", 1])`% y `r num(V["Varones", 1])`%) tiene el mismo signo que la simulada. Las cifras por edad no deberían presentarse sin esta advertencia, ni la diferencia de `r num(abs(s0["empM"] - s0["empH"]))` pp entre géneros sin alguna medida de incertidumbre.
+:::
+
+::: {.disc .error #d21}
+**D21.** La brecha **no se acentúa en general** al considerar niños; se acentúa en hogares con niños y **se invierte** en parte de los hogares sin niños. Diferencia mujeres − hombres (pp; negativo = peor para las mujeres):
+
+```{r brechas, echo=FALSE}
+kable(data.frame(Grupo = rownames(T3), `Todos` = num(T3[, "M"] - T3[, "H"]), `Sin niños` = num(T3[, "M0"] - T3[, "H0"]),
+                 `Con niños` = num(T3[, "M1"] - T3[, "H1"]), check.names = FALSE), row.names = FALSE, align = "lrrr")
+stopifnot(all(T3[-1, "M0"] > T3[-1, "H0"]))
+```
+
+Sin niños, entre 25 y 64 años y en el total, la caída es mayor para los **hombres**. La frase correcta es que la desventaja femenina se concentra en los hogares con niños. La fila "Total" de la tabla 3 incluye además a menores de 18 y mayores de 64, que no se muestran.
+:::
+
+::: {.disc .metodo #d22}
+**D22.** "Niños en el hogar" indica que hay algún hijo/a **o nieto/a de la jefatura** menor de 18 años, y se asigna a todos los miembros. En el grupo de 18 a 24 años, buena parte de quienes viven "con niños" probablemente sean hermanos u otros hijos de la jefatura, no madres o padres: la comparación no mide el efecto de las responsabilidades de crianza.
+:::
+
+**Tabla B3.** Empleo por género. Cantidad de ocupados y variación porcentual.
+
+```{r tablaB3}
+cb3 <- 100 * (B3[, 4:6] / B3[, 1:3] - 1)
+kable(data.frame(c(cortos, "Total"), matrix(ent(B3), nrow(B3)), matrix(num(cb3, 2), nrow(B3))), row.names = FALSE, align = c("l", rep("r", 9)),
+      col.names = c("Sector", "H <mark>1er. trim. ahead</mark>", "M", "Todos", "H <mark>2do. trim. ahead</mark>", "M", "Todos", "Cambio H", "Cambio M", "Cambio"), escape = FALSE)
+n_peor <- sum(cb3[1:11, 2] < cb3[1:11, 1])
+```
+
+::: {.disc .error #d23}
+**D23.** Los encabezados de la tabla B3 están corridos un trimestre. Las primeras columnas son el **escenario inicial** (1er. trimestre de 2020) y las siguientes el **1er. trimestre *ahead*** (2.º trimestre), como dice el título. La tabla confirma que en `r n_peor` de los 11 sectores la caída es mayor para las mujeres, aunque en algunos la diferencia es pequeña.
+:::
+
+En los escenarios (simulados) posteriores al COVID-19 sin respuesta de política, el ingreso per cápita familiar promedio experimentó una reducción del <mark>5,9 por ciento</mark>, con una mayor caída en los hogares con jefatura femenina en comparación a los hogares con jefatura masculina (Tabla 1, Columna [5], <mark>-6,8 por ciento vs. -5,3 por ciento</mark>, respectivamente). Sin embargo, esta reducción no fue lineal a lo largo de la distribución del ingreso. Mientras que el decil más rico mostró una reducción del ingreso del 3,4 por ciento, la reducción entre los más pobres fue del <mark>21,1 por ciento</mark>. <mark>Esto se explica por el hecho de que los trabajadores informales se concentran en la parte inferior de la distribución del ingreso</mark> y son los más afectados por la crisis (ya que no están amparados por la normativa laboral).
+
+Continuando con los escenarios posteriores al COVID-19 sin respuesta de política, un ejercicio interesante es comparar el tercer trimestre *ahead* con el primer trimestre *ahead* (es decir, una comparación con el peor momento probable de la pandemia). Esto proporciona una idea de la evolución del empleo y los ingresos, neto de la asistencia pública, es decir, cambios que pueden asociarse únicamente a la actividad económica. Se puede apreciar que <mark>los ingresos de los hogares aumentaron, en promedio, un 1,9 por ciento</mark> (Tabla 1, Columna [7]). Sin embargo, el efecto diferencial sobre la distribución del ingreso se mantiene. El ingreso del decil más rico se redujo en un 2,6 por ciento, mientras que el ingreso del decil más pobre aumentó en un <mark>25,8 por ciento</mark>. Esto, en consonancia con los datos administrativos, se puede deber a una recuperación más rápida del empleo informal (que tiene un mayor peso relativo en la parte inferior de la distribución del ingreso) que del empleo formal. Siguiendo al INDEC, la tasa de ocupación de los asalariados informales (formales) pasó de 6,1 (19,6) por ciento a 9,2 (19,0) por ciento entre el segundo y el cuarto trimestre de 2020 (primer y tercer trimestre *ahead*, respectivamente). Esta recuperación del ingreso se da, precisamente, en los sectores que tienen mayor porcentaje de informalidad, como trabajo doméstico y construcción (Tabla 2, Columna [7]).
+
+Las cifras de las columnas [5] y [7] se reproducen. Su sensibilidad a las correcciones es la siguiente:
+
+| | Informe | Todas las correcciones |
+|---|---:|---:|
+| [5] Total | `r num(s0["c5"])`% | `r num(sc["c5"])`% |
+| [5] Jefatura masculina / femenina | `r num(s0["c5H"])`% / `r num(s0["c5M"])`% | `r num(sc["c5H"])`% / `r num(sc["c5M"])`% |
+| [5] Decil 1 / decil 10 | `r num(s0["d1_5"])`% / `r num(s0["d10_5"])`% | `r num(sc["d1_5"])`% / `r num(sc["d10_5"])`% |
+| [7] Total | `r num(s0["c7"])`% | `r num(sc["c7"])`% |
+| [7] Decil 1 / decil 10 | `r num(s0["d1_7"])`% / `r num(s0["d10_7"])`% | `r num(sc["d1_7"])`% / `r num(sc["d10_7"])`% |
+
+La mayor caída en los hogares con jefatura femenina **se mantiene**. En cambio, la suba promedio de la columna [7] cambia de signo ([D10](#d10)), y la causa del patrón por deciles se discute en [D2](#d2). Las tasas de ocupación citadas del INDEC (6,1 y 19,6; 9,2 y 19,0) coinciden con el cuadro 1.4 del informe *Trabajo e ingresos* del 4.º trimestre.
+
+## 3.3. Escenarios posteriores al COVID-19 con respuesta de política
+
+Al considerar la respuesta de política gubernamental, la situación parece haber mejorado. Una comparación con el escenario inicial representa un contraste en el que la actividad económica y las respuestas de política serán, conjuntamente, los principales impulsores de los cambios. En esta situación (Tabla 1, Columna [11]), el ingreso per cápita familiar promedio experimentó una reducción del <mark>4 por ciento</mark> en comparación con el escenario inicial. Por lo tanto, la respuesta de política amortiguó <mark>alrededor de un tercio</mark> de lo que hubiera sido la caída promedio en los ingresos de los hogares (Tabla 1, -4 por ciento en la Columna [11] vs. -5,9 por ciento en la Columna [5]), con mayor compensación en los hogares con jefatura femenina en comparación con los hogares con jefatura masculina (<mark>35 por ciento vs. 30 por ciento</mark>, respectivamente). Para el segundo decil, los ingresos se redujeron en un 3,3 por ciento cuando se considera la respuesta de política, pero, en ausencia de ésta, esta reducción hubiera sido del 13,8 por ciento. Este efecto de mejora se produjo, aunque con intensidad decreciente, también entre los deciles 3 a 8. Como se esperaba, la respuesta de política parece no haber tenido un impacto sustancial en el 20 por ciento superior de la distribución del ingreso. Al analizar por sector económico, los resultados son similares. Cabe señalar que la asistencia pública mejoró la situación de los sectores económicos muy expuestos a la crisis (comercio, construcción y trabajo doméstico). Por ejemplo, los trabajadores del sector construcción experimentaron una reducción de ingresos del 4,9 por ciento (Tabla 2, Columna [11]), en tanto que esta reducción hubiera sido del 8,7 por ciento en ausencia de la respuesta de política (Tabla 2, Columna [5]). Para trabajo doméstico, la reducción de ingresos fue del 7,5 por ciento (Tabla 2, Columna [11]), en tanto que hubiera sido del 12,8 por ciento en ausencia de la respuesta de política (Tabla 2, Columna [5]). A su vez, se pueden encontrar conclusiones similares para el resto de los sectores económicos.
+
+Con las correcciones, la caída con política es `r num(sc["c11"])`% frente a `r num(sc["c5"])`% sin ella: se amortigua el **`r num(amort(sc), 0)`%** y no un tercio (jefatura femenina `r num(amort(sc, "M"), 0)`%, masculina `r num(amort(sc, "H"), 0)`%). Ver [D10](#d10).
+
+```{r beneficiarios}
+unidades <- function(f) c(n = sum(r$pondih[en(f)]), mujer = wm(as.numeric(r$genero[en(f)] == 2), r$pondih[en(f)]))
+adulto <- r$edad >= 18 & r$edad <= 60
+U <- rbind(
+  `IFE: personas de 18 a 60 en hogares perceptores (informe)` = unidades(r$hogar_ife1 == 1 & adulto),
+  `IFE: perceptores (un pago por hogar)` = unidades(r$ife1 > 0),
+  `AUH: personas de 18 a 60 en hogares con bono (informe)` = unidades(r$hogar_auh1 == 1 & adulto),
+  `AUH: menores por quienes se paga el bono` = unidades(r$auh1 > 0),
+  `Jubilados: perceptores del bono (informe)` = unidades(r$jub1 > 0))
+transfer <- U[2, 1] + U[4, 1] + U[5, 1]
+dec <- sapply(c("ife1", "auh1", "jub1"), function(v) sapply(1:10, function(k) sum(r$pondih[en(r[[v]] > 0 & r$dipcf == k)])))
+inf40 <- colSums(dec[1:4, ]) / colSums(dec)
+```
+
+Para una mejor comprensión de los resultados antes mencionados, resulta útil una caracterización de los beneficiarios de la asistencia pública. En estas simulaciones, se otorgaron <mark>alrededor de 11 millones de transferencias</mark> públicas de efectivo. Se identifican <mark>4.5 millones de personas que recibieron IFE, 3.7 millones que recibieron un bono por AUH</mark> y 2.7 millones de jubilados/as que recibieron un bono. La proporción de mujeres entre estos grupos fue del <mark>54, 57</mark> y 65 por ciento, respectivamente. La Figura 5 presenta cómo se distribuyen estos beneficiarios a lo largo de la distribución del ingreso. Se puede apreciar que la AUH es la transferencia de efectivo más favorable a los pobres. Alrededor del 85 por ciento de sus beneficiarios se encuentran en el 40 por ciento inferior de la distribución del ingreso. Aproximadamente, el 71 por ciento de los beneficiarios del IFE también se encuentran en este último 40 por ciento. Esto está en línea con las cifras anteriores sobre informalidad. Dado que los criterios de elegibilidad para el IFE eran trabajadores/as autónomos de bajos ingresos, trabajadores/as domésticos, trabajadores/as informales y <mark>desempleados/as</mark>, que los/as trabajadores/as domésticos/as son mayoritariamente informales y que los trabajadores informales se encuentran en la parte inferior de la distribución del ingreso, lógicamente, los beneficiarios del IFE se concentrarán allí. Finalmente, la distribución menos favorable a los pobres es la asociada a los/as jubilados/as y pensionados/as. Sólo alrededor del 23 por ciento de ellos se encuentra en el 40 por ciento inferior de la distribución del ingreso.
+
+::: {.disc .error #d24}
+**D24.** Las cifras de IFE y AUH **no son de beneficiarios**: el código cuenta a **todas las personas de 18 a 60 años que viven en hogares perceptores**. Además, 4,44 millones redondea a 4,4 y no a 4,5.
+
+```{r unidades-tabla, echo=FALSE}
+kable(data.frame(Unidad = rownames(U), Millones = mill(U[, 1]), `Mujeres` = pct(U[, 2]), check.names = FALSE), row.names = FALSE, align = "lrr")
+```
+
+Las transferencias simuladas del trimestre son `r mill(U[2, 1])` millones de IFE, `r mill(U[4, 1])` de AUH y `r mill(U[5, 1])` de jubilados: **`r mill(transfer)` millones**, no 11. Las participaciones femeninas de 54% y 57% tampoco son de perceptores. En cambio, la figura 5 y los porcentajes por deciles (`r pct(inf40["auh1"], 0)`, `r pct(inf40["ife1"], 0)` y `r pct(inf40["jub1"], 0)`) sí usan perceptores, es decir, una unidad distinta de la del párrafo.
+:::
+
+::: {.disc .metodo #d25}
+**D25.** El boletín de ANSES incluido en `Material/` informa **8,9 millones** de perceptores del primer pago del IFE (55,7% mujeres), más de 4,6 millones de jubilados con bono y 4,3 millones de niños y adolescentes con el pago adicional por AUH. La simulación asigna `r mill(U[2, 1])`, `r mill(U[5, 1])` y `r mill(U[4, 1])` millones. La EPH cubre cerca del 62% de la población, así que se esperaría alrededor de `r num(8.9 * .62)`, `r num(4.6 * .62)` y `r num(4.3 * .62)` millones. El IFE queda en menos de la mitad de lo esperado ([D12](#d12)), mientras los otros dos programas quedan cerca o por encima. La efectividad estimada de la política depende directamente de esto y la comparación no se informa.
+:::
+
+```{r figura5, fig.cap="Figura 5. Distribución de las personas perceptoras por decil de ingreso, 1er. trimestre ahead (en porcentaje)."}
+f5 <- as.data.frame(as.table(sweep(dec, 2, colSums(dec), "/"))) %>% setNames(c("d", "p", "v")) %>%
+  mutate(d = rep(1:10, 3), p = factor(p, c("ife1", "auh1", "jub1"), c("IFE", "AUH", "Jubilados")))
+ggplot(f5, aes(factor(d), v, fill = p)) + geom_col(position = "dodge", width = 0.75) +
+  scale_fill_manual(values = c("black", "#bdbdbd", "#44546a"), name = NULL) + scale_y_continuous(labels = scales::percent) +
+  labs(x = "Decil de ingreso", y = NULL, caption = "Fuente: Elaboración propia en base a EPH-INDEC.") + theme_bw() + theme(legend.position = "top")
+```
+
+Finalmente, una comparación de los mismos trimestres entre escenarios sin y con respuesta de política podría proporcionar información adicional relevante sobre los efectos de las políticas. Tener en cuenta que, aquí, las respuestas de política serán, únicamente, el principal impulsor de los cambios, ya que el impulsor de la actividad económica es el mismo en ambas situaciones. Para ello, en la Columna [9] de cada Tabla (1 y 2), se compara el cambio porcentual de los niveles de ingresos para el primer trimestre *ahead* sin y con respuesta de política, en tanto que, en la Columna [13], se hace lo mismo para el tercer trimestre *ahead*. Los resultados indican que el ingreso per cápita familiar promedio fue consistentemente más alto en <mark>todos ambos</mark> trimestres en comparación con lo que hubiera sido sin la asistencia pública. Esto es válido, naturalmente con diferente intensidad, tanto para la parte inferior como para la parte superior de la distribución del ingreso. <mark>Dado que se asume que la intensidad de la asistencia pública disminuyó</mark> a medida que la economía redujo su tasa de contracción, esto parece tener su correlación con el hecho de que, en el primer trimestre *ahead*, los ingresos de los hogares fueron, en promedio, 3,8 por ciento más altos en comparación con lo que habrían sido sin la asistencia pública (Tabla 1, Columna [9]). En cambio, durante el tercer trimestre *ahead*, esta diferencia se redujo hasta un <mark>2,4 por ciento</mark> (Tabla 1, Columna [13]). Este fenómeno también se puede apreciar al analizar la dinámica del ingreso por sectores económicos, en donde estos porcentajes, para el primer y tercer trimestre *ahead*, son 3,4 y 1,3, respectivamente (Tabla 2, Columnas [9] y [13]).
+
+::: {.disc .impr #d26}
+**D26.** "Todos ambos" es una errata. La menor diferencia en el 3er. trimestre *ahead* no es un hallazgo: resulta de los **montos que se imponen** en la simulación (sin IFE en ese trimestre). Además, la columna [13] está inflada por el bono triplicado ([D14](#d14)): corregido, es `r num(S["Bono jubilados 3er. trim.", "c13"])`% en lugar de `r num(s0["c13"])`%. Con todas las correcciones, [9] es `r num(sc["c9"])`% y [13] `r num(sc["c13"])`%.
+:::
+
+# 4. Conclusiones
+
+Si bien, inicialmente, la atención se centró en los efectos en la salud de la crisis de COVID-19, sus efectos socioeconómicos y las respuestas de política que la acompañan están recibiendo una mayor atención, principalmente en los países de ingresos bajos y medianos. En este contexto, este informe de investigación analiza el impacto de la crisis de COVID-19 en el empleo y los ingresos de los hogares en Argentina, haciendo el énfasis en los efectos heterogéneos por género. Para ello, se simulan impactos en el bienestar a nivel de hogares, utilizando datos de encuestas de hogares, <mark>datos administrativos sobre empleo</mark> y salarios por sectores económicos y datos de transferencias de efectivo del gobierno. Hasta cierto punto, este informe de investigación hace un esfuerzo por simular los efectos de la crisis de COVID-19 y se puede considerar como una herramienta de simulación que busca brindar una visión general de cómo esta crisis está afectando el empleo y los ingresos de manera heterogénea por género. Las simulaciones también incluyen asistencia pública (es decir, respuesta de política), en línea con lo que el gobierno argentino hizo para mitigar la crisis, para tener una idea general de cuán efectivas fueron estas políticas para contrarrestar los efectos negativos de la crisis.
+
+Los resultados indican que, durante la crisis de COVID-19, los hogares hubieran experimentado una reducción del <mark>5,9 por ciento</mark> en sus ingresos, con una mayor caída en los hogares con jefatura femenina en comparación a los hogares con jefatura masculina. Esta reducción no fue lineal a lo largo de la distribución del ingreso, siendo los perceptores de ingresos más bajos quienes sufrieron más en términos relativos. <mark>Esto está fuertemente relacionado con una informalidad relativamente más alta</mark> en la parte inferior de la distribución del ingreso. Los mayores efectos negativos de la pandemia en la parte menos acomodada de la distribución del ingreso están en línea con los resultados de Bonavida y Gasparini (2020). Además, el impacto no fue homogéneo por género: la tasa de empleo cayó más entre las mujeres que entre los hombres (-21,4 por ciento vs. -20,7 por ciento, respectivamente, al comparar el segundo y el primer trimestre de 2020) y el ingreso per cápita familiar promedio cayó más en los hogares con jefatura femenina que en los hogares con jefatura masculina (<mark>-6,8 por ciento vs. -5,3 por ciento</mark>, respectivamente). En edades laborales tempranas (18 a 24 años), las diferencias son muy significativas: la caída en la tasa de empleo fue alrededor del <mark>63 por ciento para los hombres y del 75 por ciento para las mujeres</mark>. <mark>Estas diferencias se vuelven más pronunciadas cuando se considera la presencia de niños en el hogar</mark>. Por ejemplo, para el grupo de edad de 18 a 24 años, la contracción del empleo para los hombres con niños fue alrededor del 56 por ciento, mientras que para las mujeres con niños del 77 por ciento. En el grupo de edad de 25 a 40 años, las caídas fueron alrededor del 17 y 28 por ciento, respectivamente. Incluso condicionando por sector económico, en siete de los once analizados, el empleo de las mujeres se vio más afectado que el de los hombres. Estos hallazgos son consistentes con ILO (2020) y <mark>pueden asociarse con la superposición de responsabilidades laborales y de cuidado</mark> (tareas domésticas, cuidado de niños y ancianos) que se han intensificado durante la pandemia, especialmente para hogares con niños (OECD, 2020; WEF, 2021). La respuesta de política mitigó el impacto de la crisis, amortiguando <mark>alrededor de un tercio</mark> de lo que hubiera sido la caída promedio en los ingresos de los hogares, con mayor compensación en los hogares con jefatura femenina. Un aspecto clave de la respuesta de política satisfactoria fue que la asistencia pública se dirigió a los trabajadores informales y a los hogares con niños en situación desfavorecida. Este gran efecto de compensación de la respuesta de política está en línea con hallazgos anteriores (Lustig et al., 2020).
+
+::: {.disc .impr #d27}
+**D27.** La simulación no contiene ningún mecanismo de cuidado: quién pierde el empleo depende de las tasas sectoriales y del *logit* estimado **antes** de la pandemia. Las diferencias por género y por niños provienen de esos dos insumos, por lo que no pueden atribuirse a una intensificación de las tareas de cuidado. Puede mencionarse como hipótesis. Las demás frases resaltadas se explican en [D2](#d2), [D5](#d5), [D10](#d10), [D20](#d20) y [D21](#d21).
+:::
+
+En la transición hacia el final de la pandemia, la discusión de políticas económicas debe incluir políticas a corto y a mediano plazo. Los debates académicos y políticos sobre políticas a corto plazo deben centrarse en cómo lograr una focalización precisa de la asistencia pública. Una lección importante que se extrae del caso argentino es que, dado que la mayoría de los hogares más pobres están empleados en el sector informal, las medidas de asistencia pública (como las aplicadas) que consideran la informalidad se vuelven cruciales. De esta manera, cobra mucha relevancia la discusión de políticas de desarrollo orientadas a reducir la informalidad laboral, en donde (como se vio oportunamente) trabajo doméstico es el sector con la tasa de informalidad más alta y, además, un sector ampliamente femenino (alrededor del 95 por ciento de los ocupados son mujeres). Las políticas del mercado laboral juegan un papel importante en la formalización del empleo. Dado que la mayoría de los trabajadores informales tienen baja cualificación y trabajan en puestos de difícil identificación para las políticas públicas, es necesario un enfoque político integrado, que incluya políticas económicas, sociales y laborales (Bertranou et al., 2013).
+
+# Apéndice
+
+## A. Respuesta de política simulada para mitigar la crisis de COVID-19
+
+<mark>Al inicio de la crisis de COVID-19, el 23 de marzo, a través del Decreto 310/2020, la Administración Nacional de la Seguridad Social (ANSES) creó una prestación denominada Ingreso Familiar de Emergencia (IFE)</mark>, destinada a aquellos sectores más vulnerables de la población. El IFE consistió en una prestación monetaria excepcional no contributiva, destinada a compensar la pérdida o disminución grave de los ingresos de las personas afectadas por la situación de emergencia sanitaria (declarada por el Decreto N° 260/2020). Con el fin de atenuar el incremento de la pobreza y la indigencia que trajo consigo la disminución de la actividad económica, esta medida se dirigió a los hogares compuestos por trabajadores/as informales, desempleados/as y trabajadores/as autónomos de bajos ingresos, es decir, aquellos sectores de la población con mayor grado de vulnerabilidad en términos socioeconómicos. El monto del IFE fue de \$10.000 (alrededor de USD 120 y del 60 por ciento del salario mínimo) y podía cobrarlo un integrante del grupo familiar que se encontrara bajo condiciones de exclusión o precariedad laboral y en condiciones de vulnerabilidad socioeconómica. El IFE presentaba dos definiciones excluyentes en cuanto a la delimitación de la población beneficiaria. Por un lado, el programa brindaba asistencia a los trabajadores afectados por inserciones laborales precarias (trabajadores/as autónomos de bajos ingresos, trabajadores/as domésticos, trabajadores/as informales y desempleados/as). Por otro lado, el programa limitaba esta cobertura a la situación laboral y económica del grupo familiar al que pertenece el beneficiario, en el sentido de que todos sus integrantes debían reunir las condiciones para acceder al IFE, y sólo uno de ellos podía recibir el beneficio. El IFE fue compatible con la percepción de ingresos provenientes de otros programas sociales, como la Asignación Universal por Hijo (AUH) o la Asignación Universal por Embarazo (AUE).
+
+Simultáneamente con el IFE, se otorgó un bono de hasta \$3.000 (alrededor de USD 40) a más de 4.6 millones de jubilados/as y pensionados/as que cobraron un único haber previsional hasta alcanzar los <mark>\$18.892</mark> (alrededor de USD 240). Además, también se duplicó el monto de la AUH y la AUE, medida que benefició a más de 4.3 millones de niños/as y adolescentes que percibieron un ingreso complementario de <mark>\$3.103</mark> (alrededor de USD 40).
+
+::: {.disc .impr #d28}
+**D28.** El apéndice reproduce casi textualmente el *Boletín IFE I-2020* de ANSES sin citarlo, y esa fuente no figura en las referencias (tampoco el BEL ni las publicaciones del INDEC utilizadas). El boletín fecha en **marzo** el bono a jubilados y el pago de \$3.103 por AUH; la simulación los asigna a trimestres *ahead* (a partir de abril) y el cuerpo del texto habla de "(80% de) \$3.103" en dos trimestres. No se explica cómo se concilian. El tope de \$18.892 no es el que usa el código ([D13](#d13)).
+:::
+
+## B. Tablas adicionales
+
+**Tabla B1.** Variaciones de empleo (respecto del 1er. trimestre de 2020) según la fuente, en porcentaje. <mark>Resaltadas</mark>: subas que la simulación reemplaza por cero ([D7](#d7)).
+
+```{r tablaB1}
+b1t <- matrix(marcar(num(100 * B1, 2), B1 > 0), 11)
+b1t <- rbind(b1t, num(100 * colMeans(B1), 2))
+kable(data.frame(c(cortos, "Promedio simple"), b1t), row.names = FALSE, escape = FALSE, align = c("l", rep("r", 6)),
+      col.names = c("Sector", "1er. formal", "1er. informal", "2do. formal", "2do. informal", "3er. formal", "3er. informal"))
+kable(data.frame(Grupo = c("Privado formal", "Privado informal", "Público"),
+                 matrix(num(100 * salario[c("formal", "informal", "publico"), ], 2), 3)), align = "lrrr",
+      col.names = c("Variación salarial", "1er.", "2do.", "3er."))
+```
+
+**Tabla B2.** Regresiones *logit* sobre la probabilidad de estar ocupado.
+
+```{r tablaB2}
+robusta <- function(m) { X <- model.matrix(m); e <- residuals(m, "response"); A <- solve(crossprod(X * sqrt(m$weights))); n <- nrow(X)
+  A %*% crossprod(X * e) %*% A * n / (n - 1) }
+terminos <- c(Edad = "edad", `Edad al cuadrado` = "I(edad^2)", `Primario completo` = "factor(nivel_educ)2", `Secundario incompleto` = "factor(nivel_educ)3",
+  `Secundario completo` = "factor(nivel_educ)4", `Superior incompleto` = "factor(nivel_educ)5", `Superior completo` = "factor(nivel_educ)6",
+  `Jefe de hogar` = "jefe", `Niños en el hogar` = "ninos", Casado = "casado", `Miembros en el hogar` = "miembros", `ipcf (log)` = "lipcf")
+col_b2 <- function(m) {
+  V <- robusta(m); b <- coef(m)
+  # "Hombre" del informe: efecto para un jefe, con niños y superior completo (a edad 0)
+  a <- setNames(as.numeric(names(b) %in% c("hombre", "hombre:jefe", "hombre:ninos", "hombre:factor(nivel_educ)6")), names(b))
+  est <- c(sum(a * b), b[terminos]); ee <- c(sqrt(drop(a %*% V %*% a)), sqrt(diag(V))[terminos])
+  list(est = est, ee = ee, txt = paste0(num(est, 3), estrellas(2 * pnorm(-abs(est / ee))), " (", num(ee, 3), ")"),
+       hombre0 = c(b["hombre"], sqrt(V["hombre", "hombre"])))
+}
+F1 <- col_b2(lg$m[[1]]); F2 <- col_b2(lg$m[[2]])
+n_obs <- sapply(lg$m, nobs); r2 <- sapply(lg$m, function(m) 1 - m$deviance / m$null.deviance)
+kable(data.frame(V = c("<mark>Hombre</mark>", names(terminos), "Observaciones", "<mark>Pseudo-R²</mark>"),
+                 Formal = c(F1$txt, ent(n_obs[1]), num(r2[1], 4)), Informal = c(F2$txt, marcar(ent(n_obs[2]), TRUE), num(r2[2], 4))),
+      col.names = c("Variables", "Formal", "Informal"), escape = FALSE, align = "lrr")
+pub <- list(c(1.314, .213, -.002, .684, .524, .821, .593, 1.235, .826, .279, .607, .150, 2.020),
+            c(1.280, .097, -.001, .235, .022, -.065, -.101, -.348, .477, .149, .358, .075, .556))
+stopifnot(max(abs(F1$est - pub[[1]])) < 0.0011, max(abs(F2$est - pub[[2]])) < 0.0011)
+```
+
+::: {.disc .impr #d29}
+**D29.** Como se omiten las interacciones, la tabla no se puede leer como parece. Los coeficientes de edad, educación, jefatura y niños son los de las **mujeres**. El de "Hombre" es la diferencia entre sexos para una persona jefa de hogar, con niños, con superior completo y **edad cero**, producto de cómo Stata parametriza las interacciones: no tiene interpretación útil. Para el nivel educativo base, sin jefatura ni niños, sería `r num(F1$hombre0[1], 3)` (`r num(F1$hombre0[2], 3)`) en formales y `r num(F2$hombre0[1], 3)` (`r num(F2$hombre0[2], 3)`) en informales. Lo informado como $R^2$ es un pseudo-$R^2$ de McFadden.
+:::
+
+::: {.disc .error #d30}
+**D30.** El modelo informal usa **`r ent(n_obs[2])`** observaciones, no 8.941: parece una transposición de dígitos. Todos los coeficientes y errores estándar publicados se reproducen.
+:::
+
+**Tabla B3** se presenta en la [sección 3.2](#d23).
+
+# Sensibilidad a las correcciones {#sensibilidad}
+
+Cada fila parte de la reconstrucción que reproduce el informe y cambia **una** cosa; "Todas las correcciones" aplica juntas las de los recuadros D8 y D10 a D14, y los códigos −9. El *logit* sin ingreso es una alternativa metodológica y se muestra aparte. Variaciones en porcentaje; perceptores en millones.
+
+```{r tabla-sensibilidad, results='asis'}
+orden <- c("empH", "empM", "jovH", "jovM", "c5", "c5H", "c5M", "c11", "d1_5", "c7", "c9", "c13")
+Z <- data.frame(rownames(S), matrix(num(S[, orden]), nrow(S)), num(amort_v <- 100 * (S[, "c5"] - S[, "c11"]) / S[, "c5"], 0),
+                matrix(mill(S[, c("ife", "auh", "jub")]), nrow(S)))
+tabla_ancha(Z, col.names = c("Escenario", "Empleo H", "Empleo M", "18-24 H", "18-24 M", "[5]", "[5] J.H.", "[5] J.M.", "[11]", "[5] decil 1",
+                             "[7]", "[9]", "[13]", "% amortiguado", "IFE", "AUH", "Jub."), align = c("l", rep("r", 16)))
+```
+
+```{r conclusiones-robustas}
+stopifnot(all(S[, "empM"] < S[, "empH"]), all(S[, "c5M"] < S[, "c5H"]), all(S[, "c11"] > S[, "c5"]))
+```
+
+**Qué se sostiene en todos los escenarios:** la tasa de empleo cae algo más entre las mujeres, el ingreso cae más en los hogares con jefatura femenina y la política amortigua parte de la caída. **Qué cambia:** la magnitud de la caída del ingreso, la proporción amortiguada, el signo de la recuperación entre el 1er. y el 3er. trimestre *ahead* y la intensidad del patrón por deciles.
+
+# Control de cifras {#control}
+
+Comparación entre los valores calculados en R (reconstrucción) y `Datos/.res/Resultados.xlsx`. La diferencia es relativa.
+
+```{r control}
+num_sheet <- function(m, i, j) as.numeric(vn(m, i, j))
+tasa_t <- function(f) sapply(0:3, function(t) tasa_empleo(f, t))
+G <- list(r$genero == 1, r$genero == 2, TRUE)
+emp_edad <- unlist(lapply(c(0, 1, 2, 3), function(t) sapply(G, function(g) sapply(2:4, function(k) tasa_empleo(r$g_edad_3 %in% levels(r$g_edad_3)[k] & g, t)))))
+emp_edad_x <- unlist(lapply(list(2:4, 5:7, 11:13, 17:19), function(j) vn(X5, 7:9, j)))
+kids <- list(r$genero == 1 & !K, r$genero == 1 & K, r$genero == 2 & !K, r$genero == 2 & K)
+emp_nin <- unlist(lapply(0:3, function(t) sapply(kids, function(g) sapply(2:4, function(k) tasa_empleo(r$g_edad_3 %in% levels(r$g_edad_3)[k] & g, t)))))
+emp_nin_x <- unlist(lapply(list(25:28, 30:33, 40:43, 50:53), function(j) vn(X5, 7:9, j)))
+cnt <- unlist(lapply(0:3, function(t) sapply(1:2, function(g) sapply(1:11, function(s) ocupados(r, t, r$sector_indec %in% s & r$genero == g)))))
+cnt_x <- unlist(lapply(list(62:63, 65:66, 71:72, 77:78), function(j) vn(X5, 6:16, j)))
+inf_dec <- ocu %>% filter(!is.na(dipcf)) %>% group_by(dipcf) %>% summarise(n = sum(pondih * informal), t = wm(informal, pondih))
+inf_sec <- ocu %>% filter(sector_indec %in% 1:11) %>% group_by(sector_indec) %>% summarise(n = sum(pondih * informal), t = wm(informal, pondih))
+fig1_x <- c(vn(X3, c(19, 18), 3), vn(X3, c(22, 24, 25, 23, 21), 3), vn(X3, c(27, 35, 33, 37, 28, 30, 34, 31, 36, 32, 29), 3))
+control <- list(
+  "Figura 1" = list(c(f_gen, f_edad, f_sec), fig1_x),
+  "Figura 2: informalidad por decil" = list(c(inf_dec$n, inf_dec$t), c(vn(X4, 4:13, 2:3))),
+  "Figura 2: informalidad por sector" = list(c(inf_sec$n, inf_sec$t), c(vn(X4, 4:14, 6:7))),
+  "Tabla 1: sin política ([1], [2], [4], [6])" = list(N1[, 1:4], E1[, 1:4]),
+  "Tabla 1: con política ([8], [10], [12])" = list(N1[, 5:7], E1[, 5:7]),
+  "Tabla 2: sin política" = list(N2[, 1:4], E2[, 1:4]),
+  "Tabla 2: con política" = list(N2[, 5:7], E2[, 5:7]),
+  "Empleo por género y edad (4 trimestres)" = list(emp_edad, emp_edad_x),
+  "Empleo por niños en el hogar" = list(emp_nin, emp_nin_x),
+  "Ocupados por sector y género" = list(cnt, cnt_x),
+  "Perceptores IFE por decil" = list(dec[, 1], vn(X6, 5:14, 2)),
+  "Bono AUH por decil" = list(dec[, 2], vn(X6, 5:14, 5)),
+  "Bono jubilados por decil" = list(dec[, 3], vn(X6, 5:14, 8)),
+  "Adultos en hogares con IFE y AUH" = list(sapply(c("hogar_ife1", "hogar_auh1"), function(v) sapply(1:2, function(g) sum(r$pondih[r[[v]] == 1 & en(adulto & r$genero == g)]))), t(vn(X6, 5:6, 13:14))))
+res_ctrl <- t(sapply(control, function(z) { a <- as.numeric(z[[1]]); b <- as.numeric(z[[2]]); stopifnot(length(a) == length(b))
+  d <- abs(a - b) / pmax(abs(b), 1e-9); c(length(a), max(d), mean(d < 1e-4)) }))
+kable(data.frame(Bloque = rownames(res_ctrl), Cifras = res_ctrl[, 1], `Máx. dif. relativa` = formatC(res_ctrl[, 2], format = "e", digits = 1),
+                 `Coinciden (dif. < 0,01%)` = marcar(pct(res_ctrl[, 3]), res_ctrl[, 3] < 1), check.names = FALSE), row.names = FALSE, escape = FALSE, align = "lrrr")
+sin_pol <- !grepl("con política|IFE|AUH", rownames(res_ctrl))
+max_pol <- max(abs(N1[, 5:7] / E1[, 5:7] - 1), abs(N2[, 5:7] / E2[, 5:7] - 1))
+```
+
+Los bloques sin respuesta de política coinciden, con una excepción: la informalidad por decil difiere hasta `r pct(res_ctrl["Figura 2: informalidad por decil", 2], 2)` porque en la corrida original algunos hogares con ingresos en el límite entre los deciles 1 y 2, y entre el 4 y el 5, quedaron del otro lado del corte. Es decir, el decil guardado en `Base.dta` no es exactamente el que se usó, y por la misma razón difiere la distribución de los bonos a jubilados entre los deciles 4 y 5. En los niveles de ingreso con política la diferencia máxima es `r pct(max_pol, 2)` y se concentra en el decil 2; en la AUH, en los deciles 1 y 2 ([D15](#d15)).
+
+Las referencias bibliográficas del informe no se reproducen.
+
+```{r sesion}
+sessionInfo()$R.version$version.string
+```
